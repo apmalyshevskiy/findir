@@ -12,7 +12,7 @@ class Info extends Model
     protected $table = 'info';
 
     protected $fillable = [
-        'name', 'type', 'code', 'description', 'parent_id', 'is_active',
+        'name', 'type', 'code', 'description', 'parent_id', 'sort_order', 'is_active',
     ];
 
     protected $casts = [

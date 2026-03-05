@@ -11,6 +11,7 @@ class TenantDatabaseSeeder extends Seeder
         $this->call([
             ProjectSeeder::class,
             BalanceItemsSeeder::class,
+            InfoSeeder::class,
         ]);
     }
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getInfo, createInfo, updateInfo, deleteInfo } from '../api/info'
+import { buildTree, flattenTree } from '../lib/utils'
 import Layout from '../components/Layout'
 
 const INFO_TYPES = [
@@ -13,11 +14,12 @@ const INFO_TYPES = [
   { value: 'flow',       label: 'Статьи движения' },
 ]
 
-const emptyForm = { name: '', type: 'partner', code: '', description: '' }
+const emptyForm = { name: '', type: 'partner', description: '', parent_id: '' }
 
 export default function InfoPage() {
   const [items, setItems] = useState([])
   const [filterType, setFilterType] = useState('')
+  const [expandedByType, setExpandedByType] = useState({})
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -41,7 +43,12 @@ export default function InfoPage() {
 
   const openEdit = (item) => {
     setEditItem(item)
-    setForm({ name: item.name, type: item.type, code: item.code || '', description: item.description || '' })
+    setForm({
+      name: item.name,
+      type: item.type,
+      description: item.description || '',
+      parent_id: item.parent_id || '',
+    })
     setShowForm(true)
   }
 
@@ -49,8 +56,9 @@ export default function InfoPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
+    const payload = { ...form, parent_id: form.parent_id || null }
     try {
-      editItem ? await updateInfo(editItem.id, form) : await createInfo(form)
+      editItem ? await updateInfo(editItem.id, payload) : await createInfo(payload)
       setShowForm(false)
       loadItems()
     } catch (err) {
@@ -111,6 +119,9 @@ export default function InfoPage() {
       ) : (
         Object.entries(grouped).map(([type, typeItems]) => {
           const typeLabel = INFO_TYPES.find(t => t.value === type)?.label || type
+          const tree = buildTree(typeItems)
+          const expanded = expandedByType[type]
+          const flat = flattenTree(tree, 0, expanded ?? null)
           return (
             <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
               {!filterType && (
@@ -129,10 +140,45 @@ export default function InfoPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {typeItems.map(item => (
+                  {flat.map(item => {
+                    const hasChildren = item.children?.length > 0
+                    const isExpanded = (expanded ?? null) === null || expanded.has(item.id)
+                    const toggle = () => {
+                      setExpandedByType(prev => {
+                        const next = { ...prev }
+                        const curr = next[type]
+                        const newSet = curr instanceof Set ? new Set(curr) : null
+                        if (isExpanded) {
+                          const s = newSet ?? (() => {
+                            const ids = new Set()
+                            const collect = (nodes) => nodes.forEach(n => { if (n.children?.length) ids.add(n.id); collect(n.children || []) })
+                            collect(tree)
+                            return ids
+                          })()
+                          s.delete(item.id)
+                          next[type] = s
+                        } else {
+                          const s = newSet ?? new Set()
+                          s.add(item.id)
+                          next[type] = s
+                        }
+                        return next
+                      })
+                    }
+                    return (
                     <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-6 py-3 text-xs text-gray-400 font-mono">{item.id}</td>
-                      <td className="px-6 py-3 text-sm font-medium text-gray-800">{item.name}</td>
+                      <td className="px-6 py-3 text-sm font-medium text-gray-800" style={{ paddingLeft: 12 + item.depth * 20 }}>
+                        {hasChildren ? (
+                          <button type="button" onClick={toggle} className="mr-2 text-gray-400 hover:text-gray-600 inline-flex items-center justify-center w-5 h-5 rounded">
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        ) : (
+                          <span className="inline-block w-5 mr-2" />
+                        )}
+                        {item.depth > 0 && <span className="text-gray-300 mr-2">└</span>}
+                        {item.name}
+                      </td>
                       <td className="px-6 py-3 text-sm text-gray-400">{item.description || '—'}</td>
                       <td className="px-6 py-3 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -143,7 +189,7 @@ export default function InfoPage() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
@@ -164,6 +210,22 @@ export default function InfoPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Тип</label>
                 <select value={form.type} onChange={e => setForm({...form, type: e.target.value})} className={ic} required>
                   {INFO_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Родитель</label>
+                <select value={form.parent_id} onChange={e => setForm({...form, parent_id: e.target.value})} className={ic}>
+                  <option value="">— Без родителя</option>
+                  {(() => {
+                    const sameType = items.filter(i => i.type === form.type && i.id !== editItem?.id)
+                    const tree = buildTree(sameType)
+                    const flat = flattenTree(tree)
+                    return flat.map(item => (
+                      <option key={item.id} value={item.id}>
+                        {'\u00A0'.repeat(item.depth * 2)}{item.depth > 0 ? '└ ' : ''}{item.name}
+                      </option>
+                    ))
+                  })()}
                 </select>
               </div>
               <div>
