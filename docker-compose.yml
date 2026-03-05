@@ -1,0 +1,192 @@
+# FINDIR — Docker Compose (dev)
+
+services:
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: findir_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./back:/var/www/html
+    depends_on:
+      - php
+    networks:
+      - findir_net
+
+  php:
+    build:
+      context: ./php
+      dockerfile: Dockerfile
+    container_name: findir_php
+    restart: always # Важно, чтобы контейнер сам поднимался после "bye-bye"
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
+      APP_URL: "http://localhost"
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: findir_central
+      DB_USERNAME: findir
+      DB_PASSWORD: secret
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CACHE_DRIVER: redis
+      SESSION_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      # ... твои существующие переменные (DB_HOST, APP_KEY и т.д.)
+      PHP_MEMORY_LIMIT: 256M
+      PHP_MAX_EXECUTION_TIME: 120 # Даем больше времени на создание базы
+    volumes:
+      - ./back:/var/www/html
+    deploy:
+      resources:
+        limits:
+          memory: 512M # Ограничиваем сверху, чтобы не "съел" всю память хоста
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - findir_net
+
+  mysql:
+    image: mysql:8.0
+    container_name: findir_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootsecret
+      MYSQL_DATABASE: findir_central
+      MYSQL_USER: findir
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootsecret"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - findir_net
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: findir_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - findir_net
+
+  horizon:
+    build:
+      context: ./php
+      dockerfile: Dockerfile
+    container_name: findir_horizon
+    restart: unless-stopped
+    command: sh -c "sleep 30 && php /var/www/html/artisan horizon"
+    environment:
+      APP_ENV: local
+      APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
+      DB_HOST: mysql
+      DB_DATABASE: findir_central
+      DB_USERNAME: findir
+      DB_PASSWORD: secret
+      REDIS_HOST: redis
+      QUEUE_CONNECTION: redis
+    volumes:
+      - ./back:/var/www/html
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - findir_net
+
+  scheduler:
+    build:
+      context: ./php
+      dockerfile: Dockerfile
+    container_name: findir_scheduler
+    restart: unless-stopped
+    command: sh -c "while true; do php /var/www/html/artisan schedule:run; sleep 60; done"
+    environment:
+      APP_ENV: local
+      APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
+      DB_HOST: mysql
+      DB_DATABASE: findir_central
+      DB_USERNAME: findir
+      DB_PASSWORD: secret
+      REDIS_HOST: redis
+    volumes:
+      - ./back:/var/www/html
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - findir_net
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: findir_mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    networks:
+      - findir_net
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: findir_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: findir
+      PMA_PASSWORD: secret
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+    networks:
+      - findir_net
+
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: findir_redis_ui
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: "local:redis:6379"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - findir_net
+
+  web:
+    image: node:20-slim
+    container_name: findir_front
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    volumes:
+      - C:/work/findir/front:/app
+    command: sh -c "npm install --legacy-peer-deps && npm run dev"
+    networks:
+      - findir_net
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  findir_net:
+    driver: bridge

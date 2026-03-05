@@ -1,0 +1,44 @@
+# === КОРЕНЬ (Инфраструктура) ===
+.env
+.env.bak
+.env.dev
+.env.dev.bak
+*.bak
+docker-compose.yml.bak
+Makefile
+
+# Данные Docker (тома)
+mysql_data/
+redis_data/
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# === ФРОНТЕНД (front/) ===
+front/node_modules/
+front/dist/
+front/dist-ssr/
+front/*.local
+front/npm-debug.log*
+
+# === БЭКЕНД (back/) ===
+back/vendor/
+back/node_modules/
+back/.env
+back/.env.backup
+back/.env.production
+back/public/build/
+back/public/hot/
+back/public/storage/
+back/storage/*.key
+back/storage/logs/*.log
+back/storage/framework/cache/data/*
+back/storage/framework/sessions/*
+back/storage/framework/views/*
+back/bootstrap/cache/*
+back/.phpunit.result.cache
+back/auth.json

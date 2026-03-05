@@ -1,0 +1,83 @@
+# ══════════════════════════════════════════════════════════════════════
+#  FINDIR — Dev override
+#  Запуск: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# ══════════════════════════════════════════════════════════════════════
+
+services:
+
+  php:
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      LOG_LEVEL: debug
+    volumes:
+      - ../findir-api:/var/www/html          # live mount исходников
+      - ./php/php-dev.ini:/usr/local/etc/php/conf.d/dev.ini:ro
+
+  nginx:
+    ports:
+      - "80:80"                              # только HTTP в dev, без HTTPS
+    volumes:
+      - ./nginx/conf.d/findir-dev.conf:/etc/nginx/conf.d/default.conf:ro
+      - app_storage:/var/www/html/storage/app/public:ro
+      - web_build:/var/www/web:ro
+
+  horizon:
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+    volumes:
+      - ../findir-api:/var/www/html
+
+  scheduler:
+    environment:
+      APP_ENV: local
+    volumes:
+      - ../findir-api:/var/www/html
+
+  # ── Mailpit (локальная почта) ──────────────────────────────────────
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: findir_mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    networks:
+      - findir_net
+
+  # ── phpMyAdmin ─────────────────────────────────────────────────────
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: findir_phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: ${DB_USERNAME:-findir}
+      PMA_PASSWORD: ${DB_PASSWORD}
+      UPLOAD_LIMIT: 100M
+    ports:
+      - "8080:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - findir_net
+
+  # ── Redis Commander ────────────────────────────────────────────────
+  redis_commander:
+    image: rediscommander/redis-commander:latest
+    container_name: findir_redis_ui
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: "local:redis:6379"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - findir_net
+
+volumes:
+  app_storage:
+  web_build:
