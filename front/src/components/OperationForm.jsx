@@ -13,6 +13,123 @@ const INFO_LABELS = {
   flow:       'Статья движения',
 }
 
+// 1. Функции для работы с иерархией (как в справочниках)
+const buildTree = (items) => {
+  const map = {}
+  const roots = []
+  
+  items.forEach(item => {
+    map[item.id] = { ...item, children: [] }
+  })
+  
+  items.forEach(item => {
+    if (item.parent_id && map[item.parent_id]) {
+      map[item.parent_id].children.push(map[item.id])
+    } else {
+      roots.push(map[item.id])
+    }
+  })
+
+  const sortNodes = (nodes) => {
+    nodes.sort((a, b) => {
+      const orderA = a.sort_order || 0
+      const orderB = b.sort_order || 0
+      if (orderA !== orderB) return orderA - orderB
+      return (a.name || '').localeCompare(b.name || '')
+    })
+    nodes.forEach(node => sortNodes(node.children))
+  }
+  
+  sortNodes(roots)
+  return roots
+}
+
+// Разворачиваем дерево в плоский список с учетом глубины
+const flattenTree = (nodes, depth = 0) => {
+  let result = []
+  nodes.forEach(node => {
+    result.push({ ...node, depth })
+    if (node.children && node.children.length > 0) {
+      result = result.concat(flattenTree(node.children, depth + 1))
+    }
+  })
+  return result
+}
+
+// 2. Кастомный компонент селекта с поиском и иерархией
+const SearchableInfoSelect = ({ items, value, onChange, label }) => {
+  const [search, setSearch] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+
+  // Строим дерево и разворачиваем его для отображения
+  const tree = buildTree(items || [])
+  const flatItems = flattenTree(tree)
+
+  // Фильтруем элементы, если пользователь начал вводить текст
+  const filtered = flatItems.filter(opt =>
+    opt.name.toLowerCase().includes(search.toLowerCase()) ||
+    (opt.code && opt.code.toLowerCase().includes(search.toLowerCase()))
+  )
+
+  const selectedOption = items?.find(o => o.id == value)
+
+  return (
+    <div className="relative flex flex-col gap-1">
+      <label className="block text-sm font-medium text-gray-700">{label}</label>
+      <div className="relative">
+        <input
+          type="text"
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder={selectedOption ? selectedOption.name : "Выберите значение..."}
+          value={search}
+          onFocus={() => setIsOpen(true)}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setIsOpen(true)
+          }}
+        />
+        {/* Выпадающий список */}
+        {isOpen && (
+          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+            <div
+              className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
+              onClick={() => {
+                onChange('')
+                setSearch('')
+                setIsOpen(false)
+              }}
+            >
+              Не указано
+            </div>
+            {filtered.length > 0 ? filtered.map(opt => (
+              <div
+                key={opt.id}
+                className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
+                onClick={() => {
+                  onChange(opt.id)
+                  setSearch('')
+                  setIsOpen(false)
+                }}
+              >
+                {/* Отрисовка названия с отступом для дочерних элементов (если нет поиска) */}
+                <span style={{ paddingLeft: search ? 0 : opt.depth * 16 }} className="truncate">
+                  {!search && opt.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
+                  <span className={(!search && opt.children?.length > 0) ? "font-medium text-gray-800" : "text-gray-700 group-hover:text-blue-700"}>
+                    {opt.name}
+                  </span>
+                </span>
+                {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
+              </div>
+            )) : <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
+          </div>
+        )}
+      </div>
+      {/* Невидимый слой для закрытия списка при клике вне его */}
+      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => setIsOpen(false)}></div>}
+    </div>
+  )
+}
+
 export default function OperationForm({ operation, onSuccess, onCancel }) {
   const isEdit = !!operation
   const [balanceItems, setBalanceItems] = useState([])
@@ -34,13 +151,11 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     note:          operation?.note ?? '',
   })
 
-  // Загружаем balance_items и сразу подгружаем info для уже выбранных счетов
   useEffect(() => {
     getBalanceItems().then(res => {
       const items = res.data.data
       setBalanceItems(items)
 
-      // Если редактирование — сразу загружаем нужные справочники
       if (isEdit) {
         const inBi  = items.find(b => b.id == operation.in_bi_id)
         const outBi = items.find(b => b.id == operation.out_bi_id)
@@ -58,7 +173,6 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     })
   }, [])
 
-  // Подгружаем справочники при смене счёта
   const loadInfoForBi = (biId, prevCache) => {
     const bi = balanceItems.find(b => b.id == biId)
     const types = [bi?.info_1_type, bi?.info_2_type].filter(Boolean)
@@ -91,20 +205,6 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
 
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
   const lc = "block text-sm font-medium text-gray-700 mb-1"
-
-  const InfoSelect = ({ type, field, label }) => {
-    if (!type) return null
-    const items = infoCache[type] || []
-    return (
-      <div>
-        <label className={lc}>{label}</label>
-        <select value={form[field] || ''} onChange={e => setForm({...form, [field]: e.target.value})} className={ic}>
-          <option value="">Не указано</option>
-          {items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </div>
-    )
-  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -148,12 +248,20 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
           </div>
 
           {inBi?.info_1_type && (
-            <InfoSelect type={inBi.info_1_type} field="in_info_1_id"
-              label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`} />
+            <SearchableInfoSelect
+              items={infoCache[inBi.info_1_type]}
+              value={form.in_info_1_id}
+              onChange={(val) => setForm({...form, in_info_1_id: val})}
+              label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`}
+            />
           )}
           {inBi?.info_2_type && (
-            <InfoSelect type={inBi.info_2_type} field="in_info_2_id"
-              label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`} />
+            <SearchableInfoSelect
+              items={infoCache[inBi.info_2_type]}
+              value={form.in_info_2_id}
+              onChange={(val) => setForm({...form, in_info_2_id: val})}
+              label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`}
+            />
           )}
 
           {/* Кредит */}
@@ -171,12 +279,20 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
           </div>
 
           {outBi?.info_1_type && (
-            <InfoSelect type={outBi.info_1_type} field="out_info_1_id"
-              label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`} />
+            <SearchableInfoSelect
+              items={infoCache[outBi.info_1_type]}
+              value={form.out_info_1_id}
+              onChange={(val) => setForm({...form, out_info_1_id: val})}
+              label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`}
+            />
           )}
           {outBi?.info_2_type && (
-            <InfoSelect type={outBi.info_2_type} field="out_info_2_id"
-              label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`} />
+            <SearchableInfoSelect
+              items={infoCache[outBi.info_2_type]}
+              value={form.out_info_2_id}
+              onChange={(val) => setForm({...form, out_info_2_id: val})}
+              label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`}
+            />
           )}
 
           <div>

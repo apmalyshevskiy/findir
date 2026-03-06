@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { getInfo, createInfo, updateInfo, deleteInfo } from '../api/info'
-import { buildTree, flattenTree } from '../lib/utils'
 import Layout from '../components/Layout'
 
 const INFO_TYPES = [
@@ -14,7 +13,52 @@ const INFO_TYPES = [
   { value: 'flow',       label: 'Статьи движения' },
 ]
 
-const emptyForm = { name: '', type: 'partner', description: '', parent_id: '' }
+// 1. НАДЕЖНАЯ ФУНКЦИЯ СБОРКИ ДЕРЕВА С ЖЕСТКОЙ СОРТИРОВКОЙ
+const buildTree = (items) => {
+  const map = {}
+  const roots = []
+  
+  items.forEach(item => {
+    map[item.id] = { ...item, children: [] }
+  })
+  
+  items.forEach(item => {
+    if (item.parent_id && map[item.parent_id]) {
+      map[item.parent_id].children.push(map[item.id])
+    } else {
+      roots.push(map[item.id])
+    }
+  })
+
+  // Рекурсивная сортировка каждого уровня дерева
+  const sortNodes = (nodes) => {
+    nodes.sort((a, b) => {
+      const orderA = a.sort_order || 0
+      const orderB = b.sort_order || 0
+      if (orderA !== orderB) return orderA - orderB // Сначала по числу sort_order
+      return (a.name || '').localeCompare(b.name || '') // Затем по алфавиту
+    })
+    nodes.forEach(node => sortNodes(node.children))
+  }
+  
+  sortNodes(roots)
+  return roots
+}
+
+// 2. НАДЕЖНАЯ ФУНКЦИЯ РАЗВЕРТЫВАНИЯ (ПО УМОЛЧАНИЮ СВЕРНУТО)
+const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
+  let result = []
+  nodes.forEach(node => {
+    result.push({ ...node, depth })
+    // Добавляем детей ТОЛЬКО если родитель есть в списке развернутых (expandedSet)
+    if (node.children && node.children.length > 0 && expandedSet.has(node.id)) {
+      result = result.concat(flattenTree(node.children, depth + 1, expandedSet))
+    }
+  })
+  return result
+}
+
+const emptyForm = { name: '', type: 'partner', description: '', parent_id: '', sort_order: 0 }
 
 export default function InfoPage() {
   const [items, setItems] = useState([])
@@ -48,6 +92,7 @@ export default function InfoPage() {
       type: item.type,
       description: item.description || '',
       parent_id: item.parent_id || '',
+      sort_order: item.sort_order || 0,
     })
     setShowForm(true)
   }
@@ -120,8 +165,11 @@ export default function InfoPage() {
         Object.entries(grouped).map(([type, typeItems]) => {
           const typeLabel = INFO_TYPES.find(t => t.value === type)?.label || type
           const tree = buildTree(typeItems)
-          const expanded = expandedByType[type]
-          const flat = flattenTree(tree, 0, expanded ?? null)
+          
+          // Жестко передаем пустой Set(), если ветки еще не открывали
+          const expanded = expandedByType[type] || new Set()
+          const flat = flattenTree(tree, 0, expanded)
+          
           return (
             <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
               {!filterType && (
@@ -135,6 +183,7 @@ export default function InfoPage() {
                   <tr className="text-xs text-gray-500 uppercase tracking-wide border-b border-gray-50">
                     <th className="text-left px-6 py-2 w-12">#</th>
                     <th className="text-left px-6 py-2">Название</th>
+                    <th className="text-left px-6 py-2 w-20 text-center">Сорт.</th>
                     <th className="text-left px-6 py-2">Описание</th>
                     <th className="px-6 py-2"></th>
                   </tr>
@@ -142,43 +191,45 @@ export default function InfoPage() {
                 <tbody>
                   {flat.map(item => {
                     const hasChildren = item.children?.length > 0
-                    const isExpanded = (expanded ?? null) === null || expanded.has(item.id)
+                    const isExpanded = expanded.has(item.id)
+                    
                     const toggle = () => {
                       setExpandedByType(prev => {
                         const next = { ...prev }
-                        const curr = next[type]
-                        const newSet = curr instanceof Set ? new Set(curr) : null
-                        if (isExpanded) {
-                          const s = newSet ?? (() => {
-                            const ids = new Set()
-                            const collect = (nodes) => nodes.forEach(n => { if (n.children?.length) ids.add(n.id); collect(n.children || []) })
-                            collect(tree)
-                            return ids
-                          })()
-                          s.delete(item.id)
-                          next[type] = s
-                        } else {
-                          const s = newSet ?? new Set()
-                          s.add(item.id)
-                          next[type] = s
-                        }
+                        const s = new Set(next[type] || [])
+                        if (isExpanded) s.delete(item.id)
+                        else s.add(item.id)
+                        next[type] = s
                         return next
                       })
                     }
                     return (
                     <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-6 py-3 text-xs text-gray-400 font-mono">{item.id}</td>
-                      <td className="px-6 py-3 text-sm font-medium text-gray-800" style={{ paddingLeft: 12 + item.depth * 20 }}>
-                        {hasChildren ? (
-                          <button type="button" onClick={toggle} className="mr-2 text-gray-400 hover:text-gray-600 inline-flex items-center justify-center w-5 h-5 rounded">
-                            {isExpanded ? '▼' : '▶'}
-                          </button>
-                        ) : (
-                          <span className="inline-block w-5 mr-2" />
-                        )}
-                        {item.depth > 0 && <span className="text-gray-300 mr-2">└</span>}
-                        {item.name}
+                      <td className="px-6 py-3 text-sm font-medium text-gray-800">
+                        <div className="flex items-center" style={{ paddingLeft: item.depth * 20 }}>
+                          {hasChildren ? (
+                            <button 
+                              type="button" 
+                              onClick={toggle} 
+                              className="mr-2 text-gray-400 hover:text-gray-600 inline-flex items-center justify-center w-5 h-5 rounded transition-colors"
+                            >
+                              <svg 
+                                className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
+                                viewBox="0 0 24 24" fill="currentColor"
+                              >
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <span className="inline-block w-5 mr-2 text-center text-gray-300 text-xs">
+                              {item.depth > 0 ? '└' : ''}
+                            </span>
+                          )}
+                          <span className="truncate">{item.name}</span>
+                        </div>
                       </td>
+                      <td className="px-6 py-3 text-xs text-center text-gray-400 font-mono">{item.sort_order}</td>
                       <td className="px-6 py-3 text-sm text-gray-400">{item.description || '—'}</td>
                       <td className="px-6 py-3 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -219,7 +270,8 @@ export default function InfoPage() {
                   {(() => {
                     const sameType = items.filter(i => i.type === form.type && i.id !== editItem?.id)
                     const tree = buildTree(sameType)
-                    const flat = flattenTree(tree)
+                    // Для селекта раскрываем всё, чтобы было видно все варианты
+                    const flat = flattenTree(tree, 0, new Set(sameType.map(i => i.id)))
                     return flat.map(item => (
                       <option key={item.id} value={item.id}>
                         {'\u00A0'.repeat(item.depth * 2)}{item.depth > 0 ? '└ ' : ''}{item.name}
@@ -237,6 +289,17 @@ export default function InfoPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
                 <input type="text" value={form.description} onChange={e => setForm({...form, description: e.target.value})}
                   placeholder="Необязательно" className={ic} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Порядок сортировки</label>
+                <input 
+                  type="number" 
+                  value={form.sort_order} 
+                  onChange={e => setForm({...form, sort_order: parseInt(e.target.value) || 0})}
+                  placeholder="0" 
+                  className={ic} 
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Меньше число — выше в списке</p>
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowForm(false)}

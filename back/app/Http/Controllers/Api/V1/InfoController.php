@@ -18,9 +18,9 @@ class InfoController extends TenantController
 
         $query = $this->model()->newQuery()->active()
             ->orderBy('type')
-            ->orderByRaw('COALESCE(parent_id, 0)')
-            ->orderBy('sort_order')
-            ->orderBy('name');
+         //   ->orderByRaw('COALESCE(parent_id, 0)')
+            ->orderBy('sort_order');
+            //->orderBy('name');
 
         if ($request->type) {
             $query->ofType($request->type);

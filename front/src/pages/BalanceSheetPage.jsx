@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import * as XLSX from 'xlsx' // Импорт библиотеки
+import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
 import { getBalanceSheet, getBalanceItems, getOperations } from '../api/operations'
+import { getInfo } from '../api/info'
 import OperationForm from '../components/OperationForm'
 
 const localDate = (date) => {
@@ -37,14 +38,125 @@ const formatDate = (date) =>
     hour: '2-digit', minute: '2-digit'
   })
 
+// --- УМНЫЙ АЛГОРИТМ ПОСТРОЕНИЯ ИЕРАРХИИ С СУММИРОВАНИЕМ ---
+const processHierarchy = (childrenBalances, dictionary, expandedSet = new Set(), biId = '', expandAll = false) => {
+  if (!dictionary || dictionary.length === 0) {
+    return childrenBalances.map(c => ({ ...c, depth: 0, treeChildren: [] }))
+  }
+
+  const balanceMap = {}
+  childrenBalances.forEach(cb => { balanceMap[cb.info_id] = cb })
+
+  const dictMap = {}
+  dictionary.forEach(d => { dictMap[d.id] = d })
+
+  const nodesToKeep = new Set()
+  childrenBalances.forEach(cb => {
+    let currentId = cb.info_id
+    while (currentId && dictMap[currentId]) {
+      nodesToKeep.add(currentId)
+      currentId = dictMap[currentId].parent_id
+    }
+  })
+
+  const enriched = Array.from(nodesToKeep).map(id => {
+    const d = dictMap[id]
+    const b = balanceMap[id] || { 
+      opening_debit: 0, opening_credit: 0, 
+      debit: 0, credit: 0, 
+      closing_debit: 0, closing_credit: 0 
+    }
+    return {
+      info_id: id,
+      info_name: d.name,
+      parent_id: d.parent_id,
+      sort_order: d.sort_order,
+      ...b
+    }
+  })
+
+  const map = {}
+  const roots = []
+  enriched.forEach(item => { map[item.info_id] = { ...item, treeChildren: [] } })
+
+  enriched.forEach(item => {
+    if (item.parent_id && map[item.parent_id]) {
+      map[item.parent_id].treeChildren.push(map[item.info_id])
+    } else {
+      roots.push(map[item.info_id])
+    }
+  })
+
+  const calculateSums = (node) => {
+    let sums = {
+      opening_debit: parseFloat(node.opening_debit) || 0,
+      opening_credit: parseFloat(node.opening_credit) || 0,
+      debit: parseFloat(node.debit) || 0,
+      credit: parseFloat(node.credit) || 0,
+      closing_debit: parseFloat(node.closing_debit) || 0,
+      closing_credit: parseFloat(node.closing_credit) || 0,
+    }
+
+    if (node.treeChildren && node.treeChildren.length > 0) {
+      node.treeChildren.forEach(child => {
+        const childSums = calculateSums(child)
+        sums.opening_debit += childSums.opening_debit
+        sums.opening_credit += childSums.opening_credit
+        sums.debit += childSums.debit
+        sums.credit += childSums.credit
+        sums.closing_debit += childSums.closing_debit
+        sums.closing_credit += childSums.closing_credit
+      })
+    }
+
+    node.opening_debit = sums.opening_debit
+    node.opening_credit = sums.opening_credit
+    node.debit = sums.debit
+    node.credit = sums.credit
+    node.closing_debit = sums.closing_debit
+    node.closing_credit = sums.closing_credit
+
+    return sums
+  }
+
+  roots.forEach(root => calculateSums(root))
+
+  const sortNodes = (nodes) => {
+    nodes.sort((a, b) => {
+      const oA = a.sort_order || 0
+      const oB = b.sort_order || 0
+      if (oA !== oB) return oA - oB
+      return (a.info_name || '').localeCompare(b.info_name || '')
+    })
+    nodes.forEach(n => sortNodes(n.treeChildren))
+  }
+  sortNodes(roots)
+
+  const flatten = (nodes, depth = 0) => {
+    let res = []
+    nodes.forEach(node => {
+      res.push({ ...node, depth })
+      const isExpanded = expandAll || expandedSet.has(`${biId}-${node.info_id}`)
+      if (node.treeChildren?.length > 0 && isExpanded) {
+        res = res.concat(flatten(node.treeChildren, depth + 1))
+      }
+    })
+    return res
+  }
+
+  return flatten(roots)
+}
+
 export default function BalanceSheetPage() {
   const [data, setData]               = useState([])
   const [balanceItems, setBalanceItems] = useState([])
+  const [infoDictionary, setInfoDictionary] = useState([]) 
   const [filter, setFilter]           = useState(getMonthRange())
   const [infoType, setInfoType]       = useState('')
   const [biFilter, setBiFilter]       = useState('')
   const [loading, setLoading]         = useState(false)
   const [expanded, setExpanded]       = useState(new Set())
+  const [expandedInfo, setExpandedInfo] = useState(new Set())
   const [drillModal, setDrillModal]   = useState(null)
   const [drillLoading, setDrillLoading] = useState(false)
   const [editOp, setEditOp]           = useState(null)
@@ -53,11 +165,20 @@ export default function BalanceSheetPage() {
     getBalanceItems().then(res => setBalanceItems(res.data.data))
   }, [])
 
+  useEffect(() => {
+    if (infoType) {
+      getInfo({ type: infoType }).then(res => setInfoDictionary(res.data.data))
+    } else {
+      setInfoDictionary([])
+    }
+  }, [infoType])
+
   useEffect(() => { load() }, [filter, infoType, biFilter])
 
   const load = () => {
     setLoading(true)
     setExpanded(new Set())
+    setExpandedInfo(new Set())
     const params = { date_from: filter.from, date_to: filter.to }
     if (infoType) params.info_type = infoType
     if (biFilter) params.bi_id    = biFilter
@@ -66,14 +187,10 @@ export default function BalanceSheetPage() {
       .finally(() => setLoading(false))
   }
 
-  // --- ЛОГИКА ЭКСПОРТА ---
   const exportToExcel = () => {
     const rows = [];
-    
-    // Формат для денежных ячеек (Excel format string)
     const numFmt = '#,##0.00 "₽"';
 
-    // 1. Заголовки
     rows.push([
       "Счёт", 
       "Сальдо нач. (Дт)", "Сальдо нач. (Кт)", 
@@ -81,11 +198,9 @@ export default function BalanceSheetPage() {
       "Сальдо кон. (Дт)", "Сальдо кон. (Кт)"
     ]);
 
-    // Функция для создания ячейки-числа
     const n = (val) => ({ v: val || 0, t: 'n', z: numFmt });
 
     data.forEach(row => {
-      // 2. Строка основного счета
       rows.push([
         `${row.code} ${row.name}`,
         n(row.opening_debit), n(row.opening_credit),
@@ -93,11 +208,13 @@ export default function BalanceSheetPage() {
         n(row.closing_debit), n(row.closing_credit)
       ]);
 
-      // 3. Аналитика (если есть)
       if (row.children && row.children.length > 0) {
-        row.children.forEach(child => {
+        const flatChildren = processHierarchy(row.children, infoDictionary, new Set(), row.bi_id, true);
+        
+        flatChildren.forEach(child => {
+          const indent = "    ".repeat(child.depth);
           rows.push([
-            `    └ ${child.info_name}`,
+            `${indent}  └ ${child.info_name}`,
             n(child.opening_debit), n(child.opening_credit),
             n(child.debit), n(child.credit),
             n(child.closing_debit), n(child.closing_credit)
@@ -106,7 +223,6 @@ export default function BalanceSheetPage() {
       }
     });
 
-    // 4. Итоговая строка
     rows.push([]); 
     rows.push([
       "ИТОГО",
@@ -116,16 +232,11 @@ export default function BalanceSheetPage() {
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    
-    // Автоматическая ширина колонок
     ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
-
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "ОСВ");
-    
     XLSX.writeFile(wb, `OSV_${filter.from}_to_${filter.to}.xlsx`);
   };
-  // -----------------------
 
   const toggleExpand = (biId) => {
     setExpanded(prev => {
@@ -135,9 +246,25 @@ export default function BalanceSheetPage() {
     })
   }
 
-  const expandAll   = () => setExpanded(new Set(data.filter(r => r.has_analytics && r.children?.length > 0).map(r => r.bi_id)))
-  const collapseAll = () => setExpanded(new Set())
+  const toggleInfoExpand = (biId, infoId) => {
+    setExpandedInfo(prev => {
+      const next = new Set(prev)
+      const key = `${biId}-${infoId}`
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
+  const expandAll = () => {
+    setExpanded(new Set(data.filter(r => r.has_analytics && r.children?.length > 0).map(r => r.bi_id)))
+  }
+  
+  const collapseAll = () => {
+    setExpanded(new Set())
+    setExpandedInfo(new Set())
+  }
+
+  // --- ИСПРАВЛЕННЫЙ МЕТОД DRILL-DOWN ---
   const openDrill = async (title, biId, direction, infoId = null) => {
     setDrillLoading(true)
     setDrillModal({ title, ops: [], biId, direction, infoId })
@@ -160,9 +287,19 @@ export default function BalanceSheetPage() {
     }
 
     if (infoId) {
+      // Ищем все дочерние ID, чтобы показать операции по всей папке
+      const getDescendants = (parentId) => {
+        const children = infoDictionary.filter(item => item.parent_id === parentId).map(item => item.id)
+        return children.reduce((acc, childId) => [...acc, ...getDescendants(childId)], children)
+      }
+      
+      const validIds = [infoId, ...getDescendants(infoId)].map(String)
+
       ops = ops.filter(op =>
-        op.in_info_1_id == infoId || op.in_info_2_id == infoId ||
-        op.out_info_1_id == infoId || op.out_info_2_id == infoId
+        (op.in_info_1_id && validIds.includes(String(op.in_info_1_id))) ||
+        (op.in_info_2_id && validIds.includes(String(op.in_info_2_id))) ||
+        (op.out_info_1_id && validIds.includes(String(op.out_info_1_id))) ||
+        (op.out_info_2_id && validIds.includes(String(op.out_info_2_id)))
       )
     }
 
@@ -225,7 +362,6 @@ export default function BalanceSheetPage() {
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-gray-800">Оборотно-сальдовая ведомость</h2>
         
-        {/* КНОПКА ЭКСПОРТА */}
         <button 
           onClick={exportToExcel}
           disabled={loading || data.length === 0}
@@ -238,7 +374,6 @@ export default function BalanceSheetPage() {
         </button>
       </div>
 
-      {/* Фильтры */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-3">
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex gap-1.5">
@@ -292,7 +427,6 @@ export default function BalanceSheetPage() {
         </div>
       </div>
 
-      {/* Таблица ОСВ */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -317,6 +451,9 @@ export default function BalanceSheetPage() {
             ) : data.map(row => {
               const hasChildren = row.has_analytics && row.children?.length > 0
               const isExpanded  = expanded.has(row.bi_id)
+              
+              const flatChildren = isExpanded ? processHierarchy(row.children, infoDictionary, expandedInfo, row.bi_id) : []
+
               return [
                 <tr key={row.bi_id}
                   className={`border-b border-gray-100 transition-colors ${hasChildren ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'} ${isExpanded ? 'bg-blue-50' : ''}`}
@@ -324,7 +461,16 @@ export default function BalanceSheetPage() {
                 >
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
-                      <span className="w-3 text-gray-400 text-xs">{hasChildren ? (isExpanded ? '▼' : '▶') : ''}</span>
+                      <div className="w-4 flex items-center justify-center">
+                        {hasChildren && (
+                          <svg 
+                            className={`w-2.5 h-2.5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
+                            viewBox="0 0 24 24" fill="currentColor"
+                          >
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        )}
+                      </div>
                       <span className="font-mono text-xs font-semibold text-gray-700">{row.code}</span>
                       <span className="text-xs text-gray-500">{row.name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
                     </div>
@@ -336,22 +482,43 @@ export default function BalanceSheetPage() {
                   <NumCell val={row.closing_debit}  extra="text-green-700 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо кон. Дт`, row.bi_id, 'both') }} />
                   <NumCell val={row.closing_credit} extra="text-red-600"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо кон. Кт`, row.bi_id, 'both') }} />
                 </tr>,
-                ...(isExpanded ? row.children.map(child => (
-                  <tr key={`${row.bi_id}-${child.info_id}`} className="border-b border-gray-50 bg-blue-50/30 hover:bg-blue-50/60">
-                    <td className="px-4 py-2">
-                      <div className="flex items-center gap-2 pl-8">
-                        <span className="text-gray-300 text-xs">└</span>
-                        <span className="text-xs text-gray-600 font-medium">{child.info_name}</span>
-                      </div>
-                    </td>
-                    <NumCell val={child.opening_debit}  extra="text-green-600" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Дт`, row.bi_id, 'both', child.info_id) }} />
-                    <NumCell val={child.opening_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Кт`, row.bi_id, 'both', child.info_id) }} />
-                    <NumCell val={child.debit}          extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Дт`, row.bi_id, 'debit', child.info_id) }} />
-                    <NumCell val={child.credit}         extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Кт`, row.bi_id, 'credit', child.info_id) }} />
-                    <NumCell val={child.closing_debit}  extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Дт`, row.bi_id, 'both', child.info_id) }} />
-                    <NumCell val={child.closing_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Кт`, row.bi_id, 'both', child.info_id) }} />
-                  </tr>
-                )) : [])
+                ...flatChildren.map(child => {
+                  const hasInnerChildren = child.treeChildren && child.treeChildren.length > 0;
+                  const isInfoExpanded = expandedInfo.has(`${row.bi_id}-${child.info_id}`);
+
+                  return (
+                    <tr key={`${row.bi_id}-${child.info_id}`} 
+                        className={`border-b border-gray-50 transition-colors ${hasInnerChildren ? 'cursor-pointer hover:bg-blue-50/80' : 'hover:bg-blue-50/40'}`}
+                        onClick={() => hasInnerChildren && toggleInfoExpand(row.bi_id, child.info_id)}
+                    >
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2" style={{ paddingLeft: 32 + child.depth * 20 }}>
+                          {hasInnerChildren ? (
+                            <button type="button" className="text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center rounded">
+                              <svg 
+                                className={`w-2.5 h-2.5 transition-transform duration-200 ${isInfoExpanded ? 'rotate-90' : ''}`} 
+                                viewBox="0 0 24 24" fill="currentColor"
+                              >
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <span className="text-gray-300 text-xs w-4 inline-block text-center">└</span>
+                          )}
+                          <span className={child.depth === 0 && hasInnerChildren ? "text-xs text-gray-700 font-semibold" : "text-xs text-gray-600 font-medium"}>
+                            {child.info_name}
+                          </span>
+                        </div>
+                      </td>
+                      <NumCell val={child.opening_debit}  extra="text-green-600" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Дт`, row.bi_id, 'both', child.info_id) }} />
+                      <NumCell val={child.opening_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Кт`, row.bi_id, 'both', child.info_id) }} />
+                      <NumCell val={child.debit}          extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Дт`, row.bi_id, 'debit', child.info_id) }} />
+                      <NumCell val={child.credit}         extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Кт`, row.bi_id, 'credit', child.info_id) }} />
+                      <NumCell val={child.closing_debit}  extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Дт`, row.bi_id, 'both', child.info_id) }} />
+                      <NumCell val={child.closing_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Кт`, row.bi_id, 'both', child.info_id) }} />
+                    </tr>
+                  )
+                })
               ]
             })}
           </tbody>
@@ -371,7 +538,6 @@ export default function BalanceSheetPage() {
         </table>
       </div>
 
-      {/* Модалка дрилл-даун */}
       {drillModal && !editOp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col">
@@ -449,7 +615,6 @@ export default function BalanceSheetPage() {
         </div>
       )}
 
-      {/* Форма редактирования операции */}
       {editOp && (
         <OperationForm
           operation={editOp}
