@@ -18,9 +18,7 @@ class InfoController extends TenantController
 
         $query = $this->model()->newQuery()->active()
             ->orderBy('type')
-         //   ->orderByRaw('COALESCE(parent_id, 0)')
             ->orderBy('sort_order');
-            //->orderBy('name');
 
         if ($request->type) {
             $query->ofType($request->type);
@@ -38,6 +36,7 @@ class InfoController extends TenantController
             'type'        => 'required|string',
             'code'        => 'nullable|string|max:35',
             'description' => 'nullable|string',
+            'inn'         => 'nullable|string|max:12',
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
         ]);
@@ -47,6 +46,7 @@ class InfoController extends TenantController
             'type'        => $data['type'],
             'code'        => $data['code'] ?? null,
             'description' => $data['description'] ?? null,
+            'inn'         => $data['inn'] ?? null,
             'parent_id'   => $data['parent_id'] ?? null,
             'sort_order'  => $data['sort_order'] ?? 0,
             'is_active'   => true,
@@ -64,6 +64,7 @@ class InfoController extends TenantController
             'type'        => 'required|string',
             'code'        => 'nullable|string|max:35',
             'description' => 'nullable|string',
+            'inn'         => 'nullable|string|max:12',
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
             'is_active'   => 'nullable|boolean',

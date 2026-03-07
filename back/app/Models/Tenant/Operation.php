@@ -17,11 +17,13 @@ class Operation extends Model
         'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
         'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
         'note', 'source',
+        'external_id', 'external_date',
     ];
 
     protected $casts = [
-        'date'   => 'datetime',
-        'amount' => 'float',
+        'date'          => 'datetime',
+        'external_date' => 'date',
+        'amount'        => 'float',
     ];
 
     public function inBalanceItem()

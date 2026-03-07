@@ -4,7 +4,8 @@ import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import InfoPage from './pages/InfoPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
-import HealthPage from './pages/HealthPage';
+import HealthPage from './pages/HealthPage'
+import BankStatementPage from './pages/BankStatementPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -15,13 +16,14 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login"         element={<LoginPage />} />
-        <Route path="/register"      element={<RegisterPage />} />
-        <Route path="/dashboard"     element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
-        <Route path="/info"          element={<PrivateRoute><InfoPage /></PrivateRoute>} />
-        <Route path="/balance-sheet" element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
-        <Route path="/"              element={<Navigate to="/dashboard" />} />
-		<Route path="/health"        element={<HealthPage />} />
+        <Route path="/login"           element={<LoginPage />} />
+        <Route path="/register"        element={<RegisterPage />} />
+        <Route path="/dashboard"       element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+        <Route path="/info"            element={<PrivateRoute><InfoPage /></PrivateRoute>} />
+        <Route path="/balance-sheet"   element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
+        <Route path="/bank-statement"  element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
+        <Route path="/health"          element={<HealthPage />} />
+        <Route path="/"                element={<Navigate to="/dashboard" />} />
       </Routes>
     </BrowserRouter>
   )

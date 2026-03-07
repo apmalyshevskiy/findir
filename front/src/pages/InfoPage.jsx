@@ -13,44 +13,31 @@ const INFO_TYPES = [
   { value: 'flow',       label: 'Статьи движения' },
 ]
 
-// 1. НАДЕЖНАЯ ФУНКЦИЯ СБОРКИ ДЕРЕВА С ЖЕСТКОЙ СОРТИРОВКОЙ
 const buildTree = (items) => {
   const map = {}
   const roots = []
-  
+  items.forEach(item => { map[item.id] = { ...item, children: [] } })
   items.forEach(item => {
-    map[item.id] = { ...item, children: [] }
+    if (item.parent_id && map[item.parent_id]) map[item.parent_id].children.push(map[item.id])
+    else roots.push(map[item.id])
   })
-  
-  items.forEach(item => {
-    if (item.parent_id && map[item.parent_id]) {
-      map[item.parent_id].children.push(map[item.id])
-    } else {
-      roots.push(map[item.id])
-    }
-  })
-
-  // Рекурсивная сортировка каждого уровня дерева
   const sortNodes = (nodes) => {
     nodes.sort((a, b) => {
       const orderA = a.sort_order || 0
       const orderB = b.sort_order || 0
-      if (orderA !== orderB) return orderA - orderB // Сначала по числу sort_order
-      return (a.name || '').localeCompare(b.name || '') // Затем по алфавиту
+      if (orderA !== orderB) return orderA - orderB
+      return (a.name || '').localeCompare(b.name || '')
     })
     nodes.forEach(node => sortNodes(node.children))
   }
-  
   sortNodes(roots)
   return roots
 }
 
-// 2. НАДЕЖНАЯ ФУНКЦИЯ РАЗВЕРТЫВАНИЯ (ПО УМОЛЧАНИЮ СВЕРНУТО)
 const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   let result = []
   nodes.forEach(node => {
     result.push({ ...node, depth })
-    // Добавляем детей ТОЛЬКО если родитель есть в списке развернутых (expandedSet)
     if (node.children && node.children.length > 0 && expandedSet.has(node.id)) {
       result = result.concat(flattenTree(node.children, depth + 1, expandedSet))
     }
@@ -58,7 +45,7 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', description: '', parent_id: '', sort_order: 0 }
+const emptyForm = { name: '', type: 'partner', description: '', inn: '', parent_id: '', sort_order: 0 }
 
 export default function InfoPage() {
   const [items, setItems] = useState([])
@@ -88,11 +75,12 @@ export default function InfoPage() {
   const openEdit = (item) => {
     setEditItem(item)
     setForm({
-      name: item.name,
-      type: item.type,
+      name:        item.name,
+      type:        item.type,
       description: item.description || '',
-      parent_id: item.parent_id || '',
-      sort_order: item.sort_order || 0,
+      inn:         item.inn || '',
+      parent_id:   item.parent_id || '',
+      sort_order:  item.sort_order || 0,
     })
     setShowForm(true)
   }
@@ -101,7 +89,16 @@ export default function InfoPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const payload = { ...form, parent_id: form.parent_id || null }
+
+    const payload = {
+      name:       form.name,
+      type:       form.type,
+      inn:        form.inn || null,
+      parent_id:  form.parent_id || null,
+      sort_order: form.sort_order,
+      description: form.description || null,
+    }
+
     try {
       editItem ? await updateInfo(editItem.id, payload) : await createInfo(payload)
       setShowForm(false)
@@ -117,6 +114,14 @@ export default function InfoPage() {
     if (!confirm('Удалить запись?')) return
     await deleteInfo(id)
     loadItems()
+  }
+
+  const toggleExpand = (type, id) => {
+    setExpandedByType(prev => {
+      const set = new Set(prev[type] || [])
+      set.has(id) ? set.delete(id) : set.add(id)
+      return { ...prev, [type]: set }
+    })
   }
 
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
@@ -139,7 +144,7 @@ export default function InfoPage() {
         </button>
       </div>
 
-      {/* Фильтр */}
+      {/* Фильтр по типу */}
       <div className="flex gap-2 flex-wrap mb-6">
         <button onClick={() => setFilterType('')}
           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filterType === '' ? 'bg-blue-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
@@ -157,90 +162,57 @@ export default function InfoPage() {
       {loading ? (
         <div className="text-center py-12 text-gray-400">Загрузка...</div>
       ) : items.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <p className="text-gray-400 mb-3">Справочник пуст</p>
-          <button onClick={openCreate} className="text-blue-600 hover:underline text-sm">Добавить первую запись</button>
-        </div>
+        <div className="text-center py-12 text-gray-400">Нет записей</div>
       ) : (
         Object.entries(grouped).map(([type, typeItems]) => {
           const typeLabel = INFO_TYPES.find(t => t.value === type)?.label || type
+          const expandedSet = expandedByType[type] || new Set()
           const tree = buildTree(typeItems)
-          
-          // Жестко передаем пустой Set(), если ветки еще не открывали
-          const expanded = expandedByType[type] || new Set()
-          const flat = flattenTree(tree, 0, expanded)
-          
+          const flat = flattenTree(tree, 0, expandedSet)
+
           return (
-            <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
-              {!filterType && (
-                <div className="px-6 py-3 border-b border-gray-100 flex justify-between items-center">
-                  <h3 className="font-medium text-gray-700 text-sm">{typeLabel}</h3>
-                  <span className="text-xs text-gray-400">{typeItems.length}</span>
-                </div>
-              )}
+            <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
+              <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">{typeLabel}</span>
+                <span className="text-xs text-gray-400">{typeItems.length}</span>
+              </div>
               <table className="w-full">
-                <thead>
-                  <tr className="text-xs text-gray-500 uppercase tracking-wide border-b border-gray-50">
-                    <th className="text-left px-6 py-2 w-12">#</th>
-                    <th className="text-left px-6 py-2">Название</th>
-                    <th className="text-left px-6 py-2 w-20 text-center">Сорт.</th>
-                    <th className="text-left px-6 py-2">Описание</th>
-                    <th className="px-6 py-2"></th>
-                  </tr>
-                </thead>
                 <tbody>
-                  {flat.map(item => {
-                    const hasChildren = item.children?.length > 0
-                    const isExpanded = expanded.has(item.id)
-                    
-                    const toggle = () => {
-                      setExpandedByType(prev => {
-                        const next = { ...prev }
-                        const s = new Set(next[type] || [])
-                        if (isExpanded) s.delete(item.id)
-                        else s.add(item.id)
-                        next[type] = s
-                        return next
-                      })
-                    }
-                    return (
-                    <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 group transition-colors">
-                      <td className="px-6 py-3 text-xs text-gray-400 font-mono">{item.id}</td>
-                      <td className="px-6 py-3 text-sm font-medium text-gray-800">
-                        <div className="flex items-center" style={{ paddingLeft: item.depth * 20 }}>
-                          {hasChildren ? (
-                            <button 
-                              type="button" 
-                              onClick={toggle} 
-                              className="mr-2 text-gray-400 hover:text-gray-600 inline-flex items-center justify-center w-5 h-5 rounded transition-colors"
-                            >
-                              <svg 
-                                className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
-                                viewBox="0 0 24 24" fill="currentColor"
-                              >
-                                <path d="M8 5v14l11-7z" />
-                              </svg>
-                            </button>
-                          ) : (
-                            <span className="inline-block w-5 mr-2 text-center text-gray-300 text-xs">
-                              {item.depth > 0 ? '└' : ''}
-                            </span>
-                          )}
-                          <span className="truncate">{item.name}</span>
-                        </div>
+                  {flat.map(item => (
+                    <tr key={item.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 group">
+                      <td className="px-6 py-2.5 w-8">
+                        {item.children?.length > 0 && (
+                          <button onClick={() => toggleExpand(type, item.id)}
+                            className="text-gray-400 hover:text-gray-600 text-xs">
+                            {expandedSet.has(item.id) ? '▼' : '▶'}
+                          </button>
+                        )}
                       </td>
-                      <td className="px-6 py-3 text-xs text-center text-gray-400 font-mono">{item.sort_order}</td>
-                      <td className="px-6 py-3 text-sm text-gray-400">{item.description || '—'}</td>
-                      <td className="px-6 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <td className="py-2.5 pr-4" style={{ paddingLeft: `${24 + item.depth * 20}px` }}>
+                        <span className="text-sm text-gray-800">
+                          {item.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
+                          {item.name}
+                        </span>
+                        {/* Показываем ИНН для partner */}
+                        {item.type === 'partner' && item.inn && (
+                          <span className="ml-2 text-xs text-gray-400">ИНН: {item.inn}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        {item.code && (
+                          <span className="text-xs font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{item.code}</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 pr-6 text-right">
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 justify-end">
                           <button onClick={() => openEdit(item)}
-                            className="text-gray-400 hover:text-blue-600 text-sm px-2 py-1 rounded hover:bg-blue-50">✎</button>
+                            className="text-xs text-blue-600 hover:text-blue-800">Изменить</button>
                           <button onClick={() => handleDelete(item.id)}
-                            className="text-gray-400 hover:text-red-500 text-lg px-1">×</button>
+                            className="text-xs text-red-400 hover:text-red-600">Удалить</button>
                         </div>
                       </td>
                     </tr>
-                  )})}
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -252,25 +224,33 @@ export default function InfoPage() {
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-800">{editItem ? 'Редактировать' : 'Новая запись'}</h3>
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+              <h3 className="text-lg font-semibold text-gray-800">
+                {editItem ? 'Редактировать' : 'Новая запись'}
+              </h3>
+              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
+
+              {/* Тип */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Тип</label>
-                <select value={form.type} onChange={e => setForm({...form, type: e.target.value})} className={ic} required>
+                <select value={form.type}
+                  onChange={e => setForm({ ...form, type: e.target.value, description: '', inn: '' })}
+                  className={ic} required>
                   {INFO_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
+
+              {/* Родитель */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Родитель</label>
-                <select value={form.parent_id} onChange={e => setForm({...form, parent_id: e.target.value})} className={ic}>
+                <select value={form.parent_id} onChange={e => setForm({ ...form, parent_id: e.target.value })} className={ic}>
                   <option value="">— Без родителя</option>
                   {(() => {
                     const sameType = items.filter(i => i.type === form.type && i.id !== editItem?.id)
                     const tree = buildTree(sameType)
-                    // Для селекта раскрываем всё, чтобы было видно все варианты
                     const flat = flattenTree(tree, 0, new Set(sameType.map(i => i.id)))
                     return flat.map(item => (
                       <option key={item.id} value={item.id}>
@@ -280,27 +260,52 @@ export default function InfoPage() {
                   })()}
                 </select>
               </div>
+
+              {/* Название */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
-                <input type="text" value={form.name} onChange={e => setForm({...form, name: e.target.value})}
+                <input type="text" value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
                   placeholder="Название" className={ic} required autoFocus />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
-                <input type="text" value={form.description} onChange={e => setForm({...form, description: e.target.value})}
-                  placeholder="Необязательно" className={ic} />
-              </div>
+
+              {/* ИНН — только для partner */}
+              {form.type === 'partner' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ИНН
+                    <span className="ml-1 text-xs text-gray-400 font-normal">для автосопоставления из выписки</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={form.inn || ''}
+                    onChange={e => setForm({ ...form, inn: e.target.value })}
+                    placeholder="7704217370"
+                    className={ic + ' font-mono'}
+                    maxLength={12}
+                  />
+                </div>
+              )}
+
+              {/* Описание */}
+              {(
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
+                  <input type="text" value={form.description}
+                    onChange={e => setForm({ ...form, description: e.target.value })}
+                    placeholder="Необязательно" className={ic} />
+                </div>
+              )}
+
+              {/* Порядок сортировки */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Порядок сортировки</label>
-                <input 
-                  type="number" 
-                  value={form.sort_order} 
-                  onChange={e => setForm({...form, sort_order: parseInt(e.target.value) || 0})}
-                  placeholder="0" 
-                  className={ic} 
-                />
+                <input type="number" value={form.sort_order}
+                  onChange={e => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })}
+                  placeholder="0" className={ic} />
                 <p className="text-[10px] text-gray-400 mt-1">Меньше число — выше в списке</p>
               </div>
+
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowForm(false)}
                   className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">

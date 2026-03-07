@@ -16,11 +16,11 @@ class InfoSeeder extends Seeder
             ['name' => 'Расчётный счёт',      'type' => 'cash',  'code' => 'BANK',  'parent_id' => null, 'sort_order' => 1, 'is_active' => true],
 
             // flow — Статья движения (иерархия)
-            ['name' => 'Операционная деятельность',           'type' => 'flow', 'code' => 'OD',  'parent_id' => null, 'sort_order' => 0, '_pk' => 'od', 'is_active' => true],
-            ['name' => 'Поступление (ОД)',                    'type' => 'flow', 'code' => 'OD-IN',   'parent_id' => null, 'sort_order' => 0, '_pk' => 'od_in', '_parent' => 'od', 'is_active' => true],
+            ['name' => 'Операционная деятельность',           'type' => 'flow', 'code' => 'OD',  'parent_id' => null, 'sort_order' => 1, '_pk' => 'od', 'is_active' => true],
+            ['name' => 'Поступление (ОД)',                    'type' => 'flow', 'code' => 'OD-IN',   'parent_id' => null, 'sort_order' => 1, '_pk' => 'od_in', '_parent' => 'od', 'is_active' => true],
             ['name' => 'Поступление денег от клиентов (ДДС)', 'type' => 'flow', 'code' => 'OD-IN-CUST','parent_id' => null, 'sort_order' => 0, '_pk' => 'od_in_cust', '_parent' => 'od_in', 'is_active' => true],
             ['name' => 'Прочее поступление (ДДС)',            'type' => 'flow', 'code' => 'OD-IN-OTH','parent_id' => null, 'sort_order' => 1, '_pk' => 'od_in_oth', '_parent' => 'od_in', 'is_active' => true],
-            ['name' => 'Списание (ОД)',                       'type' => 'flow', 'code' => 'OD-OUT',  'parent_id' => null, 'sort_order' => 1, '_pk' => 'od_out', '_parent' => 'od', 'is_active' => true],
+            ['name' => 'Списание (ОД)',                       'type' => 'flow', 'code' => 'OD-OUT',  'parent_id' => null, 'sort_order' => 2, '_pk' => 'od_out', '_parent' => 'od', 'is_active' => true],
             ['name' => 'Переменные расходы (ДДС)',            'type' => 'flow', 'code' => 'OD-OUT-VAR','parent_id' => null, 'sort_order' => 0, '_pk' => 'od_out_var', '_parent' => 'od_out', 'is_active' => true],
             ['name' => 'Закупка материалов и услуг (ДДС)',    'type' => 'flow', 'code' => 'OD-OUT-MAT','parent_id' => null, 'sort_order' => 0, '_pk' => 'od_out_mat', '_parent' => 'od_out_var', 'is_active' => true],
             ['name' => 'Оборотные налоги (ДДС)',              'type' => 'flow', 'code' => 'OD-OUT-TAX','parent_id' => null, 'sort_order' => 1, '_pk' => 'od_out_tax', '_parent' => 'od_out_var', 'is_active' => true],
@@ -30,7 +30,7 @@ class InfoSeeder extends Seeder
             ['name' => 'Административные расходы (ДДС)',      'type' => 'flow', 'code' => 'OD-OUT-ADM','parent_id' => null, 'sort_order' => 2, '_pk' => 'od_out_adm', '_parent' => 'od_out_fix', 'is_active' => true],
             ['name' => 'Коммерческие расходы (ДДС)',          'type' => 'flow', 'code' => 'OD-OUT-COM','parent_id' => null, 'sort_order' => 3, '_pk' => 'od_out_com', '_parent' => 'od_out_fix', 'is_active' => true],
             ['name' => 'Производственные расходы (ДДС)',      'type' => 'flow', 'code' => 'OD-OUT-PRD','parent_id' => null, 'sort_order' => 4, '_pk' => 'od_out_prd', '_parent' => 'od_out_fix', 'is_active' => true],
-            ['name' => 'Перемещение (ОД)',                    'type' => 'flow', 'code' => 'OD-TRF',   'parent_id' => null, 'sort_order' => 2, '_pk' => 'od_trf', '_parent' => 'od', 'is_active' => true],
+            ['name' => 'Перемещение (ОД)',                    'type' => 'flow', 'code' => 'OD-TRF',   'parent_id' => null, 'sort_order' => 3, '_pk' => 'od_trf', '_parent' => 'od', 'is_active' => true],
             ['name' => 'Перемещение денег (ДДС)',             'type' => 'flow', 'code' => 'OD-TRF-MNY','parent_id' => null, 'sort_order' => 0, '_pk' => 'od_trf_mny', '_parent' => 'od_trf', 'is_active' => true],
 
             // product — Товар/Услуга

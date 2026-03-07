@@ -29,33 +29,38 @@ class OperationsController extends TenantController
             ->orderByDesc('date')
             ->orderByDesc('id');
 
-        if ($request->project_id) $query->where('project_id', $request->project_id);
-        if ($request->date_from)  $query->where('date', '>=', $request->date_from);
-        if ($request->date_to)    $query->where('date', '<=', $request->date_to . ' 23:59:59');
-        if ($request->in_bi_id)   $query->where('in_bi_id', $request->in_bi_id);
-        if ($request->out_bi_id)  $query->where('out_bi_id', $request->out_bi_id);
-        // Фильтр по конкретному элементу аналитики 
+        if ($request->project_id)   $query->where('project_id', $request->project_id);
+        if ($request->date_from)    $query->where('date', '>=', $request->date_from);
+        if ($request->date_to)      $query->where('date', '<=', $request->date_to . ' 23:59:59');
+        if ($request->in_bi_id)     $query->where('in_bi_id', $request->in_bi_id);
+        if ($request->out_bi_id)    $query->where('out_bi_id', $request->out_bi_id);
+        if ($request->source)       $query->where('source', $request->source);
+        if ($request->external_id)  $query->where('external_id', $request->external_id);
+        if ($request->external_date) $query->where('external_date', $request->external_date);
+        if ($request->ids)          $query->whereIn('id', array_map('intval', explode(',', $request->ids)));
+
         if ($request->info_id) {
             $infoId = $request->info_id;
-            $query->where(function($q) use ($infoId) {
-           $q->where('in_info_1_id', $infoId)
-                 ->orWhere('in_info_2_id', $infoId)
-                ->orWhere('in_info_3_id', $infoId)
-                ->orWhere('out_info_1_id', $infoId)
-                 ->orWhere('out_info_2_id', $infoId)
-                 ->orWhere('out_info_3_id', $infoId);
-         });
-}
+            $query->where(function ($q) use ($infoId) {
+                $q->where('in_info_1_id', $infoId)
+                    ->orWhere('in_info_2_id', $infoId)
+                    ->orWhere('in_info_3_id', $infoId)
+                    ->orWhere('out_info_1_id', $infoId)
+                    ->orWhere('out_info_2_id', $infoId)
+                    ->orWhere('out_info_3_id', $infoId);
+            });
+        }
 
         $perPage = $request->per_page ?? 50;
         $page    = $request->page ?? 1;
         $total   = $query->count();
         $items   = $query->offset(($page - 1) * $perPage)->limit($perPage)->get();
 
-        // Форматируем для фронтенда
-        $data = $items->map(fn($op) => $this->formatOperation($op));
-
-        return response()->json(['data' => $data, 'total' => $total, 'page' => (int)$page]);
+        return response()->json([
+            'data'  => $items->map(fn($op) => $this->formatOperation($op)),
+            'total' => $total,
+            'page'  => (int) $page,
+        ]);
     }
 
     public function store(Request $request)
@@ -76,11 +81,14 @@ class OperationsController extends TenantController
             'out_info_2_id' => 'nullable|integer',
             'out_info_3_id' => 'nullable|integer',
             'note'          => 'nullable|string|max:1000',
+            'source'        => 'nullable|string|max:50',
+            'external_id'   => 'nullable|string|max:25',
+            'external_date' => 'nullable|date',
         ]);
 
         $op = $this->model()->newQuery()->create(array_merge($data, [
             'quantity' => $data['quantity'] ?? 0,
-            'source'   => 'manual',
+            'source'   => $data['source'] ?? 'manual',
         ]));
 
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
@@ -106,6 +114,9 @@ class OperationsController extends TenantController
             'out_info_2_id' => 'nullable|integer',
             'out_info_3_id' => 'nullable|integer',
             'note'          => 'nullable|string|max:1000',
+            'source'        => 'nullable|string|max:50',
+            'external_id'   => 'nullable|string|max:25',
+            'external_date' => 'nullable|date',
         ]);
 
         $op = $this->model()->newQuery()->findOrFail($id);
@@ -133,6 +144,8 @@ class OperationsController extends TenantController
             'quantity'        => $op->quantity,
             'note'            => $op->note,
             'source'          => $op->source,
+            'external_id'     => $op->external_id,
+            'external_date'   => $op->external_date?->format('Y-m-d'),
             'project_id'      => $op->project_id,
             'in_bi_id'        => $op->in_bi_id,
             'in_bi_code'      => $op->inBalanceItem?->code,

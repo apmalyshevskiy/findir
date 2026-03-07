@@ -16,10 +16,10 @@ export default function Layout({ children }) {
   }
 
   const nav = [
-    { path: '/info',          label: 'Справочники' },
-    { path: '/dashboard',     label: 'Операции' },
-    { path: '/balance-sheet', label: 'Оборотка' },
-   
+    { path: '/info',           label: 'Справочники' },
+    { path: '/dashboard',      label: 'Операции' },
+    { path: '/balance-sheet',  label: 'Оборотка' },
+    { path: '/bank-statement', label: 'Выписка' },
   ]
 
   return (
