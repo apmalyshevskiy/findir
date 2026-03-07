@@ -17,6 +17,10 @@ Route::prefix('v1')->group(function () {
     Route::get('/me',        [AuthController::class, 'me']);
     Route::post('/logout',   [AuthController::class, 'logout']);
 
+    // Проверка домена при регистрации (публичные)
+    Route::get('/check-domain',   [AuthController::class, 'checkDomain']);
+    Route::get('/suggest-domain', [AuthController::class, 'suggestDomain']);
+
     // Операции
     Route::get('/operations',         [OperationsController::class, 'index']);
     Route::post('/operations',        [OperationsController::class, 'store']);

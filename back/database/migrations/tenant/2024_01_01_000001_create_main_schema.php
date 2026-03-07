@@ -26,6 +26,7 @@ return new class extends Migration
             $table->string('name');
             $table->enum('type', ['partner','employee','department','cash','flow','expenses','product','revenue']);
             $table->text('description')->nullable();
+            $table->string('inn', 12)->nullable();    // ИНН контрагента/сотрудника
             $table->integer('sort_order')->default(0);
             $table->boolean('is_active')->default(true);
             $table->timestamps();
@@ -36,7 +37,7 @@ return new class extends Migration
             $table->id();
             $table->bigInteger('parent_id')->nullable();
             $table->string('name');
-            $table->string('code', 10);
+            $table->string('code', 20);
             $table->enum('info_1_type', ['partner','employee','department','cash','flow','expenses','product','revenue'])->nullable();
             $table->enum('info_2_type', ['partner','employee','department','cash','flow','expenses','product','revenue'])->nullable();
             $table->enum('info_3_type', ['partner','employee','department','cash','flow','expenses','product','revenue'])->nullable();
@@ -63,7 +64,8 @@ return new class extends Migration
             $table->double('out_quantity', 15, 3)->default(0);
             $table->text('note')->nullable();
             $table->string('source', 20)->default('manual');
-            $table->string('external_id', 100)->nullable()->unique();
+            $table->string('external_id', 100)->nullable();  // номер документа из выписки
+            $table->date('external_date')->nullable();        // дата документа из выписки
             $table->string('table_name', 50)->nullable();
             $table->string('table_id', 36)->nullable();
             $table->timestamps();
@@ -71,6 +73,7 @@ return new class extends Migration
             $table->index(['project_id', 'date']);
             $table->index('in_bi_id');
             $table->index('out_bi_id');
+            $table->index(['external_id', 'external_date']); // для поиска дублей
         });
 
         Schema::create('balance_changes', function (Blueprint $table) {
@@ -103,14 +106,15 @@ return new class extends Migration
             $table->index(['project_id', 'date', 'bi_id']);
         });
 
-        // Триггеры
+        // Триггеры для автоматического заполнения balance_changes
         DB::unprepared('
             CREATE TRIGGER insert_changes
             AFTER INSERT ON operations FOR EACH ROW
             BEGIN
-                INSERT INTO balance_changes (operation_id,date,project_id,amount,quantity,bi_id,info_1_id,info_2_id,info_3_id,note)
-                VALUES (NEW.id,NEW.date,NEW.project_id,NEW.amount,NEW.quantity,NEW.in_bi_id,NEW.in_info_1_id,NEW.in_info_2_id,NEW.in_info_3_id,NEW.note),
-                       (NEW.id,NEW.date,NEW.project_id,-NEW.amount,-NEW.quantity,NEW.out_bi_id,NEW.out_info_1_id,NEW.out_info_2_id,NEW.out_info_3_id,NEW.note);
+                INSERT INTO balance_changes (operation_id, date, project_id, amount, quantity, bi_id, info_1_id, info_2_id, info_3_id, note)
+                VALUES (NEW.id, NEW.date, NEW.project_id,  NEW.amount, NEW.quantity, NEW.in_bi_id,  NEW.in_info_1_id,  NEW.in_info_2_id,  NEW.in_info_3_id,  NEW.note);
+                INSERT INTO balance_changes (operation_id, date, project_id, amount, quantity, bi_id, info_1_id, info_2_id, info_3_id, note)
+                VALUES (NEW.id, NEW.date, NEW.project_id, -NEW.amount, NEW.quantity, NEW.out_bi_id, NEW.out_info_1_id, NEW.out_info_2_id, NEW.out_info_3_id, NEW.note);
             END
         ');
 
@@ -118,20 +122,29 @@ return new class extends Migration
             CREATE TRIGGER update_changes
             AFTER UPDATE ON operations FOR EACH ROW
             BEGIN
+                DELETE FROM balance_changes WHERE operation_id = NEW.id;
+                INSERT INTO balance_changes (operation_id, date, project_id, amount, quantity, bi_id, info_1_id, info_2_id, info_3_id, note)
+                VALUES (NEW.id, NEW.date, NEW.project_id,  NEW.amount, NEW.quantity, NEW.in_bi_id,  NEW.in_info_1_id,  NEW.in_info_2_id,  NEW.in_info_3_id,  NEW.note);
+                INSERT INTO balance_changes (operation_id, date, project_id, amount, quantity, bi_id, info_1_id, info_2_id, info_3_id, note)
+                VALUES (NEW.id, NEW.date, NEW.project_id, -NEW.amount, NEW.quantity, NEW.out_bi_id, NEW.out_info_1_id, NEW.out_info_2_id, NEW.out_info_3_id, NEW.note);
+            END
+        ');
+
+        DB::unprepared('
+            CREATE TRIGGER delete_changes
+            AFTER DELETE ON operations FOR EACH ROW
+            BEGIN
                 DELETE FROM balance_changes WHERE operation_id = OLD.id;
-                IF NEW.deleted_at IS NULL THEN
-                    INSERT INTO balance_changes (operation_id,date,project_id,amount,quantity,bi_id,info_1_id,info_2_id,info_3_id,note)
-                    VALUES (NEW.id,NEW.date,NEW.project_id,NEW.amount,NEW.quantity,NEW.in_bi_id,NEW.in_info_1_id,NEW.in_info_2_id,NEW.in_info_3_id,NEW.note),
-                           (NEW.id,NEW.date,NEW.project_id,-NEW.amount,-NEW.quantity,NEW.out_bi_id,NEW.out_info_1_id,NEW.out_info_2_id,NEW.out_info_3_id,NEW.note);
-                END IF;
             END
         ');
     }
 
     public function down(): void
     {
+        DB::unprepared('DROP TRIGGER IF EXISTS delete_changes');
         DB::unprepared('DROP TRIGGER IF EXISTS update_changes');
         DB::unprepared('DROP TRIGGER IF EXISTS insert_changes');
+
         Schema::dropIfExists('balance');
         Schema::dropIfExists('balance_changes');
         Schema::dropIfExists('operations');

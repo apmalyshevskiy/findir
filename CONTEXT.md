@@ -168,21 +168,20 @@ id, parent_id, name, currency CHAR(3), timezone, timestamps, soft_deletes
 - При каждом запросе фронт передаёт заголовок `X-Tenant: {slug}`
 - `TenantController::initTenant()` вызывает `TenantService::connect($slug)` — переключает соединение Laravel на нужную БД через `$this->dbName`
 
-**Команда `tenants:migrate` не работает** — не задан `central_connection` в `tenancy.php`.
-
-**Применение миграций тенанта вручную:**
+**Применение миграций:**
 ```bash
-docker exec -it findir_php bash
-php artisan tinker
+# Все тенанты
+docker exec -it findir_php php artisan tenants:migrate
 
-\App\Services\TenantService::connect('ooo-lbrmts');
-Artisan::call('migrate', [
-    '--database' => 'findir_ooo_lbrmts',
-    '--path'     => 'database/migrations/tenant',
-    '--force'    => true
-]);
-echo Artisan::output();
+# Конкретный тенант
+docker exec -it findir_php php artisan tenants:migrate --tenant=ooo-lbrmts
+
+# Пересоздать с нуля + seed
+docker exec -it findir_php php artisan tenants:migrate --tenant=ooo-lbrmts --fresh --seed --force
 ```
+
+Команда реализована в `app/Console/Commands/MigrateTenants.php` через `TenantService::connect()`.
+Стандартный `tenants:migrate` из stancl/tenancy **не используется** (нет `central_connection` в tenancy.php).
 
 **Рабочий тенант для тестирования:** `ooo-lbrmts` → БД `findir_ooo_lbrmts`
 

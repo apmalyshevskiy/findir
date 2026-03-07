@@ -46,16 +46,84 @@ class AuthController extends Controller
         return $plainToken;
     }
 
+    /**
+     * Сгенерировать уникальный slug по названию компании.
+     * Если slug занят — добавляет цифру: ooo-romashka → ooo-romashka-2 → ooo-romashka-3
+     */
+    private function generateUniqueSlug(string $companyName): string
+    {
+        $base = Str::slug($companyName);
+        if (!$base) $base = 'company';
+
+        $slug = $base;
+        $i    = 2;
+        while (DB::table('tenants')->where('id', $slug)->exists()) {
+            $slug = $base . '-' . $i;
+            $i++;
+        }
+        return $slug;
+    }
+
+    /**
+     * Проверить уникальность домена (для live-валидации на фронте)
+     * GET /api/v1/check-domain?domain=ooo-romashka
+     */
+    public function checkDomain(Request $request)
+    {
+        $domain = Str::slug($request->query('domain', ''));
+
+        if (!$domain) {
+            return response()->json(['available' => false, 'error' => 'Домен не может быть пустым']);
+        }
+
+        if (strlen($domain) < 3) {
+            return response()->json(['available' => false, 'error' => 'Минимум 3 символа']);
+        }
+
+        $exists = DB::table('tenants')->where('id', $domain)->exists();
+
+        return response()->json([
+            'available' => !$exists,
+            'domain'    => $domain,
+            'full'      => $domain . '.' . env('APP_BASE_DOMAIN', 'localhost'),
+        ]);
+    }
+
+    /**
+     * Предложить slug по названию компании (без регистрации)
+     * GET /api/v1/suggest-domain?company_name=ООО Ромашка
+     */
+    public function suggestDomain(Request $request)
+    {
+        $companyName = $request->query('company_name', '');
+        $slug        = $this->generateUniqueSlug($companyName);
+
+        return response()->json([
+            'domain' => $slug,
+            'full'   => $slug . '.' . env('APP_BASE_DOMAIN', 'localhost'),
+        ]);
+    }
+
     public function register(Request $request)
     {
         $data = $request->validate([
             'company_name' => 'required|string|max:255',
+            'domain'       => 'required|string|max:63|regex:/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/',
             'name'         => 'required|string|max:255',
             'email'        => 'required|email|max:255',
             'password'     => 'required|string|min:8|confirmed',
+        ], [
+            'domain.regex' => 'Домен может содержать только строчные латинские буквы, цифры и дефис',
         ]);
 
-        $tenantId = Str::slug($data['company_name']) . '-' . Str::random(6);
+        // Финальная проверка уникальности домена
+        if (DB::table('tenants')->where('id', $data['domain'])->exists()) {
+            throw ValidationException::withMessages([
+                'domain' => ['Этот домен уже занят. Пожалуйста, выберите другой.'],
+            ]);
+        }
+
+        $tenantId = $data['domain'];
         $dbName   = $this->connectTenant($tenantId);
 
         $tenant = Tenant::create([
@@ -66,7 +134,9 @@ class AuthController extends Controller
             'trial_ends_at' => now()->addDays(14),
         ]);
 
-        $tenant->domains()->create(['domain' => $tenantId . '.localhost']);
+        // Домен 3-го уровня: ooo-romashka.findir.ru
+        $baseDomain = env('APP_BASE_DOMAIN', 'localhost');
+        $tenant->domains()->create(['domain' => $tenantId . '.' . $baseDomain]);
 
         DB::statement("CREATE DATABASE IF NOT EXISTS `{$dbName}`");
 
@@ -76,7 +146,6 @@ class AuthController extends Controller
             '--force'    => true,
         ]);
 
-        // Засеваем начальные данные
         DB::setDefaultConnection($dbName);
         (new \Database\Seeders\TenantDatabaseSeeder())->setContainer(app())->run();
         DB::setDefaultConnection('mysql');
@@ -105,6 +174,7 @@ class AuthController extends Controller
                 'name'          => $tenant->name,
                 'plan'          => $tenant->plan,
                 'trial_ends_at' => $tenant->trial_ends_at,
+                'domain'        => $tenantId . '.' . $baseDomain,
             ],
         ], 201);
     }

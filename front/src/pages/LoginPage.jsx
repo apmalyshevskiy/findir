@@ -25,16 +25,16 @@ export default function LoginPage() {
     }
   }
 
+  const ic = 'w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm'
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Лого */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-blue-900">FINDIR</h1>
           <p className="text-gray-500 mt-2">Financial Director</p>
         </div>
 
-        {/* Форма */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
           <h2 className="text-xl font-semibold text-gray-800 mb-6">Вход в систему</h2>
 
@@ -47,42 +47,41 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                ID организации
+                Домен организации
               </label>
               <input
                 type="text"
                 value={form.tenant_id}
-                onChange={e => setForm({...form, tenant_id: e.target.value})}
-                placeholder="например: my-company-abc123"
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                onChange={e => setForm({ ...form, tenant_id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+                placeholder="ooo-moya-kompaniya"
+                className={`${ic} font-mono`}
                 required
               />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Указывается при регистрации — латиница, цифры, дефис
+              </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input
                 type="email"
                 value={form.email}
-                onChange={e => setForm({...form, email: e.target.value})}
-                placeholder="admin@company.com"
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                onChange={e => setForm({ ...form, email: e.target.value })}
+                placeholder="ivan@company.com"
+                className={ic}
                 required
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Пароль
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
               <input
                 type="password"
                 value={form.password}
-                onChange={e => setForm({...form, password: e.target.value})}
+                onChange={e => setForm({ ...form, password: e.target.value })}
                 placeholder="••••••••"
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                className={ic}
                 required
               />
             </div>
