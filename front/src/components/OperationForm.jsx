@@ -304,7 +304,7 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
             type="text"
               value={form.content ?? ''}
               onChange={e => setForm({...form, content: e.target.value})}
-              placehold er="Назначение платежа, описание проводки"
+              placeholder="Назначение платежа, описание проводки"
               className={ic}
           />
           </div>
