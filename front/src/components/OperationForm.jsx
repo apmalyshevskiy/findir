@@ -148,8 +148,10 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     in_info_2_id:  operation?.in_info_2_id ?? '',
     out_info_1_id: operation?.out_info_1_id ?? '',
     out_info_2_id: operation?.out_info_2_id ?? '',
+    content:          operation?.content ?? '',
     note:          operation?.note ?? '',
-  })
+    
+    }) 
 
   useEffect(() => {
     getBalanceItems().then(res => {
@@ -294,6 +296,18 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
               label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`}
             />
           )}
+           
+          {/* Содержание */}
+          <div>
+           <label className={lc}>Содержание</label>
+            <input
+            type="text"
+              value={form.content ?? ''}
+              onChange={e => setForm({...form, content: e.target.value})}
+              placehold er="Назначение платежа, описание проводки"
+              className={ic}
+          />
+          </div>
 
           <div>
             <label className={lc}>Комментарий</label>

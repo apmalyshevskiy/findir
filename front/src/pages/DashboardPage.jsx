@@ -251,6 +251,7 @@ export default function DashboardPage() {
           out_info_1_id: op.out_info_1_id,
           out_info_2_id: op.out_info_2_id,
           out_info_3_id: op.out_info_3_id,
+          content: op.content ?? '',
           note: op.note ? `${op.note} (Копия)` : 'Копия'
         }
         await createOperation(payload)
@@ -425,7 +426,7 @@ export default function DashboardPage() {
                   <th className="text-left px-3 py-3">Дебет</th>
                   <th className="text-left px-3 py-3">Кредит</th>
                   <th className="text-right px-3 py-3">Сумма</th>
-                  <th className="text-left px-3 py-3">Комментарий</th>
+                  <th className="text-left px-3 py-3">Содержание / Комментарий</th>
                   <th className="px-3 py-3 w-14"></th>
                 </tr>
               </thead>
@@ -458,7 +459,26 @@ export default function DashboardPage() {
                       {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_2_name}</span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
                     </td>
                     <td className="px-3 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatAmount(op.amount)}</td>
-                    <td className="px-3 py-3 text-sm text-gray-500 max-w-xs truncate">{op.note || '—'}</td>
+                    
+                    <td className="px-3 py-3 max-w-xs">
+                      {op.content && (
+                      <div className="text-xs text-gray-700 truncate" title={op.content}>
+                       {op.content}
+                      </div>
+                          )}
+                        {op.note && (
+                     <div className="text-xs text-gray-400 italic truncate" title={op.note}>
+                         💬 {op.note}
+                      </div>
+                         )}
+                      {!op.content && !op.note && (
+                      <span className="text-gray-300">—</span>
+                         )}
+                      </td>
+                    
+
+
+                    
                     <td className="px-3 py-3 text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => handleEdit(op)} className="text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50">✎</button>
