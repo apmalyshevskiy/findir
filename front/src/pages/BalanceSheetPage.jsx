@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
 import { getBalanceSheet, getBalanceItems, getOperations } from '../api/operations'
@@ -148,6 +149,7 @@ const processHierarchy = (childrenBalances, dictionary, expandedSet = new Set(),
 }
 
 export default function BalanceSheetPage() {
+  const navigate = useNavigate()
   const [data, setData]               = useState([])
   const [balanceItems, setBalanceItems] = useState([])
   const [infoDictionary, setInfoDictionary] = useState([]) 
@@ -587,12 +589,22 @@ export default function BalanceSheetPage() {
                         <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{fmt(op.amount)}</td>
                         <td className="px-4 py-3 text-sm text-gray-500">{op.note || '—'}</td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setEditOp(op)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
-                          >
-                            ✎
-                          </button>
+                          {op.table_name === 'documents' && op.table_id ? (
+                            <button
+                              onClick={() => { setDrillModal(null); navigate(`/documents?open=${op.table_id}`) }}
+                              title="Открыть документ-источник"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-600 text-xs px-1.5 py-1 rounded hover:bg-blue-50 flex items-center gap-0.5 ml-auto"
+                            >
+                              📄
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setEditOp(op)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                            >
+                              ✎
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

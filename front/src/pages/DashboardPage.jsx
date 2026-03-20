@@ -481,8 +481,20 @@ export default function DashboardPage() {
                     
                     <td className="px-3 py-3 text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => handleEdit(op)} className="text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50">✎</button>
-                        <button onClick={() => handleDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
+                        {op.table_name === 'documents' && op.table_id ? (
+                          <button
+                            onClick={() => navigate(`/documents?open=${op.table_id}`)}
+                            title="Открыть документ-источник"
+                            className="text-blue-400 hover:text-blue-600 text-xs px-2 py-1 rounded hover:bg-blue-50 flex items-center gap-1"
+                          >
+                            📄 <span className="text-xs">→ документ</span>
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={() => handleEdit(op)} className="text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50">✎</button>
+                            <button onClick={() => handleDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
