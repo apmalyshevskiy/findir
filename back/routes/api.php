@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\BankStatementController;
 use App\Http\Controllers\Api\V1\ProjectsController;
 use App\Http\Controllers\Api\V1\DocumentsController;
 use App\Http\Controllers\Api\V1\CostController;
+use App\Http\Controllers\Api\V1\BudgetController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -52,4 +53,13 @@ Route::prefix('v1')->group(function () {
     Route::delete('/documents/{id}',           [DocumentsController::class, 'destroy']);
     Route::post('/documents/{id}/post',        [DocumentsController::class, 'post']);
     Route::post('/documents/{id}/cancel',      [DocumentsController::class, 'cancel']);
+
+    // Бюджетирование
+    Route::get('/budget-documents',          [BudgetController::class, 'index']);
+    Route::post('/budget-documents',         [BudgetController::class, 'store']);
+    Route::put('/budget-documents/{id}',     [BudgetController::class, 'update']);
+    Route::delete('/budget-documents/{id}',  [BudgetController::class, 'destroy']);
+    Route::get('/budget-report/{id}',        [BudgetController::class, 'report']);
+    Route::put('/budget-items/upsert',       [BudgetController::class, 'upsertItems']);
+    Route::put('/budget-opening-balances/upsert', [BudgetController::class, 'upsertOpeningBalance']);
 });

@@ -7,6 +7,7 @@ import BalanceSheetPage from './pages/BalanceSheetPage'
 import HealthPage from './pages/HealthPage'
 import BankStatementPage from './pages/BankStatementPage'
 import DocumentsPage from './pages/DocumentsPage'
+import BudgetPage from './pages/BudgetPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/balance-sheet"   element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
         <Route path="/bank-statement"  element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
         <Route path="/documents"       element={<PrivateRoute><DocumentsPage /></PrivateRoute>} />
+        <Route path="/budget"          element={<PrivateRoute><BudgetPage /></PrivateRoute>} />
         <Route path="/health"          element={<HealthPage />} />
         <Route path="/"                element={<Navigate to="/dashboard" />} />
       </Routes>

@@ -21,6 +21,7 @@ export default function Layout({ children }) {
     { path: '/documents',      label: 'Документы' },
     { path: '/balance-sheet',  label: 'Оборотка' },
     { path: '/bank-statement', label: 'Выписка' },
+    { path: '/budget',         label: 'Бюджет' }, 
   ]
 
   return (
