@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
 import api from '../api/client'
@@ -33,6 +34,16 @@ const INFO_TYPES = [
 const fmt = (amount) => amount === 0 ? '—' :
   new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(amount)
 
+const fmtQty = (qty) => qty === 0 ? '—' :
+  new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(qty)
+
+// Остаток со знаком: debit - credit
+const calcNet = (debit, credit) => (debit || 0) - (credit || 0)
+const fmtNet  = (val) => {
+  if (val === 0) return null
+  return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(val)
+}
+
 const formatDate = (date) =>
   new Date(date).toLocaleString('ru-RU', {
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -54,8 +65,34 @@ const flattenServerTree = (nodes, expandedSet, biId, depth = 0) => {
   return result
 }
 
+// Разворачиваем дерево счетов (account_children) в плоский список
+const flattenAccountTree = (nodes, expandedSet, depth = 0) => {
+  let result = []
+  nodes.forEach(node => {
+    const isExp = expandedSet.has(node.bi_id)
+    result.push({ ...node, _depth: depth, _expanded: isExp })
+    if (node.account_children?.length > 0 && isExp) {
+      result = result.concat(flattenAccountTree(node.account_children, expandedSet, depth + 1))
+    }
+  })
+  return result
+}
+
+// Собираем все bi_id из дерева (для expandAll)
+const collectAccountIds = (nodes) => {
+  let ids = []
+  nodes.forEach(n => {
+    if (n.account_children?.length > 0) {
+      ids.push(n.bi_id)
+      ids = ids.concat(collectAccountIds(n.account_children))
+    }
+  })
+  return ids
+}
+
 
 export default function BalanceSheetPage() {
+  const navigate = useNavigate()
   const [data, setData]               = useState([])
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects]         = useState([])
@@ -66,6 +103,10 @@ export default function BalanceSheetPage() {
   const [hierarchyTypes, setHierarchyTypes] = useState(new Set())
   const [biFilter, setBiFilter]         = useState('')
   const [showExtraFilters, setShowExtraFilters] = useState(false)
+  const [displayMode, setDisplayMode]           = useState('amount') // 'amount' | 'qty' | 'both'
+  const [balanceMode, setBalanceMode]           = useState('net')    // 'net' = ±остаток | 'debit_credit' = Дт/Кт
+  const [hierarchyAccounts, setHierarchyAccounts] = useState(false)
+  const [expandedAccounts, setExpandedAccounts]  = useState(new Set())
   const [loading, setLoading]         = useState(false)
   const [expanded, setExpanded]       = useState(new Set())
   const [expandedInfo, setExpandedInfo] = useState(new Set())
@@ -98,17 +139,19 @@ export default function BalanceSheetPage() {
     })
   }, [infoTypes])
 
-  useEffect(() => { load() }, [filter, infoTypes, biFilter, hierarchyTypes, projectFilter])
+  useEffect(() => { load() }, [filter, infoTypes, biFilter, hierarchyTypes, projectFilter, hierarchyAccounts])
 
   const load = () => {
     setLoading(true)
     setExpanded(new Set())
     setExpandedInfo(new Set())
+    setExpandedAccounts(new Set())
     const params = { date_from: filter.from, date_to: filter.to }
     if (infoTypes.length > 0)    params['info_types[]']      = infoTypes
     if (hierarchyTypes.size > 0) params['hierarchy_types[]'] = [...hierarchyTypes]
-    if (biFilter)       params.bi_id      = biFilter
-    if (projectFilter)  params.project_id = projectFilter
+    if (biFilter)            params.bi_id               = biFilter
+    if (projectFilter)       params.project_id          = projectFilter
+    if (hierarchyAccounts)   params.hierarchy_accounts  = 1
     getBalanceSheet(params)
       .then(res => setData(res.data.data))
       .catch(() => setData([]))
@@ -231,6 +274,15 @@ export default function BalanceSheetPage() {
     setExpandedInfo(new Set())
   }
 
+  const expandAllAccounts = () => setExpandedAccounts(new Set(collectAccountIds(data)))
+  const collapseAllAccounts = () => setExpandedAccounts(new Set())
+
+  const toggleAccount = (biId) => setExpandedAccounts(prev => {
+    const next = new Set(prev)
+    next.has(biId) ? next.delete(biId) : next.add(biId)
+    return next
+  })
+
   // --- ИСПРАВЛЕННЫЙ МЕТОД DRILL-DOWN ---
   const openDrill = async (title, biId, direction, infoId = null) => {
     setDrillLoading(true)
@@ -312,34 +364,214 @@ export default function BalanceSheetPage() {
     closing_credit: acc.closing_credit + row.closing_credit,
   }), { opening_debit: 0, opening_credit: 0, debit: 0, credit: 0, closing_debit: 0, closing_credit: 0 })
 
-  const NumCell = ({ val, onClick, extra = '' }) => (
-    <td className={`px-4 py-2.5 text-right text-xs font-medium whitespace-nowrap ${extra}`}>
-      {val === 0 ? (
-        <span className="text-gray-300">—</span>
-      ) : (
-        <button onClick={onClick}
-          className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
+  // Ячейка суммы — кликабельна для drill-down
+  const AmtCell = ({ val, onClick, extra = '' }) => (
+    <td className={`px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap ${extra}`}>
+      {val === 0 ? <span className="text-gray-300">—</span> : (
+        <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
           {fmt(val)}
         </button>
       )}
     </td>
   )
 
+  // Ячейка количества — кликабельна если есть onClick
+  const QtyCell = ({ val, onClick, extra = '' }) => (
+    <td className={`px-3 py-2.5 text-right text-xs whitespace-nowrap text-blue-600 ${extra}`}>
+      {val === 0 ? <span className="text-gray-200">—</span> : onClick ? (
+        <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
+          {fmtQty(val)}
+        </button>
+      ) : fmtQty(val)}
+    </td>
+  )
+
+  // Ячейка остатка со знаком (±)
+  // В режиме qty — только количество, в amount — только сумма, в both — оба
+  const NetCell = ({ debit, credit, qtyDebit, qtyCredit, hasQty, onClick, borderLeft = false }) => {
+    const net    = calcNet(debit, credit)
+    const netQty = hasQty ? calcNet(qtyDebit ?? 0, qtyCredit ?? 0) : 0
+    const bl     = borderLeft ? 'border-l border-gray-100' : ''
+
+    // Что показываем основным значением
+    const showQtyOnly = displayMode === 'qty'
+    const showAmt     = displayMode !== 'qty'   // amount или both
+    const showQtySub  = displayMode === 'both' && hasQty  // количество под суммой
+
+    const mainVal   = showQtyOnly ? netQty : net
+    const mainFmt   = showQtyOnly
+      ? (netQty === 0 ? null : fmtQty(Math.abs(netQty)) + (netQty < 0 ? ' ↓' : ' ↑'))
+      : fmtNet(net)
+    const mainColor = mainVal > 0 ? 'text-green-700' : mainVal < 0 ? 'text-red-600' : 'text-gray-300'
+
+    return (
+      <td className={`px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap ${mainColor} ${bl}`}>
+        {mainFmt === null ? <span className="text-gray-300">—</span> : (
+          <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
+            {mainFmt}
+          </button>
+        )}
+        {showQtySub && (
+          <div className={`text-[10px] ${netQty > 0 ? 'text-green-500' : netQty < 0 ? 'text-red-400' : 'text-gray-200'}`}>
+            {netQty === 0 ? '—' : fmtQty(Math.abs(netQty)) + (netQty < 0 ? ' ↓' : ' ↑')}
+          </div>
+        )}
+      </td>
+    )
+  }
+
+  // Рендерим группу ячеек в зависимости от balanceMode + displayMode
+  // hasQty — есть ли количественный учёт у этого счёта/строки
+  const renderCells = (row, hasQty, onClickDt, onClickKt, borderLeft = false) => {
+    const bl = borderLeft ? 'border-l border-gray-100' : ''
+
+    // ── Режим ± (остаток со знаком) ────────────────────────────────────────
+    if (balanceMode === 'net') {
+      const openingNetQty = calcNet(row.qty_opening ?? 0, row.qty_opening_neg ?? 0)
+      const closingNetQty = calcNet(row.qty_closing ?? 0, row.qty_closing_neg ?? 0)
+      return <>
+        <NetCell
+          debit={row.opening_debit} credit={row.opening_credit}
+          qtyDebit={row.qty_opening} qtyCredit={row.qty_opening_neg}
+          hasQty={hasQty} onClick={onClickDt}
+        />
+        {displayMode === 'qty' ? <>
+          <QtyCell val={hasQty ? (row.qty_debit  ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
+          <QtyCell val={hasQty ? (row.qty_credit ?? 0) : 0} extra="text-red-500"            onClick={hasQty ? onClickKt : undefined} />
+        </> : displayMode === 'both' ? <>
+          <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+            <button onClick={onClickDt} className="hover:underline block w-full">{row.debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.debit)}</button>
+            {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_debit ?? 0)}</span>}
+          </td>
+          <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+            <button onClick={onClickKt} className="hover:underline block w-full">{row.credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.credit)}</button>
+            {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_credit ?? 0)}</span>}
+          </td>
+        </> : <>
+          <AmtCell val={row.debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />
+          <AmtCell val={row.credit} extra="text-red-600"           onClick={onClickKt} />
+        </>}
+        <NetCell
+          debit={row.closing_debit} credit={row.closing_credit}
+          qtyDebit={row.qty_closing} qtyCredit={row.qty_closing_neg}
+          hasQty={hasQty} onClick={onClickDt} borderLeft
+        />
+      </>
+    }
+    if (displayMode === 'amount') {
+      return <>
+        <AmtCell val={row.opening_debit}  extra="text-green-700" onClick={onClickDt} />
+        <AmtCell val={row.opening_credit} extra="text-red-600"   onClick={onClickKt} />
+        <AmtCell val={row.debit}          extra={`text-green-700 ${bl}`} onClick={onClickDt} />
+        <AmtCell val={row.credit}         extra="text-red-600"   onClick={onClickKt} />
+        <AmtCell val={row.closing_debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />
+        <AmtCell val={row.closing_credit} extra="text-red-600"   onClick={onClickKt} />
+      </>
+    }
+    if (displayMode === 'qty') {
+      return <>
+        <QtyCell val={hasQty ? (row.qty_opening    ?? 0) : 0} extra="text-green-600" onClick={hasQty ? onClickDt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_opening_neg ?? 0) : 0} extra="text-red-500"  onClick={hasQty ? onClickKt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_debit      ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_credit     ?? 0) : 0} extra="text-red-500"  onClick={hasQty ? onClickKt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_closing    ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_closing_neg ?? 0) : 0} extra="text-red-500" onClick={hasQty ? onClickKt : undefined} />
+      </>
+    }
+    // both — два ряда в одной ячейке
+    return <>
+      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-green-700">
+        <button onClick={onClickDt} className="hover:underline block w-full">{row.opening_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_debit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening ?? 0)}</span>}
+      </td>
+      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+        <button onClick={onClickKt} className="hover:underline block w-full">{row.opening_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_credit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening_neg ?? 0)}</span>}
+      </td>
+      <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+        <button onClick={onClickDt} className="hover:underline block w-full">{row.debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.debit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_debit ?? 0)}</span>}
+      </td>
+      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+        <button onClick={onClickKt} className="hover:underline block w-full">{row.credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.credit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_credit ?? 0)}</span>}
+      </td>
+      <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+        <button onClick={onClickDt} className="hover:underline block w-full">{row.closing_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_debit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing ?? 0)}</span>}
+      </td>
+      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+        <button onClick={onClickKt} className="hover:underline block w-full">{row.closing_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_credit)}</button>
+        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing_neg ?? 0)}</span>}
+      </td>
+    </>
+  }
+
   return (
     <Layout>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-gray-800">Оборотно-сальдовая ведомость</h2>
-        
-        <button 
-          onClick={exportToExcel}
-          disabled={loading || data.length === 0}
-          className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-sm font-medium transition-all shadow-sm active:scale-95 disabled:opacity-50"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          Экспорт в Excel
-        </button>
+
+        <div className="flex items-center gap-3">
+          {/* Переключатель остаток/Дт+Кт */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+            {[
+              { key: 'net',          label: '±',     title: 'Остаток со знаком' },
+              { key: 'debit_credit', label: 'Дт/Кт', title: 'Дебет и кредит раздельно' },
+            ].map(m => (
+              <button key={m.key} type="button" title={m.title}
+                onClick={() => setBalanceMode(m.key)}
+                className={`px-3 py-1.5 transition-colors ${
+                  balanceMode === m.key ? 'bg-blue-900 text-white' : 'text-gray-500 hover:bg-gray-50'
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Иерархия счетов */}
+          <button type="button"
+            onClick={() => setHierarchyAccounts(v => !v)}
+            title={hierarchyAccounts ? 'Иерархия счетов включена' : 'Плоский список счетов'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              hierarchyAccounts
+                ? 'bg-blue-900 text-white border-blue-900'
+                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+            }`}>
+            <span>⊟</span>
+            <span>Счета</span>
+          </button>
+
+          {/* Переключатель Σ / # / Σ+# */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+            {[
+              { key: 'amount', label: 'Σ',   title: 'Только суммы' },
+              { key: 'qty',    label: '#',   title: 'Только количество' },
+              { key: 'both',   label: 'Σ+#', title: 'Суммы и количество' },
+            ].map(m => (
+              <button key={m.key} type="button" title={m.title}
+                onClick={() => setDisplayMode(m.key)}
+                className={`px-3 py-1.5 transition-colors ${
+                  displayMode === m.key
+                    ? 'bg-blue-900 text-white'
+                    : 'text-gray-500 hover:bg-gray-50'
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={exportToExcel}
+            disabled={loading || data.length === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-green-700 hover:bg-green-800 text-white rounded-lg text-sm font-medium transition-all shadow-sm active:scale-95 disabled:opacity-50"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Экспорт в Excel
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-2">
@@ -443,43 +675,61 @@ export default function BalanceSheetPage() {
           </div>
         </div>
 
-        {/* ── Строка 3: порядок + иерархия + раскрыть/свернуть ── */}
-        {infoTypes.length > 0 && (
+        {/* ── Строка 3: порядок аналитик + управление раскрытием ── */}
+        {(infoTypes.length > 0 || hierarchyAccounts) && (
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex gap-1.5 flex-wrap">
-              {infoTypes.map((type, idx) => {
-                const label  = INFO_TYPES.find(t => t.value === type)?.label || type
-                const isHier = hierarchyTypes.has(type)
-                return (
-                  <div key={type}
-                    draggable
-                    onDragStart={() => handleDragStart(idx)}
-                    onDragOver={e => handleDragOver(e, idx)}
-                    onDragEnd={handleDragEnd}
-                    className="flex items-center gap-0 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-700 select-none overflow-hidden">
-                    <div className="flex items-center gap-1 px-2.5 py-1 cursor-grab active:cursor-grabbing">
-                      <span className="text-blue-300">⠿</span>
-                      {infoTypes.length > 1 && <span className="font-medium">{idx + 1}.</span>}
-                      <span>{label}</span>
+            {/* Пилюли аналитик */}
+            {infoTypes.length > 0 && (
+              <div className="flex gap-1.5 flex-wrap">
+                {infoTypes.map((type, idx) => {
+                  const label  = INFO_TYPES.find(t => t.value === type)?.label || type
+                  const isHier = hierarchyTypes.has(type)
+                  return (
+                    <div key={type}
+                      draggable
+                      onDragStart={() => handleDragStart(idx)}
+                      onDragOver={e => handleDragOver(e, idx)}
+                      onDragEnd={handleDragEnd}
+                      className="flex items-center gap-0 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-700 select-none overflow-hidden">
+                      <div className="flex items-center gap-1 px-2.5 py-1 cursor-grab active:cursor-grabbing">
+                        <span className="text-blue-300">⠿</span>
+                        {infoTypes.length > 1 && <span className="font-medium">{idx + 1}.</span>}
+                        <span>{label}</span>
+                      </div>
+                      <div className="w-px h-5 bg-blue-200" />
+                      <button type="button" onClick={() => toggleHierarchy(type)}
+                        title={isHier ? 'Иерархия — нажмите для плоского' : 'Плоско — нажмите для иерархии'}
+                        className={`px-2 py-1 transition-colors ${isHier ? 'bg-blue-900 text-white' : 'text-blue-400 hover:text-blue-700 hover:bg-blue-100'}`}>
+                        {isHier ? '⊞' : '≡'}
+                      </button>
                     </div>
-                    <div className="w-px h-5 bg-blue-200" />
-                    <button type="button" onClick={() => toggleHierarchy(type)}
-                      title={isHier ? 'Иерархия — нажмите для плоского' : 'Плоско — нажмите для иерархии'}
-                      className={`px-2 py-1 transition-colors ${isHier ? 'bg-blue-900 text-white' : 'text-blue-400 hover:text-blue-700 hover:bg-blue-100'}`}>
-                      {isHier ? '⊞' : '≡'}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-            {infoTypes.length > 1 && (
-              <span className="text-xs text-gray-400">← перетащите для порядка</span>
+                  )
+                })}
+                {infoTypes.length > 1 && (
+                  <span className="text-xs text-gray-400 self-center">← перетащите для порядка</span>
+                )}
+              </div>
             )}
-            {data.filter(r => r.has_analytics && r.children?.length > 0).length > 0 && (
+
+            {/* Разделитель если есть и аналитика и иерархия счетов */}
+            {infoTypes.length > 0 && hierarchyAccounts && (
+              <span className="text-gray-300">|</span>
+            )}
+
+            {/* Раскрыть/свернуть счета */}
+            {hierarchyAccounts && collectAccountIds(data).length > 0 && (
+              <>
+                <button onClick={expandAllAccounts}   className="text-xs text-blue-600 hover:underline">Раскрыть счета</button>
+                <button onClick={collapseAllAccounts} className="text-xs text-gray-400 hover:underline">Свернуть счета</button>
+              </>
+            )}
+
+            {/* Раскрыть/свернуть аналитику */}
+            {infoTypes.length > 0 && data.filter(r => r.has_analytics && r.children?.length > 0).length > 0 && (
               <>
                 <span className="text-gray-300">|</span>
-                <button onClick={expandAll}   className="text-xs text-blue-600 hover:underline">Раскрыть все</button>
-                <button onClick={collapseAll} className="text-xs text-gray-400 hover:underline">Свернуть все</button>
+                <button onClick={expandAll}   className="text-xs text-blue-600 hover:underline">Раскрыть аналитику</button>
+                <button onClick={collapseAll} className="text-xs text-gray-400 hover:underline">Свернуть аналитику</button>
               </>
             )}
           </div>
@@ -490,56 +740,99 @@ export default function BalanceSheetPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-2 text-xs text-gray-500 uppercase tracking-wide" rowSpan={2}>Счёт</th>
-              <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100" colSpan={2}>Сальдо начальное</th>
-              <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Обороты за период</th>
-              <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Сальдо конечное</th>
+              <th className="text-left px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-r border-gray-200" rowSpan={2}>Счёт</th>
+              {balanceMode === 'net' ? <>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100">Остаток нач.</th>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Обороты за период</th>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200">Остаток кон.</th>
+              </> : <>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100" colSpan={2}>Сальдо начальное</th>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Обороты за период</th>
+                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Сальдо конечное</th>
+              </>}
             </tr>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-right px-4 py-2 text-xs text-green-600 font-medium">Дебет</th>
-              <th className="text-right px-4 py-2 text-xs text-red-500 font-medium">Кредит</th>
-              <th className="text-right px-4 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
-              <th className="text-right px-4 py-2 text-xs text-red-500 font-medium">Кредит</th>
-              <th className="text-right px-4 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
-              <th className="text-right px-4 py-2 text-xs text-red-500 font-medium">Кредит</th>
+              {balanceMode === 'net' ? <>
+                <th className="text-right px-3 py-2 text-xs text-gray-500 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# ±' : '±'}</th>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# Дт' : 'Дт'}</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">{displayMode === 'qty' ? '# Кт' : 'Кт'}</th>
+                <th className="text-right px-3 py-2 text-xs text-gray-500 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# ±' : '±'}</th>
+              </> : displayMode === 'qty' ? <>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
+              </> : <>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
+                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
+                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
+              </>}
             </tr>
           </thead>
           <tbody>
             {data.length === 0 && !loading ? (
               <tr><td colSpan={7} className="text-center py-12 text-gray-400">Нет данных за выбранный период</td></tr>
-            ) : data.map(row => {
+            ) : (hierarchyAccounts ? flattenAccountTree(data, expandedAccounts) : data).map(row => {
+              const depth       = row._depth ?? 0
+              const hasAccChildren = row.account_children?.length > 0
+              const isAccExpanded  = row._expanded ?? false
               const hasChildren = row.has_analytics && row.children?.length > 0
               const isExpanded  = expanded.has(row.bi_id)
-              
               const flatChildren = isExpanded ? flattenServerTree(row.children || [], expandedInfo, row.bi_id) : []
+              // Строки-агрегаторы (родительские счета без собственных данных) — серый фон
+              const isAggregate = hierarchyAccounts && hasAccChildren
 
               return [
-                <tr key={row.bi_id}
-                  className={`border-b border-gray-100 transition-colors ${hasChildren ? 'cursor-pointer hover:bg-blue-50' : 'hover:bg-gray-50'} ${isExpanded ? 'bg-blue-50' : ''}`}
-                  onClick={() => hasChildren && toggleExpand(row.bi_id)}
+                <tr key={`acc-${row.bi_id}`}
+                  className={`border-b border-gray-100 transition-colors hover:bg-gray-50 ${isAggregate ? 'bg-gray-50/60' : ''} ${isExpanded ? 'bg-blue-50' : ''}`}
                 >
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 flex items-center justify-center">
-                        {hasChildren && (
-                          <svg 
-                            className={`w-2.5 h-2.5 text-gray-400 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} 
-                            viewBox="0 0 24 24" fill="currentColor"
-                          >
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
+                  <td className="px-4 py-2.5 border-r border-gray-200">
+                    <div className="flex items-center gap-1" style={{ paddingLeft: depth * 20 }}>
+                      {/* Кнопка раскрытия дочерних счетов */}
+                      <div className="w-4 flex items-center justify-center flex-shrink-0">
+                        {hasAccChildren ? (
+                          <button type="button" onClick={() => toggleAccount(row.bi_id)}
+                            className="text-gray-400 hover:text-gray-600 transition-colors">
+                            <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${isAccExpanded ? 'rotate-90' : ''}`}
+                              viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </button>
+                        ) : (
+                          depth > 0 ? <span className="text-gray-200 text-xs">└</span> : null
                         )}
                       </div>
-                      <span className="font-mono text-xs font-semibold text-gray-700">{row.code}</span>
-                      <span className="text-xs text-gray-500">{row.name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
+                      {/* Кнопка раскрытия аналитики */}
+                      <div className="w-4 flex items-center justify-center flex-shrink-0">
+                        {hasChildren && (
+                          <button type="button" onClick={() => toggleExpand(row.bi_id)}
+                            className="text-gray-400 hover:text-blue-500 transition-colors">
+                            <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                              viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      <span className={`font-mono text-xs font-semibold ${isAggregate ? 'text-gray-500' : 'text-gray-700'}`}>
+                        {row.code}
+                      </span>
+                      <span className={`text-xs ml-1 ${isAggregate ? 'text-gray-400 font-medium' : 'text-gray-500'}`}>
+                        {row.name?.replace(/^[А-ЯA-Z]\d+\s/, '')}
+                      </span>
                     </div>
                   </td>
-                  <NumCell val={row.opening_debit}  extra="text-green-700" onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо нач. Дт`, row.bi_id, 'both') }} />
-                  <NumCell val={row.opening_credit} extra="text-red-600"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо нач. Кт`, row.bi_id, 'both') }} />
-                  <NumCell val={row.debit}          extra="text-green-700 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} — обороты Дт`, row.bi_id, 'debit') }} />
-                  <NumCell val={row.credit}         extra="text-red-600"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} — обороты Кт`, row.bi_id, 'credit') }} />
-                  <NumCell val={row.closing_debit}  extra="text-green-700 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо кон. Дт`, row.bi_id, 'both') }} />
-                  <NumCell val={row.closing_credit} extra="text-red-600"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо кон. Кт`, row.bi_id, 'both') }} />
+                  {renderCells(
+                    row, row.has_quantity,
+                    e => { e.stopPropagation(); openDrill(`${row.code} — Дт`, row.bi_id, 'debit') },
+                    e => { e.stopPropagation(); openDrill(`${row.code} — Кт`, row.bi_id, 'credit') },
+                    true
+                  )}
                 </tr>,
                 ...flatChildren.map(child => {
                   const hasInnerChildren = child.children?.length > 0
@@ -554,7 +847,7 @@ export default function BalanceSheetPage() {
                           return next
                         })}
                     >
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-2 border-r border-gray-200">
                         <div className="flex items-center gap-2" style={{ paddingLeft: 32 + child.depth * 20 }}>
                           {hasInnerChildren ? (
                             <button type="button" className="text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center rounded">
@@ -580,12 +873,12 @@ export default function BalanceSheetPage() {
                           </div>
                         </div>
                       </td>
-                      <NumCell val={child.opening_debit}  extra="text-green-600" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Дт`, row.bi_id, 'both', child.info_id) }} />
-                      <NumCell val={child.opening_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Кт`, row.bi_id, 'both', child.info_id) }} />
-                      <NumCell val={child.debit}          extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Дт`, row.bi_id, 'debit', child.info_id) }} />
-                      <NumCell val={child.credit}         extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — обороты Кт`, row.bi_id, 'credit', child.info_id) }} />
-                      <NumCell val={child.closing_debit}  extra="text-green-600 border-l border-gray-100" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Дт`, row.bi_id, 'both', child.info_id) }} />
-                      <NumCell val={child.closing_credit} extra="text-red-400"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо кон. Кт`, row.bi_id, 'both', child.info_id) }} />
+                      {renderCells(
+                        child, row.has_quantity,
+                        e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — Дт`, row.bi_id, 'debit', child.info_id) },
+                        e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — Кт`, row.bi_id, 'credit', child.info_id) },
+                        true
+                      )}
                     </tr>
                   )
                 })
@@ -595,13 +888,35 @@ export default function BalanceSheetPage() {
           {data.length > 0 && (
             <tfoot>
               <tr className="bg-gray-50 border-t-2 border-gray-200">
-                <td className="px-4 py-2.5 text-xs font-bold text-gray-700 pl-9">Итого</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-green-700">{fmt(totals.opening_debit)}</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.opening_credit)}</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.debit)}</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.credit)}</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.closing_debit)}</td>
-                <td className="px-4 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.closing_credit)}</td>
+                <td className="px-4 py-2.5 text-xs font-bold text-gray-700 pl-9 border-r border-gray-200">Итого</td>
+                {balanceMode === 'net' ? <>
+                  {(() => {
+                    const net    = calcNet(totals.opening_debit, totals.opening_credit)
+                    const netCls = net > 0 ? 'text-green-700' : net < 0 ? 'text-red-600' : 'text-gray-400'
+                    const netE   = calcNet(totals.closing_debit, totals.closing_credit)
+                    const netECls= netE > 0 ? 'text-green-700' : netE < 0 ? 'text-red-600' : 'text-gray-400'
+                    return <>
+                      <td className={`px-3 py-2.5 text-right text-xs font-bold ${netCls}`}>{fmtNet(net) ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.debit)}</td>
+                      <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.credit)}</td>
+                      <td className={`px-3 py-2.5 text-right text-xs font-bold ${netECls} border-l border-gray-100`}>{fmtNet(netE) ?? '—'}</td>
+                    </>
+                  })()}
+                </> : displayMode === 'qty' ? <>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700">—</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">—</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">—</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
+                </> : <>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700">{fmt(totals.opening_debit)}</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.opening_credit)}</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.debit)}</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.credit)}</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.closing_debit)}</td>
+                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.closing_credit)}</td>
+                </>}
               </tr>
             </tfoot>
           )}
@@ -629,7 +944,8 @@ export default function BalanceSheetPage() {
                       <th className="text-left px-4 py-3">Дебет</th>
                       <th className="text-left px-4 py-3">Кредит</th>
                       <th className="text-right px-4 py-3">Сумма</th>
-                      <th className="text-left px-4 py-3">Комментарий</th>
+                      <th className="text-right px-4 py-3 text-blue-500">#</th>
+                      <th className="text-left px-4 py-3">Содержание</th>
                       <th className="px-4 py-3 w-10"></th>
                     </tr>
                   </thead>
@@ -655,14 +971,31 @@ export default function BalanceSheetPage() {
                           {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_2_name}</div>}
                         </td>
                         <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{fmt(op.amount)}</td>
-                        <td className="px-4 py-3 text-sm text-gray-500">{op.note || '—'}</td>
+                        <td className="px-4 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
+                          {op.quantity ? fmtQty(op.quantity) : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500">{op.note || op.content || '—'}</td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setEditOp(op)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
-                          >
-                            ✎
-                          </button>
+                          {op.table_name === 'documents' && op.table_id ? (
+                            <button
+                              onClick={() => {
+                                setDrillModal(null)
+                                navigate(`/documents?open=${op.table_id}`)
+                              }}
+                              title="Открыть документ"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                            >
+                              📄
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setEditOp(op)}
+                              title="Редактировать"
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                            >
+                              ✎
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -675,7 +1008,7 @@ export default function BalanceSheetPage() {
                       <td className="px-4 py-2 text-right text-xs font-bold text-gray-800 whitespace-nowrap">
                         {fmt(drillModal.ops.reduce((s, op) => s + parseFloat(op.amount), 0))}
                       </td>
-                      <td colSpan={2}></td>
+                      <td colSpan={3}></td>
                     </tr>
                   </tfoot>
                 </table>

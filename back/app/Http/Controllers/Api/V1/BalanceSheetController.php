@@ -25,8 +25,9 @@ class BalanceSheetController extends TenantController
     {
         $this->initTenant($request);
 
-        $biFilter      = $request->bi_id      ? (int)$request->bi_id      : null;
-        $projectFilter = $request->project_id ? (int)$request->project_id : null;
+        $biFilter         = $request->bi_id      ? (int)$request->bi_id      : null;
+        $projectFilter    = $request->project_id ? (int)$request->project_id : null;
+        $hierarchyAccounts = (bool) $request->hierarchy_accounts;
         $dateFrom  = $request->date_from ?? date('Y-m-01');
         $dateTo    = $request->date_to   ?? date('Y-m-t');
 
@@ -65,7 +66,9 @@ class BalanceSheetController extends TenantController
             ->where('date', '<', $dateFrom)
             ->when($biFilter,      fn($q) => $q->where('bi_id',      $biFilter))
             ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
-            ->select('bi_id', 'info_1_id', 'info_2_id', 'info_3_id', DB::raw('SUM(amount) as balance'))
+            ->select('bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
+                DB::raw('SUM(amount)   as balance'),
+                DB::raw('SUM(quantity) as qty_balance'))
             ->groupBy('bi_id', 'info_1_id', 'info_2_id', 'info_3_id')
             ->get();
 
@@ -78,7 +81,9 @@ class BalanceSheetController extends TenantController
             ->select(
                 'bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
                 DB::raw('SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as debit'),
-                DB::raw('SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as credit')
+                DB::raw('SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as credit'),
+                DB::raw('SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) as qty_debit'),
+                DB::raw('SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) as qty_credit')
             )
             ->groupBy('bi_id', 'info_1_id', 'info_2_id', 'info_3_id')
             ->get();
@@ -91,27 +96,34 @@ class BalanceSheetController extends TenantController
             $biId = $row->bi_id;
             $key  = $this->makeKey($row);
             if (!isset($map[$biId][$key])) {
-                $map[$biId][$key] = ['opening' => 0, 'debit' => 0, 'credit' => 0,
+                $map[$biId][$key] = [
+                    'opening' => 0, 'debit' => 0, 'credit' => 0,
+                    'qty_opening' => 0, 'qty_debit' => 0, 'qty_credit' => 0,
                     'info_1_id' => (int)($row->info_1_id ?? 0),
                     'info_2_id' => (int)($row->info_2_id ?? 0),
                     'info_3_id' => (int)($row->info_3_id ?? 0),
                 ];
             }
-            $map[$biId][$key]['opening'] += (float) $row->balance;
+            $map[$biId][$key]['opening']     += (float) $row->balance;
+            $map[$biId][$key]['qty_opening'] += (float) $row->qty_balance;
         }
 
         foreach ($turnoversRows as $row) {
             $biId = $row->bi_id;
             $key  = $this->makeKey($row);
             if (!isset($map[$biId][$key])) {
-                $map[$biId][$key] = ['opening' => 0, 'debit' => 0, 'credit' => 0,
+                $map[$biId][$key] = [
+                    'opening' => 0, 'debit' => 0, 'credit' => 0,
+                    'qty_opening' => 0, 'qty_debit' => 0, 'qty_credit' => 0,
                     'info_1_id' => (int)($row->info_1_id ?? 0),
                     'info_2_id' => (int)($row->info_2_id ?? 0),
                     'info_3_id' => (int)($row->info_3_id ?? 0),
                 ];
             }
-            $map[$biId][$key]['debit']  += (float) $row->debit;
-            $map[$biId][$key]['credit'] += (float) $row->credit;
+            $map[$biId][$key]['debit']      += (float) $row->debit;
+            $map[$biId][$key]['credit']     += (float) $row->credit;
+            $map[$biId][$key]['qty_debit']  += (float) $row->qty_debit;
+            $map[$biId][$key]['qty_credit'] += (float) $row->qty_credit;
         }
 
         // ── Загружаем все info элементы которые встречаются ──────────────────
@@ -176,10 +188,15 @@ class BalanceSheetController extends TenantController
             $bi      = $balanceItems->get($biId);
             $details = $map[$biId];
 
-            $totalOpening = array_sum(array_column($details, 'opening'));
-            $totalDebit   = array_sum(array_column($details, 'debit'));
-            $totalCredit  = array_sum(array_column($details, 'credit'));
-            $totalClosing = $totalOpening + $totalDebit - $totalCredit;
+            $totalOpening    = array_sum(array_column($details, 'opening'));
+            $totalDebit      = array_sum(array_column($details, 'debit'));
+            $totalCredit     = array_sum(array_column($details, 'credit'));
+            $totalClosing    = $totalOpening + $totalDebit - $totalCredit;
+            $qtyOpening      = array_sum(array_column($details, 'qty_opening'));
+            $qtyDebit        = array_sum(array_column($details, 'qty_debit'));
+            $qtyCredit       = array_sum(array_column($details, 'qty_credit'));
+            $qtyClosing      = $qtyOpening + $qtyDebit - $qtyCredit;
+            $hasQty          = (bool) ($bi?->has_quantity ?? false);
 
             // Есть ли хоть одна из запрошенных аналитик у этого счёта
             $activeInfoTypes = [];
@@ -205,21 +222,36 @@ class BalanceSheetController extends TenantController
                 'code'           => $bi?->code ?? '?',
                 'name'           => $bi?->name ?? 'Неизвестный счёт',
                 'has_analytics'  => $hasAnalytics,
+                'has_quantity'   => $hasQty,
                 'opening_debit'  => $totalOpening >= 0 ? $totalOpening : 0,
                 'opening_credit' => $totalOpening < 0  ? abs($totalOpening) : 0,
                 'debit'          => $totalDebit,
                 'credit'         => $totalCredit,
                 'closing_debit'  => $totalClosing >= 0 ? $totalClosing : 0,
                 'closing_credit' => $totalClosing < 0  ? abs($totalClosing) : 0,
+                'qty_opening'    => $qtyOpening >= 0 ? $qtyOpening : 0,
+                'qty_opening_neg'=> $qtyOpening < 0  ? abs($qtyOpening) : 0,
+                'qty_debit'      => $qtyDebit,
+                'qty_credit'     => $qtyCredit,
+                'qty_closing'    => $qtyClosing >= 0 ? $qtyClosing : 0,
+                'qty_closing_neg'=> $qtyClosing < 0  ? abs($qtyClosing) : 0,
                 'children'       => $children,
             ];
         }
 
+        // ── Иерархия счетов ──────────────────────────────────────────────────
+        // Если запрошена иерархия — строим дерево по parent_id balance_items.
+        // Родительские узлы суммируют все дочерние.
+        if ($hierarchyAccounts) {
+            $rows = $this->buildAccountHierarchy($rows, $balanceItems, null);
+        }
+
         return response()->json([
-            'data'       => $rows,
-            'date_from'  => $dateFrom,
-            'date_to'    => $dateTo,
-            'info_types' => $infoTypes,
+            'data'              => $rows,
+            'date_from'         => $dateFrom,
+            'date_to'           => $dateTo,
+            'info_types'        => $infoTypes,
+            'hierarchy_accounts'=> $hierarchyAccounts,
         ]);
     }
 
@@ -317,10 +349,14 @@ class BalanceSheetController extends TenantController
                 continue;
             }
 
-            $opening = array_sum(array_column($aggregated, 'opening'));
-            $debit   = array_sum(array_column($aggregated, 'debit'));
-            $credit  = array_sum(array_column($aggregated, 'credit'));
-            $closing = $opening + $debit - $credit;
+            $opening    = array_sum(array_column($aggregated, 'opening'));
+            $debit      = array_sum(array_column($aggregated, 'debit'));
+            $credit     = array_sum(array_column($aggregated, 'credit'));
+            $closing    = $opening + $debit - $credit;
+            $qtyOpening = array_sum(array_column($aggregated, 'qty_opening'));
+            $qtyDebit   = array_sum(array_column($aggregated, 'qty_debit'));
+            $qtyCredit  = array_sum(array_column($aggregated, 'qty_credit'));
+            $qtyClosing = $qtyOpening + $qtyDebit - $qtyCredit;
 
             // Рекурсивно строим дочерние узлы этого уровня
             $innerChildren = $this->buildInfoHierarchy(
@@ -330,7 +366,6 @@ class BalanceSheetController extends TenantController
             // Следующий уровень аналитики (если есть)
             $nextLevelChildren = [];
             if (empty($innerChildren) && $level + 1 < count($infoTypes)) {
-                // Листовой узел — строим следующий тип аналитики
                 $nextLevelChildren = $this->buildChildren(
                     $aggregated, $infoTypes, $fieldMap, $infoItems, $infoTree, $level + 1
                 );
@@ -348,17 +383,27 @@ class BalanceSheetController extends TenantController
                 'credit'         => $credit,
                 'closing_debit'  => $closing >= 0 ? $closing : 0,
                 'closing_credit' => $closing < 0  ? abs($closing) : 0,
+                'qty_opening'    => $qtyOpening >= 0 ? $qtyOpening : 0,
+                'qty_opening_neg'=> $qtyOpening < 0  ? abs($qtyOpening) : 0,
+                'qty_debit'      => $qtyDebit,
+                'qty_credit'     => $qtyCredit,
+                'qty_closing'    => $qtyClosing >= 0 ? $qtyClosing : 0,
+                'qty_closing_neg'=> $qtyClosing < 0  ? abs($qtyClosing) : 0,
                 'children'       => $subChildren,
             ];
         }
 
         // Добавляем "Без аналитики" если есть строки с info_id = 0
         if (isset($flatGrouped[0]) && $parentId === null) {
-            $rows    = $flatGrouped[0];
-            $opening = array_sum(array_column($rows, 'opening'));
-            $debit   = array_sum(array_column($rows, 'debit'));
-            $credit  = array_sum(array_column($rows, 'credit'));
-            $closing = $opening + $debit - $credit;
+            $rows       = $flatGrouped[0];
+            $opening    = array_sum(array_column($rows, 'opening'));
+            $debit      = array_sum(array_column($rows, 'debit'));
+            $credit     = array_sum(array_column($rows, 'credit'));
+            $closing    = $opening + $debit - $credit;
+            $qtyOpening = array_sum(array_column($rows, 'qty_opening'));
+            $qtyDebit   = array_sum(array_column($rows, 'qty_debit'));
+            $qtyCredit  = array_sum(array_column($rows, 'qty_credit'));
+            $qtyClosing = $qtyOpening + $qtyDebit - $qtyCredit;
             $nodes[] = [
                 'info_id'        => null,
                 'info_type'      => $infoTypes[$level],
@@ -369,6 +414,12 @@ class BalanceSheetController extends TenantController
                 'credit'         => $credit,
                 'closing_debit'  => $closing >= 0 ? $closing : 0,
                 'closing_credit' => $closing < 0  ? abs($closing) : 0,
+                'qty_opening'    => $qtyOpening >= 0 ? $qtyOpening : 0,
+                'qty_opening_neg'=> $qtyOpening < 0  ? abs($qtyOpening) : 0,
+                'qty_debit'      => $qtyDebit,
+                'qty_credit'     => $qtyCredit,
+                'qty_closing'    => $qtyClosing >= 0 ? $qtyClosing : 0,
+                'qty_closing_neg'=> $qtyClosing < 0  ? abs($qtyClosing) : 0,
                 'children'       => [],
             ];
         }
@@ -400,6 +451,96 @@ class BalanceSheetController extends TenantController
             $ids   = array_merge($ids, $this->getAllDescendantIds($child->id, $typeItems));
         }
         return $ids;
+    }
+
+    /**
+     * Строим иерархическое дерево счетов по parent_id из balance_items.
+     *
+     * Для каждого родительского счёта суммируем данные всех дочерних рекурсивно.
+     * Счета у которых нет данных и нет детей с данными — пропускаем.
+     *
+     * @param array  $flatRows     Плоский массив строк (уже с данными)
+     * @param \Illuminate\Support\Collection $balanceItems  Все счета keyBy(id)
+     * @param int|null $parentId   Текущий родитель (null = корневые)
+     * @return array
+     */
+    private function buildAccountHierarchy(array $flatRows, $balanceItems, ?int $parentId): array
+    {
+        // Индексируем flatRows по bi_id для быстрого доступа
+        $rowsByBiId = [];
+        foreach ($flatRows as $row) {
+            $rowsByBiId[$row['bi_id']] = $row;
+        }
+
+        return $this->buildAccountLevel($rowsByBiId, $balanceItems, $parentId);
+    }
+
+    private function buildAccountLevel(array $rowsByBiId, $balanceItems, ?int $parentId): array
+    {
+        // Находим прямых детей данного родителя
+        $children = $balanceItems->filter(fn($bi) => $bi->parent_id === $parentId)
+            ->sortBy('code');
+
+        $nodes = [];
+
+        foreach ($children as $bi) {
+            // Рекурсивно строим детей
+            $childNodes = $this->buildAccountLevel($rowsByBiId, $balanceItems, $bi->id);
+
+            // Берём данные самого счёта (если есть в данных)
+            $ownRow = $rowsByBiId[$bi->id] ?? null;
+
+            // Если нет ни своих данных ни детей — пропускаем
+            if (!$ownRow && empty($childNodes)) {
+                continue;
+            }
+
+            // Суммируем данные — собственные + все дочерние рекурсивно
+            $totals = $this->sumAccountNodes($ownRow, $childNodes);
+
+            $nodes[] = array_merge($totals, [
+                'bi_id'         => $bi->id,
+                'code'          => $bi->code,
+                'name'          => $bi->name,
+                'has_analytics' => $ownRow['has_analytics'] ?? false,
+                'has_quantity'  => $ownRow['has_quantity']  ?? (bool)($bi->has_quantity ?? false),
+                'account_children' => $childNodes,  // дочерние счета
+                'children'      => $ownRow['children'] ?? [],  // аналитика
+            ]);
+        }
+
+        return $nodes;
+    }
+
+    /**
+     * Суммируем числовые поля — собственная строка + рекурсивно все дочерние узлы.
+     */
+    private function sumAccountNodes(?array $ownRow, array $childNodes): array
+    {
+        $fields = [
+            'opening_debit', 'opening_credit', 'debit', 'credit',
+            'closing_debit', 'closing_credit',
+            'qty_opening', 'qty_opening_neg', 'qty_debit', 'qty_credit',
+            'qty_closing', 'qty_closing_neg',
+        ];
+
+        $totals = array_fill_keys($fields, 0.0);
+
+        // Добавляем собственные данные
+        if ($ownRow) {
+            foreach ($fields as $f) {
+                $totals[$f] += (float) ($ownRow[$f] ?? 0);
+            }
+        }
+
+        // Добавляем данные всех дочерних узлов
+        foreach ($childNodes as $child) {
+            foreach ($fields as $f) {
+                $totals[$f] += (float) ($child[$f] ?? 0);
+            }
+        }
+
+        return $totals;
     }
 
     /** Составной ключ из трёх info полей */
