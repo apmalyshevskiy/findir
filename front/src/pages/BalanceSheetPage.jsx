@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
+import api from '../api/client'
 import { getBalanceSheet, getBalanceItems, getOperations } from '../api/operations'
 import { getInfo } from '../api/info'
 import OperationForm from '../components/OperationForm'
@@ -39,168 +39,146 @@ const formatDate = (date) =>
     hour: '2-digit', minute: '2-digit'
   })
 
-// --- УМНЫЙ АЛГОРИТМ ПОСТРОЕНИЯ ИЕРАРХИИ С СУММИРОВАНИЕМ ---
-const processHierarchy = (childrenBalances, dictionary, expandedSet = new Set(), biId = '', expandAll = false) => {
-  if (!dictionary || dictionary.length === 0) {
-    return childrenBalances.map(c => ({ ...c, depth: 0, treeChildren: [] }))
-  }
-
-  const balanceMap = {}
-  childrenBalances.forEach(cb => { balanceMap[cb.info_id] = cb })
-
-  const dictMap = {}
-  dictionary.forEach(d => { dictMap[d.id] = d })
-
-  const nodesToKeep = new Set()
-  childrenBalances.forEach(cb => {
-    let currentId = cb.info_id
-    while (currentId && dictMap[currentId]) {
-      nodesToKeep.add(currentId)
-      currentId = dictMap[currentId].parent_id
+// Бэкенд возвращает готовое дерево children[].children[].
+// Разворачиваем его в плоский список с depth и признаком раскрытия.
+const flattenServerTree = (nodes, expandedSet, biId, depth = 0) => {
+  let result = []
+  nodes.forEach(node => {
+    const nodeKey = `${biId}-${node.info_id}-${node.info_type}`
+    const isExp   = expandedSet.has(nodeKey)
+    result.push({ ...node, depth, _key: nodeKey, _expanded: isExp })
+    if (node.children?.length > 0 && isExp) {
+      result = result.concat(flattenServerTree(node.children, expandedSet, biId, depth + 1))
     }
   })
-
-  const enriched = Array.from(nodesToKeep).map(id => {
-    const d = dictMap[id]
-    const b = balanceMap[id] || { 
-      opening_debit: 0, opening_credit: 0, 
-      debit: 0, credit: 0, 
-      closing_debit: 0, closing_credit: 0 
-    }
-    return {
-      info_id: id,
-      info_name: d.name,
-      parent_id: d.parent_id,
-      sort_order: d.sort_order,
-      ...b
-    }
-  })
-
-  const map = {}
-  const roots = []
-  enriched.forEach(item => { map[item.info_id] = { ...item, treeChildren: [] } })
-
-  enriched.forEach(item => {
-    if (item.parent_id && map[item.parent_id]) {
-      map[item.parent_id].treeChildren.push(map[item.info_id])
-    } else {
-      roots.push(map[item.info_id])
-    }
-  })
-
-  const calculateSums = (node) => {
-    let sums = {
-      opening_debit: parseFloat(node.opening_debit) || 0,
-      opening_credit: parseFloat(node.opening_credit) || 0,
-      debit: parseFloat(node.debit) || 0,
-      credit: parseFloat(node.credit) || 0,
-      closing_debit: parseFloat(node.closing_debit) || 0,
-      closing_credit: parseFloat(node.closing_credit) || 0,
-    }
-
-    if (node.treeChildren && node.treeChildren.length > 0) {
-      node.treeChildren.forEach(child => {
-        const childSums = calculateSums(child)
-        sums.opening_debit += childSums.opening_debit
-        sums.opening_credit += childSums.opening_credit
-        sums.debit += childSums.debit
-        sums.credit += childSums.credit
-        sums.closing_debit += childSums.closing_debit
-        sums.closing_credit += childSums.closing_credit
-      })
-    }
-
-    node.opening_debit = sums.opening_debit
-    node.opening_credit = sums.opening_credit
-    node.debit = sums.debit
-    node.credit = sums.credit
-    node.closing_debit = sums.closing_debit
-    node.closing_credit = sums.closing_credit
-
-    return sums
-  }
-
-  roots.forEach(root => calculateSums(root))
-
-  const sortNodes = (nodes) => {
-    nodes.sort((a, b) => {
-      const oA = a.sort_order || 0
-      const oB = b.sort_order || 0
-      if (oA !== oB) return oA - oB
-      return (a.info_name || '').localeCompare(b.info_name || '')
-    })
-    nodes.forEach(n => sortNodes(n.treeChildren))
-  }
-  sortNodes(roots)
-
-  const flatten = (nodes, depth = 0) => {
-    let res = []
-    nodes.forEach(node => {
-      res.push({ ...node, depth })
-      const isExpanded = expandAll || expandedSet.has(`${biId}-${node.info_id}`)
-      if (node.treeChildren?.length > 0 && isExpanded) {
-        res = res.concat(flatten(node.treeChildren, depth + 1))
-      }
-    })
-    return res
-  }
-
-  return flatten(roots)
+  return result
 }
 
+
 export default function BalanceSheetPage() {
-  const navigate = useNavigate()
   const [data, setData]               = useState([])
   const [balanceItems, setBalanceItems] = useState([])
-  const [infoDictionary, setInfoDictionary] = useState([]) 
-  const [filter, setFilter]           = useState(getMonthRange())
-  const [infoType, setInfoType]       = useState('')
-  const [biFilter, setBiFilter]       = useState('')
+  const [projects, setProjects]         = useState([])
+  const [infoDictionaries, setInfoDictionaries] = useState({})
+  const [filter, setFilter]             = useState(getMonthRange())
+  const [projectFilter, setProjectFilter] = useState('')
+  const [infoTypes, setInfoTypes]       = useState([])
+  const [hierarchyTypes, setHierarchyTypes] = useState(new Set())
+  const [biFilter, setBiFilter]         = useState('')
+  const [showExtraFilters, setShowExtraFilters] = useState(false)
   const [loading, setLoading]         = useState(false)
   const [expanded, setExpanded]       = useState(new Set())
   const [expandedInfo, setExpandedInfo] = useState(new Set())
   const [drillModal, setDrillModal]   = useState(null)
   const [drillLoading, setDrillLoading] = useState(false)
   const [editOp, setEditOp]           = useState(null)
+  const dragIdx = useRef(null) // для drag-and-drop порядка аналитик
 
   useEffect(() => {
     getBalanceItems().then(res => setBalanceItems(res.data.data))
+    api.get('/projects')
+      .then(res => {
+        const list = res.data.data || res.data || []
+        setProjects(list)
+        if (list.length > 0) setProjectFilter(String(list[0].id))
+      })
+      .catch(() => {
+        // /projects недоступен — работаем без фильтра проектов
+      })
   }, [])
 
+  // Загружаем справочники для всех выбранных типов аналитик
   useEffect(() => {
-    if (infoType) {
-      getInfo({ type: infoType }).then(res => setInfoDictionary(res.data.data))
-    } else {
-      setInfoDictionary([])
-    }
-  }, [infoType])
+    infoTypes.forEach(type => {
+      if (!infoDictionaries[type]) {
+        getInfo({ type }).then(res =>
+          setInfoDictionaries(prev => ({ ...prev, [type]: res.data.data }))
+        )
+      }
+    })
+  }, [infoTypes])
 
-  useEffect(() => { load() }, [filter, infoType, biFilter])
+  useEffect(() => { load() }, [filter, infoTypes, biFilter, hierarchyTypes, projectFilter])
 
   const load = () => {
     setLoading(true)
     setExpanded(new Set())
     setExpandedInfo(new Set())
     const params = { date_from: filter.from, date_to: filter.to }
-    if (infoType) params.info_type = infoType
-    if (biFilter) params.bi_id    = biFilter
+    if (infoTypes.length > 0)    params['info_types[]']      = infoTypes
+    if (hierarchyTypes.size > 0) params['hierarchy_types[]'] = [...hierarchyTypes]
+    if (biFilter)       params.bi_id      = biFilter
+    if (projectFilter)  params.project_id = projectFilter
     getBalanceSheet(params)
       .then(res => setData(res.data.data))
+      .catch(() => setData([]))
       .finally(() => setLoading(false))
   }
+
+
+  // Добавить/убрать тип аналитики
+  const toggleInfoType = (type) => {
+    setInfoTypes(prev => {
+      if (prev.includes(type)) {
+        // Снимаем тип — убираем и из hierarchyTypes
+        setHierarchyTypes(h => { const n = new Set(h); n.delete(type); return n })
+        return prev.filter(t => t !== type)
+      }
+      // Добавляем тип — сразу включаем иерархию по умолчанию
+      setHierarchyTypes(h => new Set([...h, type]))
+      return [...prev, type]
+    })
+  }
+
+  // Включить/выключить иерархию для конкретного типа
+  const toggleHierarchy = (type) => {
+    setHierarchyTypes(prev => {
+      const next = new Set(prev)
+      next.has(type) ? next.delete(type) : next.add(type)
+      return next
+    })
+  }
+
+  // Drag-and-drop для переупорядочивания выбранных аналитик
+  const handleDragStart = (idx) => { dragIdx.current = idx }
+  const handleDragOver  = (e, idx) => {
+    e.preventDefault()
+    if (dragIdx.current === null || dragIdx.current === idx) return
+    setInfoTypes(prev => {
+      const next = [...prev]
+      const [moved] = next.splice(dragIdx.current, 1)
+      next.splice(idx, 0, moved)
+      dragIdx.current = idx
+      return next
+    })
+  }
+  const handleDragEnd = () => { dragIdx.current = null }
 
   const exportToExcel = () => {
     const rows = [];
     const numFmt = '#,##0.00 "₽"';
 
     rows.push([
-      "Счёт", 
-      "Сальдо нач. (Дт)", "Сальдо нач. (Кт)", 
-      "Обороты (Дт)", "Обороты (Кт)", 
+      "Счёт",
+      "Сальдо нач. (Дт)", "Сальдо нач. (Кт)",
+      "Обороты (Дт)", "Обороты (Кт)",
       "Сальдо кон. (Дт)", "Сальдо кон. (Кт)"
     ]);
 
     const n = (val) => ({ v: val || 0, t: 'n', z: numFmt });
+
+    const addChildRows = (nodes, depth = 0) => {
+      nodes.forEach(child => {
+        const indent = "    ".repeat(depth);
+        rows.push([
+          `${indent}  └ ${child.info_name}`,
+          n(child.opening_debit), n(child.opening_credit),
+          n(child.debit), n(child.credit),
+          n(child.closing_debit), n(child.closing_credit)
+        ]);
+        if (child.children?.length > 0) addChildRows(child.children, depth + 1)
+      })
+    }
 
     data.forEach(row => {
       rows.push([
@@ -209,20 +187,7 @@ export default function BalanceSheetPage() {
         n(row.debit), n(row.credit),
         n(row.closing_debit), n(row.closing_credit)
       ]);
-
-      if (row.children && row.children.length > 0) {
-        const flatChildren = processHierarchy(row.children, infoDictionary, new Set(), row.bi_id, true);
-        
-        flatChildren.forEach(child => {
-          const indent = "    ".repeat(child.depth);
-          rows.push([
-            `${indent}  └ ${child.info_name}`,
-            n(child.opening_debit), n(child.opening_credit),
-            n(child.debit), n(child.credit),
-            n(child.closing_debit), n(child.closing_credit)
-          ]);
-        });
-      }
+      if (row.children?.length > 0) addChildRows(row.children, 0)
     });
 
     rows.push([]); 
@@ -260,7 +225,7 @@ export default function BalanceSheetPage() {
   const expandAll = () => {
     setExpanded(new Set(data.filter(r => r.has_analytics && r.children?.length > 0).map(r => r.bi_id)))
   }
-  
+
   const collapseAll = () => {
     setExpanded(new Set())
     setExpandedInfo(new Set())
@@ -289,12 +254,13 @@ export default function BalanceSheetPage() {
     }
 
     if (infoId) {
-      // Ищем все дочерние ID, чтобы показать операции по всей папке
+      // Объединяем все загруженные справочники для поиска дочерних элементов
+      const allInfoItems = Object.values(infoDictionaries).flat()
       const getDescendants = (parentId) => {
-        const children = infoDictionary.filter(item => item.parent_id === parentId).map(item => item.id)
+        const children = allInfoItems.filter(item => item.parent_id === parentId).map(item => item.id)
         return children.reduce((acc, childId) => [...acc, ...getDescendants(childId)], children)
       }
-      
+
       const validIds = [infoId, ...getDescendants(infoId)].map(String)
 
       ops = ops.filter(op =>
@@ -376,8 +342,10 @@ export default function BalanceSheetPage() {
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-3">
-        <div className="flex items-center gap-4 flex-wrap">
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-2">
+
+        {/* ── Строка 1: период + дата + кнопка ⋯ + загрузка ── */}
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex gap-1.5">
             {[{key:'month',label:'Месяц'},{key:'quarter',label:'Квартал'},{key:'year',label:'Год'}].map(p => (
               <button key={p.key} onClick={() => setPeriod(p.key)}
@@ -398,35 +366,124 @@ export default function BalanceSheetPage() {
               onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
               className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
+          <span className="text-gray-300">|</span>
+          {/* Кнопка доп. фильтров */}
+          <button
+            onClick={() => setShowExtraFilters(v => !v)}
+            title="Проект и счёт"
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+              showExtraFilters || biFilter || (projects.length > 1 && projectFilter)
+                ? 'bg-blue-50 border-blue-300 text-blue-700'
+                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+            }`}>
+            ⋯
+            {(biFilter || (projects.length > 1 && projectFilter)) && (
+              <span className="ml-1 text-blue-500">•</span>
+            )}
+          </button>
           {loading && <span className="text-xs text-gray-400">Загрузка...</span>}
         </div>
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 font-medium">Счёт:</span>
-            <select value={biFilter} onChange={e => setBiFilter(e.target.value)}
-              className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-56">
-              <option value="">Все счета</option>
-              {balanceItems.map(item => (
-                <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
-              ))}
-            </select>
+
+        {/* ── Панель доп. фильтров (проект + счёт) ── */}
+        {showExtraFilters && (
+          <div className="flex items-center gap-4 flex-wrap pt-2 border-t border-gray-100">
+            {/* Проект — только если больше одного */}
+            {projects.length > 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">Проект:</span>
+                <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)}
+                  className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-40">
+                  <option value="">Все проекты</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {/* Счёт */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 font-medium">Счёт:</span>
+              <select value={biFilter} onChange={e => setBiFilter(e.target.value)}
+                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-56">
+                <option value="">Все счета</option>
+                {balanceItems.map(item => (
+                  <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
+                ))}
+              </select>
+            </div>
+            {(biFilter || projectFilter) && (
+              <button onClick={() => { setBiFilter(''); setProjectFilter(projects[0]?.id ? String(projects[0].id) : '') }}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors">
+                × сбросить
+              </button>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 font-medium">Аналитика:</span>
-            <select value={infoType} onChange={e => setInfoType(e.target.value)}
-              className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              {INFO_TYPES.map(t => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
+        )}
+
+        {/* ── Строка 2: аналитика ── */}
+        <div className="flex items-start gap-2 flex-wrap pt-1">
+          <span className="text-xs text-gray-500 font-medium mt-1.5">Аналитика:</span>
+          <div className="flex flex-wrap gap-1.5">
+            {INFO_TYPES.filter(t => t.value).map(t => {
+              const selected = infoTypes.includes(t.value)
+              const order    = infoTypes.indexOf(t.value)
+              return (
+                <button key={t.value} type="button"
+                  onClick={() => toggleInfoType(t.value)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    selected
+                      ? 'bg-blue-900 text-white border-blue-900'
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-blue-400 hover:text-blue-600'
+                  }`}>
+                  {selected && <span className="mr-1 opacity-60">{order + 1}.</span>}
+                  {t.label}
+                </button>
+              )
+            })}
           </div>
-          {infoType && data.filter(r => r.has_analytics && r.children?.length > 0).length > 0 && (
-            <>
-              <button onClick={expandAll}   className="text-xs text-blue-600 hover:underline">Раскрыть все</button>
-              <button onClick={collapseAll} className="text-xs text-gray-400 hover:underline">Свернуть все</button>
-            </>
-          )}
         </div>
+
+        {/* ── Строка 3: порядок + иерархия + раскрыть/свернуть ── */}
+        {infoTypes.length > 0 && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
+              {infoTypes.map((type, idx) => {
+                const label  = INFO_TYPES.find(t => t.value === type)?.label || type
+                const isHier = hierarchyTypes.has(type)
+                return (
+                  <div key={type}
+                    draggable
+                    onDragStart={() => handleDragStart(idx)}
+                    onDragOver={e => handleDragOver(e, idx)}
+                    onDragEnd={handleDragEnd}
+                    className="flex items-center gap-0 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-700 select-none overflow-hidden">
+                    <div className="flex items-center gap-1 px-2.5 py-1 cursor-grab active:cursor-grabbing">
+                      <span className="text-blue-300">⠿</span>
+                      {infoTypes.length > 1 && <span className="font-medium">{idx + 1}.</span>}
+                      <span>{label}</span>
+                    </div>
+                    <div className="w-px h-5 bg-blue-200" />
+                    <button type="button" onClick={() => toggleHierarchy(type)}
+                      title={isHier ? 'Иерархия — нажмите для плоского' : 'Плоско — нажмите для иерархии'}
+                      className={`px-2 py-1 transition-colors ${isHier ? 'bg-blue-900 text-white' : 'text-blue-400 hover:text-blue-700 hover:bg-blue-100'}`}>
+                      {isHier ? '⊞' : '≡'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            {infoTypes.length > 1 && (
+              <span className="text-xs text-gray-400">← перетащите для порядка</span>
+            )}
+            {data.filter(r => r.has_analytics && r.children?.length > 0).length > 0 && (
+              <>
+                <span className="text-gray-300">|</span>
+                <button onClick={expandAll}   className="text-xs text-blue-600 hover:underline">Раскрыть все</button>
+                <button onClick={collapseAll} className="text-xs text-gray-400 hover:underline">Свернуть все</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -454,7 +511,7 @@ export default function BalanceSheetPage() {
               const hasChildren = row.has_analytics && row.children?.length > 0
               const isExpanded  = expanded.has(row.bi_id)
               
-              const flatChildren = isExpanded ? processHierarchy(row.children, infoDictionary, expandedInfo, row.bi_id) : []
+              const flatChildren = isExpanded ? flattenServerTree(row.children || [], expandedInfo, row.bi_id) : []
 
               return [
                 <tr key={row.bi_id}
@@ -485,20 +542,24 @@ export default function BalanceSheetPage() {
                   <NumCell val={row.closing_credit} extra="text-red-600"   onClick={e => { e.stopPropagation(); openDrill(`${row.code} — сальдо кон. Кт`, row.bi_id, 'both') }} />
                 </tr>,
                 ...flatChildren.map(child => {
-                  const hasInnerChildren = child.treeChildren && child.treeChildren.length > 0;
-                  const isInfoExpanded = expandedInfo.has(`${row.bi_id}-${child.info_id}`);
+                  const hasInnerChildren = child.children?.length > 0
+                  const isInfoExpanded   = child._expanded
 
                   return (
-                    <tr key={`${row.bi_id}-${child.info_id}`} 
+                    <tr key={child._key}
                         className={`border-b border-gray-50 transition-colors ${hasInnerChildren ? 'cursor-pointer hover:bg-blue-50/80' : 'hover:bg-blue-50/40'}`}
-                        onClick={() => hasInnerChildren && toggleInfoExpand(row.bi_id, child.info_id)}
+                        onClick={() => hasInnerChildren && setExpandedInfo(prev => {
+                          const next = new Set(prev)
+                          next.has(child._key) ? next.delete(child._key) : next.add(child._key)
+                          return next
+                        })}
                     >
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-2" style={{ paddingLeft: 32 + child.depth * 20 }}>
                           {hasInnerChildren ? (
                             <button type="button" className="text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center rounded">
-                              <svg 
-                                className={`w-2.5 h-2.5 transition-transform duration-200 ${isInfoExpanded ? 'rotate-90' : ''}`} 
+                              <svg
+                                className={`w-2.5 h-2.5 transition-transform duration-200 ${isInfoExpanded ? 'rotate-90' : ''}`}
                                 viewBox="0 0 24 24" fill="currentColor"
                               >
                                 <path d="M8 5v14l11-7z" />
@@ -507,9 +568,16 @@ export default function BalanceSheetPage() {
                           ) : (
                             <span className="text-gray-300 text-xs w-4 inline-block text-center">└</span>
                           )}
-                          <span className={child.depth === 0 && hasInnerChildren ? "text-xs text-gray-700 font-semibold" : "text-xs text-gray-600 font-medium"}>
-                            {child.info_name}
-                          </span>
+                          <div>
+                            <span className={child.depth === 0 && hasInnerChildren ? "text-xs text-gray-700 font-semibold" : "text-xs text-gray-600 font-medium"}>
+                              {child.info_name}
+                            </span>
+                            {infoTypes.length > 1 && (
+                              <span className="ml-1.5 text-[10px] text-gray-300">
+                                {INFO_TYPES.find(t => t.value === child.info_type)?.label}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <NumCell val={child.opening_debit}  extra="text-green-600" onClick={e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — сальдо нач. Дт`, row.bi_id, 'both', child.info_id) }} />
@@ -589,22 +657,12 @@ export default function BalanceSheetPage() {
                         <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{fmt(op.amount)}</td>
                         <td className="px-4 py-3 text-sm text-gray-500">{op.note || '—'}</td>
                         <td className="px-4 py-3 text-right">
-                          {op.table_name === 'documents' && op.table_id ? (
-                            <button
-                              onClick={() => { setDrillModal(null); navigate(`/documents?open=${op.table_id}`) }}
-                              title="Открыть документ-источник"
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-600 text-xs px-1.5 py-1 rounded hover:bg-blue-50 flex items-center gap-0.5 ml-auto"
-                            >
-                              📄
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setEditOp(op)}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
-                            >
-                              ✎
-                            </button>
-                          )}
+                          <button
+                            onClick={() => setEditOp(op)}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                          >
+                            ✎
+                          </button>
                         </td>
                       </tr>
                     ))}

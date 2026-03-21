@@ -87,6 +87,9 @@ class DocumentsController extends TenantController
 
         $this->syncItems($doc, $data['items'] ?? []);
 
+        // Пересчитываем сумму шапки из строк (чтобы она отображалась в списке)
+        $this->recalcAmount($doc);
+
         $doc->load([
             'balanceItem', 'info1', 'info2', 'info3',
             'revenueBalanceItem', 'cogsBalanceItem', 'revenueItem',
@@ -116,6 +119,9 @@ class DocumentsController extends TenantController
         $doc->save();
 
         $this->syncItems($doc, $data['items'] ?? []);
+
+        // Пересчитываем сумму шапки из строк
+        $this->recalcAmount($doc);
 
         $doc->load([
             'balanceItem', 'info1', 'info2', 'info3',
@@ -234,6 +240,28 @@ class DocumentsController extends TenantController
             'note'            => $data['note'] ?? null,
             'extra'           => $data['extra'] ?? null,
         ];
+    }
+
+    /**
+     * Пересчитать и сохранить сумму шапки документа из строк.
+     * Вызывается после syncItems при сохранении черновика.
+     */
+    private function recalcAmount(Document $doc): void
+    {
+        $amount = DB::connection($this->dbName)
+            ->table('document_items')
+            ->where('document_id', $doc->id)
+            ->sum('amount');
+
+        $vatSum = DB::connection($this->dbName)
+            ->table('document_items')
+            ->where('document_id', $doc->id)
+            ->whereNotNull('amount_vat')
+            ->sum('amount_vat');
+
+        $doc->amount     = (float) $amount;
+        $doc->amount_vat = $vatSum > 0 ? (float) $vatSum : null;
+        $doc->save();
     }
 
     /**

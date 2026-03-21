@@ -29,22 +29,21 @@ class IncomingInvoiceStrategy implements DocumentStrategyInterface
         $content    = $this->buildContent($document);
 
         foreach ($document->items as $item) {
+            $qty = (float) ($item->quantity ?? 0);
             $operations[] = [
                 'date'       => $document->date,
                 'project_id' => $document->project_id,
-                'amount'     => $item->amount,
-                'quantity'   => $item->quantity,
+                'amount'     => (float) $item->amount,
+                'quantity'   => $qty,
 
-                // Дт — строка (товар/материал поступает на склад)
                 'in_bi_id'     => $item->bi_id,
-                'in_info_1_id' => $item->info_1_id,  // номенклатура
-                'in_info_2_id' => $item->info_2_id,  // склад (если А200)
+                'in_info_1_id' => $item->info_1_id,
+                'in_info_2_id' => $item->info_2_id,
                 'in_info_3_id' => $item->info_3_id,
-                'in_quantity'  => $item->quantity,
+                'in_quantity'  => $qty,
 
-                // Кт — шапка (задолженность перед поставщиком)
                 'out_bi_id'     => $document->bi_id,
-                'out_info_1_id' => $document->info_1_id, // поставщик
+                'out_info_1_id' => $document->info_1_id,
                 'out_info_2_id' => $document->info_2_id,
                 'out_info_3_id' => $document->info_3_id,
                 'out_quantity'  => 0,

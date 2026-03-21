@@ -3,6 +3,7 @@
 namespace App\Services\Documents;
 
 use App\Models\Tenant\Document;
+use App\Services\Documents\CostCalculatorService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -44,16 +45,59 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
     {
         $document->loadMissing('items');
 
-        // Счета берём из документа (зафиксированы при создании).
-        // Если не заполнены — операция этого типа не создаётся.
         $revenueBiId = $document->revenue_bi_id;
         $cogsBiId    = $document->cogs_bi_id;
 
         $operations = [];
-        $content     = $this->buildContent($document);
+        $content    = $this->buildContent($document);
+
+        // ── Пересчёт себестоимости при проведении ─────────────────────────────
+        // Если у строки нет amount_cost или он 0 — рассчитываем автоматически.
+        // Если уже заполнен вручную — оставляем как есть (уважаем ручной ввод).
+        if ($cogsBiId && $document->items->isNotEmpty()) {
+            $itemsForCalc = $document->items
+                ->filter(fn($i) => !$i->amount_cost || $i->amount_cost <= 0)
+                ->map(fn($i) => [
+                    'bi_id'     => $i->bi_id,
+                    'info_1_id' => $i->info_1_id,
+                    'info_2_id' => $i->info_2_id,
+                    'info_3_id' => $i->info_3_id,
+                    'quantity'  => $i->quantity,
+                    '_item_id'  => $i->id,
+                ])->values()->toArray();
+
+            if (!empty($itemsForCalc)) {
+                $costs = CostCalculatorService::calculate(
+                    $document->getConnectionName(),
+                    $document->date->format('Y-m-d H:i:s'),
+                    $document->project_id,
+                    $itemsForCalc
+                );
+
+                // Индексируем по item_id для быстрого поиска
+                $costByItemId = [];
+                foreach ($itemsForCalc as $idx => $calcItem) {
+                    if (isset($costs[$idx])) {
+                        $costByItemId[$calcItem['_item_id']] = $costs[$idx];
+                    }
+                }
+
+                // Обновляем amount_cost прямо в БД (до создания операций)
+                foreach ($document->items as $item) {
+                    if (isset($costByItemId[$item->id])) {
+                        $item->amount_cost = $costByItemId[$item->id]['amount_cost'];
+                        $item->save();
+                    }
+                }
+
+                // Перезагружаем строки с обновлёнными значениями
+                $document->load('items');
+            }
+        }
 
         foreach ($document->items as $item) {
             $itemContent = $item->content ?? $content;
+            $qty         = (float) ($item->quantity ?? 0);
 
             // ── Операция №1: Выручка ──────────────────────────────
             // Создаём всегда если есть счёт доходов
@@ -61,22 +105,18 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
                 $operations[] = [
                     'date'       => $document->date,
                     'project_id' => $document->project_id,
-                    'amount'     => $item->amount,
-                    'quantity'   => $item->quantity,
+                    'amount'     => (float) $item->amount,
+                    'quantity'   => $qty,
 
-                    // Дт — покупатель (из шапки)
                     'in_bi_id'     => $document->bi_id,
-                    'in_info_1_id' => $document->info_1_id, // покупатель
+                    'in_info_1_id' => $document->info_1_id,
                     'in_info_2_id' => null,
                     'in_info_3_id' => null,
-                    'in_quantity'  => $item->quantity,
+                    'in_quantity'  => $qty,
 
-                    // Кт — П587 Доходы
-                    // info_1 = статья дохода (П587.info_1_type = revenue)
-                    // info_2 = номенклатура  (П587.info_2_type = product)
                     'out_bi_id'     => $revenueBiId,
-                    'out_info_1_id' => $document->revenue_item_id, // статья дохода
-                    'out_info_2_id' => $item->info_1_id,           // номенклатура
+                    'out_info_1_id' => $document->revenue_item_id,
+                    'out_info_2_id' => $item->info_1_id,
                     'out_info_3_id' => null,
                     'out_quantity'  => 0,
 
@@ -94,24 +134,20 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
                 $operations[] = [
                     'date'       => $document->date,
                     'project_id' => $document->project_id,
-                    'amount'     => $item->amount_cost,
-                    'quantity'   => $item->quantity,
+                    'amount'     => (float) $item->amount_cost,
+                    'quantity'   => $qty,
 
-                    // Дт — П588 Себестоимость
-                    // info_1 = статья дохода (П588.info_1_type = revenue) — как у П587
-                    // info_2 = номенклатура  (П588.info_2_type = product) — как у П587
                     'in_bi_id'     => $cogsBiId,
-                    'in_info_1_id' => $document->revenue_item_id, // статья дохода
-                    'in_info_2_id' => $item->info_1_id,           // номенклатура
+                    'in_info_1_id' => $document->revenue_item_id,
+                    'in_info_2_id' => $item->info_1_id,
                     'in_info_3_id' => null,
-                    'in_quantity'  => $item->quantity,
+                    'in_quantity'  => $qty,
 
-                    // Кт — товар/продукт списывается со склада (из строки)
                     'out_bi_id'     => $item->bi_id,
-                    'out_info_1_id' => $item->info_1_id, // номенклатура
-                    'out_info_2_id' => $item->info_2_id, // склад (если А200)
+                    'out_info_1_id' => $item->info_1_id,
+                    'out_info_2_id' => $item->info_2_id,
                     'out_info_3_id' => $item->info_3_id,
-                    'out_quantity'  => $item->quantity,
+                    'out_quantity'  => $qty,
 
                     'source'     => 'document',
                     'table_name' => 'documents',

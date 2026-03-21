@@ -100,12 +100,45 @@ class DocumentService
             }
 
             $now  = now();
-            $rows = array_map(fn($op) => array_merge($op, [
-                'in_quantity'  => $op['in_quantity']  ?? 0,
-                'out_quantity' => $op['out_quantity'] ?? 0,
-                'created_at'   => $now,
-                'updated_at'   => $now,
-            ]), $operations);
+
+            // Нормализуем каждую строку — Laravel bulk insert требует одинаковых ключей
+            // во всех строках, иначе NULL передаётся для несовпадающих полей
+            $baseRow = [
+                'date'          => null,
+                'project_id'    => null,
+                'amount'        => 0,
+                'quantity'      => 0,
+                'in_bi_id'      => null,
+                'in_info_1_id'  => null,
+                'in_info_2_id'  => null,
+                'in_info_3_id'  => null,
+                'in_quantity'   => 0,
+                'out_bi_id'     => null,
+                'out_info_1_id' => null,
+                'out_info_2_id' => null,
+                'out_info_3_id' => null,
+                'out_quantity'  => 0,
+                'source'        => 'document',
+                'table_name'    => null,
+                'table_id'      => null,
+                'content'       => null,
+                'note'          => null,
+                'created_at'    => $now,
+                'updated_at'    => $now,
+            ];
+
+            $rows = array_map(function ($op) use ($baseRow, $now) {
+                $merged = array_merge($baseRow, $op);
+                // Приводим дату к строке
+                if ($merged['date'] instanceof \Carbon\Carbon) {
+                    $merged['date'] = $merged['date']->format('Y-m-d H:i:s');
+                } else {
+                    $merged['date'] = (string) $merged['date'];
+                }
+                $merged['created_at'] = $now;
+                $merged['updated_at'] = $now;
+                return $merged;
+            }, $operations);
 
             DB::connection($conn)->table('operations')->insert($rows);
         });

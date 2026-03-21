@@ -8,6 +8,9 @@ import { getBalanceItems } from '../api/operations'
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 
+// Расчёт себестоимости
+const calculateCostApi = (data) => api.post('/documents/calculate-cost', data)
+
 // ─── Константы ────────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -326,8 +329,72 @@ function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave,
     return emptyDoc(docType, balanceItems)
   })
 
-  const [saving, setSaving] = useState(false)
-  const [error, setError]   = useState('')
+  const [saving, setSaving]         = useState(false)
+  const [error, setError]           = useState('')
+  const [costCalcLoading, setCostCalcLoading] = useState(false)
+  const [costWarnings, setCostWarnings]       = useState([]) // строки с отрицательным остатком
+
+  // Рассчитать себестоимость для всех строк без amount_cost (или для всех)
+  const calcCost = async (forceAll = false) => {
+    if (docType !== 'outgoing_invoice') return
+    const itemsToCalc = form.items.filter(i =>
+      i.bi_id && (forceAll || !i.amount_cost || parseFloat(i.amount_cost) === 0)
+    )
+    if (itemsToCalc.length === 0) return
+
+    setCostCalcLoading(true)
+    setCostWarnings([])
+    try {
+      const res = await calculateCostApi({
+        date:       form.date,
+        project_id: form.project_id,
+        items: itemsToCalc.map(i => ({
+          bi_id:     i.bi_id,
+          info_1_id: i.info_1_id || null,
+          info_2_id: i.info_2_id || null,
+          info_3_id: i.info_3_id || null,
+          quantity:  parseFloat(i.quantity) || 0,
+        }))
+      })
+
+      const results  = res.data.data      // массив результатов в том же порядке
+      const warnings = []
+
+      setForm(f => ({
+        ...f,
+        items: f.items.map(item => {
+          // Ищем соответствующий результат по позиции среди отфильтрованных
+          const idx = itemsToCalc.findIndex(ic => ic._key === item._key)
+          if (idx === -1) return item
+          const cost = results[idx]
+          if (!cost) return item
+          if (cost.negative_stock) {
+            warnings.push({
+              _key: item._key,
+              name: (infoCache[balanceItems.find(b => b.id == item.bi_id)?.info_1_type] || [])
+                      .find(x => x.id == item.info_1_id)?.name || `#${item.info_1_id}`,
+            })
+          }
+          return { ...item, amount_cost: cost.negative_stock ? '' : String(cost.amount_cost) }
+        })
+      }))
+
+      setCostWarnings(warnings)
+    } catch (e) {
+      console.error('Ошибка расчёта себестоимости', e)
+    } finally {
+      setCostCalcLoading(false)
+    }
+  }
+
+  // Автоматический расчёт при изменении номенклатуры или количества
+  const setItemFieldWithCalc = (key, field, val) => {
+    setItemField(key, field, val)
+    if (docType === 'outgoing_invoice' && (field === 'info_1_id' || field === 'quantity')) {
+      // Небольшая задержка чтобы state обновился
+      setTimeout(() => calcCost(false), 100)
+    }
+  }
 
   // Если balanceItems загрузились после открытия формы создания — заполняем дефолты
   useEffect(() => {
@@ -614,7 +681,14 @@ function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave,
 
           {/* ── Табличная часть ── */}
           <div className="px-6 pb-5">
-            <div className="flex items-center justify-end mb-2">
+            <div className="flex items-center justify-end gap-2 mb-2">
+              {/* Кнопка расчёта себестоимости — только для расходной */}
+              {isOutgoing && !isPosted && form.items.length > 0 && (
+                <button type="button" onClick={() => calcCost(true)} disabled={costCalcLoading}
+                  className="text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center gap-1">
+                  {costCalcLoading ? '⏳' : '⚡'} Рассчитать себестоимость
+                </button>
+              )}
               {!isPosted && (
                 <button type="button" onClick={addItem}
                   className="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-medium transition-colors">
@@ -622,6 +696,14 @@ function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave,
                 </button>
               )}
             </div>
+
+            {/* Предупреждения об отрицательных остатках */}
+            {costWarnings.length > 0 && (
+              <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                <span className="font-medium">⚠ Нулевой или отрицательный остаток:</span>{' '}
+                {costWarnings.map(w => w.name).join(', ')} — себестоимость установлена в 0
+              </div>
+            )}
 
             {form.items.length === 0 ? (
               <div className="text-center py-6 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-xl">
@@ -664,7 +746,7 @@ function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave,
                                 items={infoCache[itemBi.info_1_type] || []}
                                 value={item.info_1_id}
                                 disabled={isPosted}
-                                onChange={v => setItemField(item._key, 'info_1_id', v)}
+                                onChange={v => setItemFieldWithCalc(item._key, 'info_1_id', v)}
                                 placeholder="Номенклатура..." />
                             ) : (
                               <span className="text-xs text-gray-400 px-2">
@@ -681,7 +763,7 @@ function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave,
 
                           <NumInput value={item.quantity} disabled={isPosted}
                             placeholder="0" step="0.001" className={ic + ' text-right'}
-                            onChange={v => setItemField(item._key, 'quantity', v)} />
+                            onChange={v => setItemFieldWithCalc(item._key, 'quantity', v)} />
 
                           <NumInput value={item.price} disabled={isPosted}
                             placeholder="0.00" step="0.0001" className={ic + ' text-right'}

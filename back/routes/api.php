@@ -10,7 +10,7 @@ use App\Http\Controllers\Api\V1\InfoController;
 use App\Http\Controllers\Api\V1\BankStatementController;
 use App\Http\Controllers\Api\V1\ProjectsController;
 use App\Http\Controllers\Api\V1\DocumentsController;
-
+use App\Http\Controllers\Api\V1\CostController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -33,6 +33,7 @@ Route::prefix('v1')->group(function () {
     Route::post('/bank-statements/parse', [BankStatementController::class, 'parse']);
 
     // Справочники
+    Route::get('/projects',           [ProjectsController::class, 'index']);
     Route::get('/balance-items',      [BalanceItemsController::class, 'index']);
     Route::get('/balance-sheet',      [BalanceSheetController::class, 'index']);
 
@@ -40,14 +41,15 @@ Route::prefix('v1')->group(function () {
     Route::post('/info',              [InfoController::class, 'store']);
     Route::put('/info/{id}',          [InfoController::class, 'update']);
     Route::delete('/info/{id}',       [InfoController::class, 'destroy']);
-    // Документы
-    Route::get('/documents',               [DocumentsController::class, 'index']);
-    Route::post('/documents',              [DocumentsController::class, 'store']);
-    Route::get('/documents/{id}',          [DocumentsController::class, 'show']);
-    Route::put('/documents/{id}',          [DocumentsController::class, 'update']);
-    Route::delete('/documents/{id}',       [DocumentsController::class, 'destroy']);
-    Route::post('/documents/{id}/post',    [DocumentsController::class, 'post']);
-    Route::post('/documents/{id}/cancel',  [DocumentsController::class, 'cancel']);
 
-    
+    // Документы — статические маршруты ПЕРЕД динамическими {id}
+    Route::get('/documents',                   [DocumentsController::class, 'index']);
+    Route::post('/documents',                  [DocumentsController::class, 'store']);
+    Route::post('/documents/calculate-cost',   [CostController::class, 'calculate']);
+
+    Route::get('/documents/{id}',              [DocumentsController::class, 'show']);
+    Route::put('/documents/{id}',              [DocumentsController::class, 'update']);
+    Route::delete('/documents/{id}',           [DocumentsController::class, 'destroy']);
+    Route::post('/documents/{id}/post',        [DocumentsController::class, 'post']);
+    Route::post('/documents/{id}/cancel',      [DocumentsController::class, 'cancel']);
 });
