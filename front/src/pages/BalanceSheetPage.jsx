@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
 import api from '../api/client'
 import { getBalanceSheet, getBalanceItems, getOperations } from '../api/operations'
+import { getDocument, postDocument, cancelDocument } from '../api/documents'
+import { DocumentForm } from './DocumentsPage'
 import { getInfo } from '../api/info'
 import OperationForm from '../components/OperationForm'
 
@@ -115,6 +117,12 @@ export default function BalanceSheetPage() {
   const [editOp, setEditOp]           = useState(null)
   const dragIdx = useRef(null) // для drag-and-drop порядка аналитик
 
+  // Состояние для инлайн-просмотра документа из drill-down
+  const [docModal, setDocModal]           = useState(null)  // { doc }
+  const [docActionLoading, setDocActionLoading] = useState(false)
+  const [docActionError, setDocActionError]     = useState('')
+  const [docInfoCache, setDocInfoCache]   = useState({})
+
   useEffect(() => {
     getBalanceItems().then(res => setBalanceItems(res.data.data))
     api.get('/projects')
@@ -213,11 +221,14 @@ export default function BalanceSheetPage() {
     const addChildRows = (nodes, depth = 0) => {
       nodes.forEach(child => {
         const indent = "    ".repeat(depth);
+        const dash = { v: '—', t: 's' }
         rows.push([
           `${indent}  └ ${child.info_name}`,
-          n(child.opening_debit), n(child.opening_credit),
+          child.turnover_only ? dash : n(child.opening_debit),
+          child.turnover_only ? dash : n(child.opening_credit),
           n(child.debit), n(child.credit),
-          n(child.closing_debit), n(child.closing_credit)
+          child.turnover_only ? dash : n(child.closing_debit),
+          child.turnover_only ? dash : n(child.closing_credit),
         ]);
         if (child.children?.length > 0) addChildRows(child.children, depth + 1)
       })
@@ -336,6 +347,72 @@ export default function BalanceSheetPage() {
     load()
   }
 
+  // Открываем документ инлайн из drill-down (не уходя со страницы)
+  const openDocumentModal = async (tableId) => {
+    try {
+      const r = await getDocument(tableId)
+      setDocModal({ doc: r.data.data })
+    } catch {
+      // если не получилось — ничего
+    }
+  }
+
+  // После любого действия с документом — закрываем docModal,
+  // обновляем ОСВ и перезагружаем список операций в drill-down
+  const refreshAfterDocAction = () => {
+    setDocModal(null)
+    load()
+    if (drillModal) {
+      openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
+    }
+  }
+
+  const handleDocSaved = () => {
+    refreshAfterDocAction()
+  }
+
+  const handleDocPost = async (doc) => {
+    setDocActionLoading(true)
+    setDocActionError('')
+    try {
+      await postDocument(doc.id)
+      const r = await getDocument(doc.id)
+      setDocModal({ doc: r.data.data })
+      load()
+      if (drillModal) {
+        openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
+      }
+    } catch (err) {
+      setDocActionError(err.response?.data?.message || 'Ошибка проведения')
+      setTimeout(() => setDocActionError(''), 4000)
+    } finally {
+      setDocActionLoading(false)
+    }
+  }
+
+  const handleDocCancel = async (doc) => {
+    setDocActionLoading(true)
+    setDocActionError('')
+    try {
+      await cancelDocument(doc.id)
+      const r = await getDocument(doc.id)
+      setDocModal({ doc: r.data.data })
+      load()
+      if (drillModal) {
+        openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
+      }
+    } catch (err) {
+      setDocActionError(err.response?.data?.message || 'Ошибка отмены проведения')
+      setTimeout(() => setDocActionError(''), 4000)
+    } finally {
+      setDocActionLoading(false)
+    }
+  }
+
+  const loadDocInfo = (type) => {
+    getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
+  }
+
   const setPeriod = (type) => {
     const now = new Date()
     if (type === 'month') setFilter(getMonthRange())
@@ -386,6 +463,13 @@ export default function BalanceSheetPage() {
     </td>
   )
 
+  // Ячейка-прочерк для сальдо при turnover_only — сальдо не имеет смысла
+  const DashCell = ({ borderLeft = false }) => (
+    <td className={`px-3 py-2.5 text-right text-xs text-gray-300 whitespace-nowrap ${borderLeft ? 'border-l border-gray-100' : ''}`}>
+      —
+    </td>
+  )
+
   // Ячейка остатка со знаком (±)
   // В режиме qty — только количество, в amount — только сумма, в both — оба
   const NetCell = ({ debit, credit, qtyDebit, qtyCredit, hasQty, onClick, borderLeft = false }) => {
@@ -422,19 +506,22 @@ export default function BalanceSheetPage() {
 
   // Рендерим группу ячеек в зависимости от balanceMode + displayMode
   // hasQty — есть ли количественный учёт у этого счёта/строки
-  const renderCells = (row, hasQty, onClickDt, onClickKt, borderLeft = false) => {
-    const bl = borderLeft ? 'border-l border-gray-100' : ''
+  // turnoverOnly — если true, сальдо нач/кон заменяются прочерком
+  const renderCells = (row, hasQty, onClickDt, onClickKt, borderLeft = false, turnoverOnly = false) => {
+    const bl  = borderLeft ? 'border-l border-gray-100' : ''
+    const isTO = turnoverOnly || !!row.turnover_only
 
     // ── Режим ± (остаток со знаком) ────────────────────────────────────────
     if (balanceMode === 'net') {
-      const openingNetQty = calcNet(row.qty_opening ?? 0, row.qty_opening_neg ?? 0)
-      const closingNetQty = calcNet(row.qty_closing ?? 0, row.qty_closing_neg ?? 0)
       return <>
-        <NetCell
-          debit={row.opening_debit} credit={row.opening_credit}
-          qtyDebit={row.qty_opening} qtyCredit={row.qty_opening_neg}
-          hasQty={hasQty} onClick={onClickDt}
-        />
+        {isTO
+          ? <DashCell />
+          : <NetCell
+              debit={row.opening_debit} credit={row.opening_credit}
+              qtyDebit={row.qty_opening} qtyCredit={row.qty_opening_neg}
+              hasQty={hasQty} onClick={onClickDt}
+            />
+        }
         {displayMode === 'qty' ? <>
           <QtyCell val={hasQty ? (row.qty_debit  ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
           <QtyCell val={hasQty ? (row.qty_credit ?? 0) : 0} extra="text-red-500"            onClick={hasQty ? onClickKt : undefined} />
@@ -451,43 +538,50 @@ export default function BalanceSheetPage() {
           <AmtCell val={row.debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />
           <AmtCell val={row.credit} extra="text-red-600"           onClick={onClickKt} />
         </>}
-        <NetCell
-          debit={row.closing_debit} credit={row.closing_credit}
-          qtyDebit={row.qty_closing} qtyCredit={row.qty_closing_neg}
-          hasQty={hasQty} onClick={onClickDt} borderLeft
-        />
+        {isTO
+          ? <DashCell borderLeft />
+          : <NetCell
+              debit={row.closing_debit} credit={row.closing_credit}
+              qtyDebit={row.qty_closing} qtyCredit={row.qty_closing_neg}
+              hasQty={hasQty} onClick={onClickDt} borderLeft
+            />
+        }
       </>
     }
     if (displayMode === 'amount') {
       return <>
-        <AmtCell val={row.opening_debit}  extra="text-green-700" onClick={onClickDt} />
-        <AmtCell val={row.opening_credit} extra="text-red-600"   onClick={onClickKt} />
-        <AmtCell val={row.debit}          extra={`text-green-700 ${bl}`} onClick={onClickDt} />
-        <AmtCell val={row.credit}         extra="text-red-600"   onClick={onClickKt} />
-        <AmtCell val={row.closing_debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />
-        <AmtCell val={row.closing_credit} extra="text-red-600"   onClick={onClickKt} />
+        {isTO ? <DashCell /> : <AmtCell val={row.opening_debit}  extra="text-green-700" onClick={onClickDt} />}
+        {isTO ? <DashCell /> : <AmtCell val={row.opening_credit} extra="text-red-600"   onClick={onClickKt} />}
+        <AmtCell val={row.debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />
+        <AmtCell val={row.credit} extra="text-red-600"           onClick={onClickKt} />
+        {isTO ? <DashCell borderLeft /> : <AmtCell val={row.closing_debit}  extra={`text-green-700 ${bl}`} onClick={onClickDt} />}
+        {isTO ? <DashCell />            : <AmtCell val={row.closing_credit} extra="text-red-600"           onClick={onClickKt} />}
       </>
     }
     if (displayMode === 'qty') {
       return <>
-        <QtyCell val={hasQty ? (row.qty_opening    ?? 0) : 0} extra="text-green-600" onClick={hasQty ? onClickDt : undefined} />
-        <QtyCell val={hasQty ? (row.qty_opening_neg ?? 0) : 0} extra="text-red-500"  onClick={hasQty ? onClickKt : undefined} />
+        {isTO ? <DashCell /> : <QtyCell val={hasQty ? (row.qty_opening    ?? 0) : 0} extra="text-green-600" onClick={hasQty ? onClickDt : undefined} />}
+        {isTO ? <DashCell /> : <QtyCell val={hasQty ? (row.qty_opening_neg ?? 0) : 0} extra="text-red-500"  onClick={hasQty ? onClickKt : undefined} />}
         <QtyCell val={hasQty ? (row.qty_debit      ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
-        <QtyCell val={hasQty ? (row.qty_credit     ?? 0) : 0} extra="text-red-500"  onClick={hasQty ? onClickKt : undefined} />
-        <QtyCell val={hasQty ? (row.qty_closing    ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
-        <QtyCell val={hasQty ? (row.qty_closing_neg ?? 0) : 0} extra="text-red-500" onClick={hasQty ? onClickKt : undefined} />
+        <QtyCell val={hasQty ? (row.qty_credit     ?? 0) : 0} extra="text-red-500"           onClick={hasQty ? onClickKt : undefined} />
+        {isTO ? <DashCell borderLeft /> : <QtyCell val={hasQty ? (row.qty_closing    ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />}
+        {isTO ? <DashCell />            : <QtyCell val={hasQty ? (row.qty_closing_neg ?? 0) : 0} extra="text-red-500"           onClick={hasQty ? onClickKt : undefined} />}
       </>
     }
     // both — два ряда в одной ячейке
     return <>
-      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-green-700">
-        <button onClick={onClickDt} className="hover:underline block w-full">{row.opening_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_debit)}</button>
-        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening ?? 0)}</span>}
-      </td>
-      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
-        <button onClick={onClickKt} className="hover:underline block w-full">{row.opening_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_credit)}</button>
-        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening_neg ?? 0)}</span>}
-      </td>
+      {isTO ? <DashCell /> : (
+        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-green-700">
+          <button onClick={onClickDt} className="hover:underline block w-full">{row.opening_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_debit)}</button>
+          {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening ?? 0)}</span>}
+        </td>
+      )}
+      {isTO ? <DashCell /> : (
+        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+          <button onClick={onClickKt} className="hover:underline block w-full">{row.opening_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_credit)}</button>
+          {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening_neg ?? 0)}</span>}
+        </td>
+      )}
       <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
         <button onClick={onClickDt} className="hover:underline block w-full">{row.debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.debit)}</button>
         {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_debit ?? 0)}</span>}
@@ -496,14 +590,18 @@ export default function BalanceSheetPage() {
         <button onClick={onClickKt} className="hover:underline block w-full">{row.credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.credit)}</button>
         {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_credit ?? 0)}</span>}
       </td>
-      <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
-        <button onClick={onClickDt} className="hover:underline block w-full">{row.closing_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_debit)}</button>
-        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing ?? 0)}</span>}
-      </td>
-      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
-        <button onClick={onClickKt} className="hover:underline block w-full">{row.closing_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_credit)}</button>
-        {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing_neg ?? 0)}</span>}
-      </td>
+      {isTO ? <DashCell borderLeft /> : (
+        <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+          <button onClick={onClickDt} className="hover:underline block w-full">{row.closing_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_debit)}</button>
+          {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing ?? 0)}</span>}
+        </td>
+      )}
+      {isTO ? <DashCell /> : (
+        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+          <button onClick={onClickKt} className="hover:underline block w-full">{row.closing_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_credit)}</button>
+          {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing_neg ?? 0)}</span>}
+        </td>
+      )}
     </>
   }
 
@@ -877,7 +975,8 @@ export default function BalanceSheetPage() {
                         child, row.has_quantity,
                         e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — Дт`, row.bi_id, 'debit', child.info_id) },
                         e => { e.stopPropagation(); openDrill(`${row.code} / ${child.info_name} — Кт`, row.bi_id, 'credit', child.info_id) },
-                        true
+                        true,
+                        child.turnover_only
                       )}
                     </tr>
                   )
@@ -978,10 +1077,7 @@ export default function BalanceSheetPage() {
                         <td className="px-4 py-3 text-right">
                           {op.table_name === 'documents' && op.table_id ? (
                             <button
-                              onClick={() => {
-                                setDrillModal(null)
-                                navigate(`/documents?open=${op.table_id}`)
-                              }}
+                              onClick={() => openDocumentModal(op.table_id)}
                               title="Открыть документ"
                               className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
                             >
@@ -1024,6 +1120,28 @@ export default function BalanceSheetPage() {
           onSuccess={handleEditSaved}
           onCancel={() => setEditOp(null)}
         />
+      )}
+
+      {/* Инлайн-просмотр/редактирование документа из drill-down */}
+      {docModal && (
+        <>
+          {docActionError && (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
+              {docActionError}
+            </div>
+          )}
+          <DocumentForm
+            docType={docModal.doc.type}
+            doc={docModal.doc}
+            balanceItems={balanceItems}
+            infoCache={docInfoCache}
+            loadInfo={loadDocInfo}
+            onSave={handleDocSaved}
+            onCancel={refreshAfterDocAction}
+            onPost={handleDocPost}
+            onCancelDoc={handleDocCancel}
+          />
+        </>
       )}
     </Layout>
   )

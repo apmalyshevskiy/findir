@@ -125,58 +125,65 @@ class BudgetController extends TenantController
         return response()->json(['message' => 'Удалено']);
     }
 
-    // ── UPSERT: budget_items ─────────────────────────────────────────────────
+    // ── CRUD: budget_items ──────────────────────────────────────────────────
 
     /**
-     * PUT /budget-items/upsert
+     * POST /budget-items
      *
-     * Тело: { budget_document_id, article_id, cash_id?, period_date, amount }
-     * Или массив: { items: [ { article_id, cash_id?, period_date, amount }, ... ] }
-     *
-     * period_date — дата начала периода (1-е число месяца).
-     * Валидируется: не должна выходить за рамки документа.
+     * Создаёт новую строку плана.
+     * Тело: { budget_document_id, article_id, cash_id?, period_date, content?, amount }
      */
-    public function upsertItems(Request $request)
+    public function storeItem(Request $request)
     {
         $this->initTenant($request);
 
-        // Поддерживаем как одиночный, так и массовый upsert
-        if ($request->has('items')) {
-            $request->validate([
-                'budget_document_id'      => 'required|integer',
-                'items'                   => 'required|array|min:1',
-                'items.*.article_id'      => 'required|integer',
-                'items.*.cash_id'         => 'nullable|integer',
-                'items.*.period_date'     => 'required|date',
-                'items.*.amount'          => 'required|numeric',
-            ]);
-
-            $doc = $this->docModel()->newQuery()->findOrFail($request->budget_document_id);
-            $results = [];
-
-            foreach ($request->items as $item) {
-                $this->validatePeriodDate($item['period_date'], $doc);
-                $results[] = $this->doUpsert($doc->id, $item);
-            }
-
-            return response()->json(['data' => $results]);
-        }
-
-        // Одиночный upsert
         $data = $request->validate([
             'budget_document_id' => 'required|integer',
             'article_id'         => 'required|integer',
             'cash_id'            => 'nullable|integer',
             'period_date'        => 'required|date',
+            'content'            => 'nullable|string|max:500',
             'amount'             => 'required|numeric',
         ]);
 
         $doc = $this->docModel()->newQuery()->findOrFail($data['budget_document_id']);
         $this->validatePeriodDate($data['period_date'], $doc);
 
-        $result = $this->doUpsert($doc->id, $data);
+        $item = $this->itemModel()->newQuery()->create($data);
 
-        return response()->json(['data' => $result]);
+        return response()->json(['data' => $item], 201);
+    }
+
+    /**
+     * PUT /budget-items/{id}
+     *
+     * Обновляет строку плана.
+     */
+    public function updateItem(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'content' => 'nullable|string|max:500',
+            'amount'  => 'required|numeric',
+        ]);
+
+        $item = $this->itemModel()->newQuery()->findOrFail($id);
+        $item->update($data);
+
+        return response()->json(['data' => $item]);
+    }
+
+    /**
+     * DELETE /budget-items/{id}
+     */
+    public function destroyItem(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $this->itemModel()->newQuery()->findOrFail($id)->delete();
+
+        return response()->json(['message' => 'Удалено']);
     }
 
     /**
@@ -191,21 +198,6 @@ class BudgetController extends TenantController
         if ($d->lt($from) || $d->gt($to)) {
             abort(422, "period_date {$date} выходит за рамки бюджета ({$doc->period_from} — {$doc->period_to})");
         }
-    }
-
-    private function doUpsert(int $docId, array $item): BudgetItem
-    {
-        return $this->itemModel()->newQuery()->updateOrCreate(
-            [
-                'budget_document_id' => $docId,
-                'article_id'         => $item['article_id'],
-                'cash_id'            => $item['cash_id'] ?? null,
-                'period_date'        => $item['period_date'],
-            ],
-            [
-                'amount' => $item['amount'],
-            ]
-        );
     }
 
     // ── UPSERT: budget_opening_balances ──────────────────────────────────────
@@ -267,13 +259,21 @@ class BudgetController extends TenantController
         // ── Плановые данные ──────────────────────────────────────────────
         $planRows = $this->itemModel()->newQuery()
             ->where('budget_document_id', $doc->id)
+            ->orderBy('id')
             ->get();
 
         $plan = [];
+        $planDetails = []; // "article_id:cash_id:period_date" => [ {id, content, amount}, ... ]
         foreach ($planRows as $row) {
             $pd  = Carbon::parse($row->period_date)->format('Y-m-d');
-            $key = $row->article_id . ':' . ($byCash ? ($row->cash_id ?? 0) : 0) . ':' . $pd;
+            $cashKey = $byCash ? ($row->cash_id ?? 0) : 0;
+            $key = $row->article_id . ':' . $cashKey . ':' . $pd;
             $plan[$key] = ($plan[$key] ?? 0) + (float)$row->amount;
+            $planDetails[$key][] = [
+                'id'      => $row->id,
+                'content' => $row->content,
+                'amount'  => (float)$row->amount,
+            ];
         }
 
         // ── Дерево статей + фактические данные ───────────────────────────
@@ -305,6 +305,7 @@ class BudgetController extends TenantController
             'period_dates'     => $periodDates,
             'articles'         => $articles,
             'plan'             => $plan,
+            'plan_details'     => $planDetails,
             'fact'             => $fact,
             'opening_balances' => $openingBalances,
             'cash_items'       => $cashItems,

@@ -297,7 +297,7 @@ const emptyItem = (type, balanceItems = []) => {
   }
 }
 
-function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave, onCancel, onPost, onCancelDoc }) {
+export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave, onCancel, onPost, onCancelDoc }) {
   const isEdit      = !!doc
   const isPosted    = doc?.status === 'posted'
   const isCancelled = doc?.status === 'cancelled'

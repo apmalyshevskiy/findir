@@ -60,6 +60,8 @@ Route::prefix('v1')->group(function () {
     Route::put('/budget-documents/{id}',     [BudgetController::class, 'update']);
     Route::delete('/budget-documents/{id}',  [BudgetController::class, 'destroy']);
     Route::get('/budget-report/{id}',        [BudgetController::class, 'report']);
-    Route::put('/budget-items/upsert',       [BudgetController::class, 'upsertItems']);
+    Route::post('/budget-items',              [BudgetController::class, 'storeItem']);
+    Route::put('/budget-items/{id}',          [BudgetController::class, 'updateItem']);
+    Route::delete('/budget-items/{id}',       [BudgetController::class, 'destroyItem']);
     Route::put('/budget-opening-balances/upsert', [BudgetController::class, 'upsertOpeningBalance']);
 });

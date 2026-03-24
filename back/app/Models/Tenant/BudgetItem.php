@@ -13,6 +13,7 @@ class BudgetItem extends Model
         'article_id',
         'cash_id',
         'period_date',
+        'content',
         'amount',
     ];
 
