@@ -1,11 +1,15 @@
 import { Fragment, useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
-import { getOperations } from '../api/operations'
+import { getOperations, getBalanceItems } from '../api/operations'
 import {
   getBudgetDocuments, createBudgetDocument, updateBudgetDocument,
   getBudgetReport, getBudgetItems, createBudgetItem, updateBudgetItem, deleteBudgetItem, upsertOpeningBalance,
 } from '../api/budget'
+import { getDocument, postDocument, cancelDocument } from '../api/documents'
+import { getInfo } from '../api/info'
+import { DocumentForm } from './DocumentsPage'
+import OperationForm from '../components/OperationForm'
 import Layout from '../components/Layout'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
@@ -75,6 +79,16 @@ function PlanCellSimple({ value, onSave, disabled }) {
 function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact }) {
   const [tab, setTab] = useState(mode)
   const factLoaded = useRef(false)
+
+  // Редактирование операции / открытие документа прямо из drawer
+  const [editOp, setEditOp] = useState(null)
+  const [docModal, setDocModal] = useState(null)
+  const [docInfoCache, setDocInfoCache] = useState({})
+  const [docActionError, setDocActionError] = useState('')
+  const [docActionLoading, setDocActionLoading] = useState(false)
+  const [balanceItems, setBalanceItems] = useState([])
+  useEffect(() => { getBalanceItems().then(r => setBalanceItems(r.data.data || [])).catch(() => {}) }, [])
+
   useEffect(() => { setTab(mode); factLoaded.current = false }, [mode, articleId, periodDate])
 
   const switchTab = (t) => {
@@ -92,9 +106,61 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
     }
   }, [mode, articleId, periodDate])
 
+  // ── Хэндлеры для операций ──────────────────────────────────────────────────
+  const handleEditSaved = () => {
+    setEditOp(null)
+    onLoadFact(articleId, periodDate) // обновить список операций
+    onUpdate()
+  }
+
+  const openDocumentModal = async (tableId) => {
+    try {
+      const r = await getDocument(tableId)
+      setDocModal({ doc: r.data.data })
+    } catch { /* ignore */ }
+  }
+
+  const refreshAfterDocAction = () => {
+    setDocModal(null)
+    onLoadFact(articleId, periodDate)
+    onUpdate()
+  }
+
+  const handleDocSaved = () => refreshAfterDocAction()
+
+  const handleDocPost = async (doc) => {
+    setDocActionLoading(true); setDocActionError('')
+    try {
+      await postDocument(doc.id)
+      const r = await getDocument(doc.id)
+      setDocModal({ doc: r.data.data })
+      onLoadFact(articleId, periodDate); onUpdate()
+    } catch (err) {
+      setDocActionError(err.response?.data?.message || 'Ошибка проведения')
+      setTimeout(() => setDocActionError(''), 4000)
+    } finally { setDocActionLoading(false) }
+  }
+
+  const handleDocCancel = async (doc) => {
+    setDocActionLoading(true); setDocActionError('')
+    try {
+      await cancelDocument(doc.id)
+      const r = await getDocument(doc.id)
+      setDocModal({ doc: r.data.data })
+      onLoadFact(articleId, periodDate); onUpdate()
+    } catch (err) {
+      setDocActionError(err.response?.data?.message || 'Ошибка отмены проведения')
+      setTimeout(() => setDocActionError(''), 4000)
+    } finally { setDocActionLoading(false) }
+  }
+
+  const loadDocInfo = (type) => {
+    getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
+  }
+
   return (
     <>
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/20 z-40" onClick={editOp || docModal ? undefined : onClose} />
       <div className="fixed top-0 right-0 h-full w-[460px] max-w-full bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
         <div className="px-5 py-4 border-b border-gray-100 flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
@@ -111,10 +177,42 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
           {tab === 'plan' ? (
             <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} />
           ) : (
-            <FactTab ops={factOps} loading={factLoading} sign={factSign} targetBiIds={targetBiIds} />
+            <FactTab ops={factOps} loading={factLoading} sign={factSign} targetBiIds={targetBiIds}
+              onEditOp={setEditOp} onOpenDoc={openDocumentModal} />
           )}
         </div>
       </div>
+
+      {/* Редактирование операции */}
+      {editOp && (
+        <OperationForm
+          operation={editOp}
+          onSuccess={handleEditSaved}
+          onCancel={() => setEditOp(null)}
+        />
+      )}
+
+      {/* Инлайн-просмотр документа */}
+      {docModal && (
+        <>
+          {docActionError && (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
+              {docActionError}
+            </div>
+          )}
+          <DocumentForm
+            docType={docModal.doc.type}
+            doc={docModal.doc}
+            balanceItems={balanceItems}
+            infoCache={docInfoCache}
+            loadInfo={loadDocInfo}
+            onSave={handleDocSaved}
+            onCancel={refreshAfterDocAction}
+            onPost={handleDocPost}
+            onCancelDoc={handleDocCancel}
+          />
+        </>
+      )}
     </>
   )
 }
@@ -317,7 +415,9 @@ function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
 // ── Вкладка «Факт» ──────────────────────────────────────────────────────────
 // targetBiIds — id счетов по которым фильтровали (для определения стороны)
 // sign — множитель: для БДР = -1 (дебет П = расход, кредит П = возврат)
-function FactTab({ ops, loading, sign = 1, targetBiIds = [] }) {
+// onEditOp   — callback(op) для ручных операций
+// onOpenDoc  — callback(tableId) для операций из документов
+function FactTab({ ops, loading, sign = 1, targetBiIds = [], onEditOp, onOpenDoc }) {
   if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка операций...</div>
   if (!ops || ops.length === 0) return <div className="text-center py-12 text-gray-400 text-sm">Операций не найдено</div>
 
@@ -326,9 +426,7 @@ function FactTab({ ops, loading, sign = 1, targetBiIds = [] }) {
   const getAmount = (op) => {
     const raw = parseFloat(op.amount)
     if (biIdSet.size === 0) return raw * sign
-    // Определяем: операция по дебету (in) или кредиту (out) нашего счёта
     const isDebit = biIdSet.has(String(op.in_bi_id))
-    // Дебет нашего счёта: amount * sign; Кредит: amount * (-sign)
     return isDebit ? raw * sign : raw * (-sign)
   }
 
@@ -338,30 +436,62 @@ function FactTab({ ops, loading, sign = 1, targetBiIds = [] }) {
       <table className="w-full text-xs">
         <thead className="sticky top-0 bg-white">
           <tr className="text-[10px] text-gray-400 uppercase">
-            <th className="text-left px-2 py-2">Дата</th>
-            <th className="text-left px-2 py-2">Корр. счёт</th>
-            <th className="text-right px-2 py-2">Сумма</th>
-            <th className="text-left px-2 py-2">Содержание</th>
+            <th className="text-left px-2 py-2 whitespace-nowrap">Дата</th>
+            <th className="text-left px-2 py-2">Счета / Аналитика / Содержание</th>
+            <th className="text-right px-2 py-2 whitespace-nowrap">Сумма</th>
+            <th className="w-7" />
           </tr>
         </thead>
         <tbody>
           {ops.map(op => {
             const amt = getAmount(op)
+            const isDoc = op.table_name === 'documents' && op.table_id
+            const note = op.note || op.content
+
             return (
-            <tr key={op.id} className="border-b border-gray-50 hover:bg-gray-50 group">
-              <td className="px-2 py-2 text-gray-500 whitespace-nowrap">{fmtDate(op.date)}</td>
-              <td className="px-2 py-2">
-                <div className="flex items-center gap-1">
-                  <span className="text-[10px] bg-green-50 text-green-700 px-1 py-0.5 rounded font-mono">{op.in_bi_code}</span>
-                  <span className="text-[9px] text-gray-300">→</span>
-                  <span className="text-[10px] bg-red-50 text-red-600 px-1 py-0.5 rounded font-mono">{op.out_bi_code}</span>
-                </div>
-                {(op.in_info_1_name || op.out_info_1_name) && <div className="text-[10px] text-gray-400 mt-0.5">{op.in_info_1_name || op.out_info_1_name}</div>}
-              </td>
-              <td className={`px-2 py-2 text-right tabular-nums font-medium ${amt >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{fmt(amt)}</td>
-              <td className="px-2 py-2 text-gray-500 text-[11px] break-words" style={{ minWidth: 120 }}>{op.note || op.content || '—'}</td>
-            </tr>
-          )})}
+              <tr key={op.id} className="border-b border-gray-50 hover:bg-gray-50 group">
+                <td className="px-2 py-2 text-gray-500 whitespace-nowrap align-top">{fmtDate(op.date)}</td>
+                <td className="px-2 py-2 align-top">
+                  {/* Дебет и кредит в два столбца */}
+                  <div className="flex items-start gap-1.5">
+                    {/* Дебет (in) */}
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
+                      {op.in_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_1_name}</div>}
+                      {op.in_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_2_name}</div>}
+                    </div>
+                    <span className="text-[9px] text-gray-300 mt-1 flex-shrink-0">→</span>
+                    {/* Кредит (out) */}
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
+                      {op.out_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_1_name}</div>}
+                      {op.out_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_2_name}</div>}
+                    </div>
+                  </div>
+                  {/* Содержание */}
+                  {note && (
+                    <div className="text-[10px] text-gray-400 italic mt-1.5 leading-tight">{note}</div>
+                  )}
+                </td>
+                <td className={`px-2 py-2 text-right tabular-nums font-medium align-top whitespace-nowrap ${amt >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{fmt(amt)}</td>
+                <td className="px-1 py-2 text-right align-top">
+                  {isDoc ? (
+                    <button
+                      onClick={() => onOpenDoc?.(op.table_id)}
+                      title="Открыть документ"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                    >📄</button>
+                  ) : (
+                    <button
+                      onClick={() => onEditOp?.(op)}
+                      title="Редактировать операцию"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
+                    >✎</button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot>
           <tr className="border-t-2 border-gray-200 bg-gray-50">
