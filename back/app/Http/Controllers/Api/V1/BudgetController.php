@@ -128,10 +128,62 @@ class BudgetController extends TenantController
     // ── CRUD: budget_items ──────────────────────────────────────────────────
 
     /**
-     * POST /budget-items
+     * GET /budget-items?budget_document_id=X&article_ids=1,2,3&period_date=2026-03-01
      *
-     * Создаёт новую строку плана.
-     * Тело: { budget_document_id, article_id, cash_id?, period_date, content?, amount }
+     * Список строк плана с фильтрами. article_ids — через запятую.
+     * Подгружает название статьи.
+     */
+    public function indexItems(Request $request)
+    {
+        $this->initTenant($request);
+
+        $request->validate([
+            'budget_document_id' => 'required|integer',
+        ]);
+
+        $query = $this->itemModel()->newQuery()
+            ->where('budget_document_id', $request->budget_document_id)
+            ->orderBy('period_date')
+            ->orderBy('article_id')
+            ->orderBy('id');
+
+        if ($request->article_ids) {
+            $ids = array_map('intval', explode(',', $request->article_ids));
+            $query->whereIn('article_id', $ids);
+        }
+
+        if ($request->period_date) {
+            $query->whereDate('period_date', $request->period_date);
+        }
+
+        $items = $query->get();
+
+        // Подгрузим названия статей
+        $articleIds = $items->pluck('article_id')->unique()->values();
+        $articles = collect();
+        if ($articleIds->isNotEmpty()) {
+            $articles = DB::connection($this->dbName)
+                ->table('info')
+                ->whereIn('id', $articleIds)
+                ->get(['id', 'name', 'code'])
+                ->keyBy('id');
+        }
+
+        $data = $items->map(fn($item) => [
+            'id'           => $item->id,
+            'article_id'   => $item->article_id,
+            'article_name' => $articles->get($item->article_id)?->name ?? "#{$item->article_id}",
+            'cash_id'      => $item->cash_id,
+            'period_date'  => $item->period_date?->format('Y-m-d'),
+            'content'      => $item->content,
+            'amount'       => (float)$item->amount,
+        ]);
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * POST /budget-items
      */
     public function storeItem(Request $request)
     {
@@ -151,27 +203,49 @@ class BudgetController extends TenantController
 
         $item = $this->itemModel()->newQuery()->create($data);
 
-        return response()->json(['data' => $item], 201);
+        // Подгрузить название статьи
+        $articleName = DB::connection($this->dbName)
+            ->table('info')->where('id', $item->article_id)->value('name') ?? '';
+
+        return response()->json(['data' => array_merge($item->toArray(), [
+            'article_name' => $articleName,
+            'period_date'  => $item->period_date?->format('Y-m-d'),
+        ])], 201);
     }
 
     /**
      * PUT /budget-items/{id}
      *
-     * Обновляет строку плана.
+     * Можно менять: article_id, period_date, content, amount
      */
     public function updateItem(Request $request, int $id)
     {
         $this->initTenant($request);
 
         $data = $request->validate([
-            'content' => 'nullable|string|max:500',
-            'amount'  => 'required|numeric',
+            'article_id'  => 'sometimes|integer',
+            'period_date' => 'sometimes|date',
+            'content'     => 'nullable|string|max:500',
+            'amount'      => 'sometimes|numeric',
         ]);
 
         $item = $this->itemModel()->newQuery()->findOrFail($id);
+
+        // Валидация period_date если меняется
+        if (isset($data['period_date'])) {
+            $doc = $this->docModel()->newQuery()->findOrFail($item->budget_document_id);
+            $this->validatePeriodDate($data['period_date'], $doc);
+        }
+
         $item->update($data);
 
-        return response()->json(['data' => $item]);
+        $articleName = DB::connection($this->dbName)
+            ->table('info')->where('id', $item->article_id)->value('name') ?? '';
+
+        return response()->json(['data' => array_merge($item->toArray(), [
+            'article_name' => $articleName,
+            'period_date'  => $item->period_date?->format('Y-m-d'),
+        ])]);
     }
 
     /**
@@ -300,15 +374,34 @@ class BudgetController extends TenantController
                 ->toArray();
         }
 
+        // ── Конфиг для drill-down факта ──────────────────────────────────
+        $factDrillConfig = [];
+        if ($doc->type === 'dds') {
+            $a100 = (new BalanceItem)->setConnection($this->dbName)->newQuery()->where('code', 'А100')->first();
+            if ($a100) {
+                $factDrillConfig = ['bi_id' => $a100->id, 'info_field' => 'info_2_id'];
+            }
+        } else {
+            // БДР: три счёта, каждый со своей аналитикой
+            $biMap = [];
+            $drillFields = ['П587' => 'info_1_id', 'П588' => 'info_2_id', 'П589' => 'info_1_id'];
+            foreach ($drillFields as $code => $field) {
+                $bi = (new BalanceItem)->setConnection($this->dbName)->newQuery()->where('code', $code)->first();
+                if ($bi) $biMap[$code] = ['bi_id' => $bi->id, 'info_field' => $field];
+            }
+            $factDrillConfig = $biMap;
+        }
+
         return response()->json([
-            'document'         => $doc,
-            'period_dates'     => $periodDates,
-            'articles'         => $articles,
-            'plan'             => $plan,
-            'plan_details'     => $planDetails,
-            'fact'             => $fact,
-            'opening_balances' => $openingBalances,
-            'cash_items'       => $cashItems,
+            'document'          => $doc,
+            'period_dates'      => $periodDates,
+            'articles'          => $articles,
+            'plan'              => $plan,
+            'plan_details'      => $planDetails,
+            'fact'              => $fact,
+            'opening_balances'  => $openingBalances,
+            'cash_items'        => $cashItems,
+            'fact_drill_config' => $factDrillConfig,
         ]);
     }
 
@@ -483,18 +576,27 @@ class BudgetController extends TenantController
 
     /**
      * Факт БДР — обороты по П587 (доходы), П588 (себестоимость), П589 (расходы).
+     *
+     * В balance_changes пассивные счета (П) хранят кредитовые обороты как отрицательные.
+     * Для БДР инвертируем знак: доходы → положительные, расходы → отрицательные.
      */
     private function getBdrFact(BudgetDocument $doc, array $periodDates): array
     {
-        $biCodes = [
-            'П587' => 'info_1_id',  // revenue
-            'П588' => 'info_1_id',  // product (себестоимость)
-            'П589' => 'info_1_id',  // expenses
+        // code => [info_field, sign_multiplier]
+        // В balance_changes: Дт = +, Кт = -
+        // П587 доходы:       Кт (credit) → balance_changes = -114000 → *(-1) = +114000
+        // П588 себестоимость: Дт (debit)  → balance_changes = +76560  → *(-1) = -76560
+        // П589 расходы:      Дт (debit)  → balance_changes = +10423  → *(-1) = -10423
+        // Итого: доходы положительные, себестоимость и расходы — отрицательные (вычитаются)
+        $biConfig = [
+            'П587' => ['field' => 'info_1_id', 'sign' => -1],
+            'П588' => ['field' => 'info_2_id', 'sign' => -1],
+            'П589' => ['field' => 'info_1_id', 'sign' => -1],
         ];
 
         $balanceItems = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
-            ->whereIn('code', array_keys($biCodes))
+            ->whereIn('code', array_keys($biConfig))
             ->get()
             ->keyBy('code');
 
@@ -503,9 +605,12 @@ class BudgetController extends TenantController
 
         $fact = [];
 
-        foreach ($biCodes as $code => $infoField) {
+        foreach ($biConfig as $code => $cfg) {
             $bi = $balanceItems->get($code);
             if (!$bi) continue;
+
+            $infoField = $cfg['field'];
+            $sign = $cfg['sign'];
 
             $rows = DB::connection($this->dbName)
                 ->table('balance_changes')
@@ -522,7 +627,7 @@ class BudgetController extends TenantController
 
             foreach ($rows as $row) {
                 $key = $row->article_id . ':0:' . $row->period_date;
-                $fact[$key] = (float)$row->total;
+                $fact[$key] = (float)$row->total * $sign;
             }
         }
 
