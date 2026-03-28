@@ -45,7 +45,144 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', description: '', inn: '', parent_id: '', sort_order: 0 }
+const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0 }
+
+const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
+  const [search, setSearch] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newParentId, setNewParentId] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const tree = buildTree(items || [])
+  const allFlat = flattenTree(tree, 0, new Set((items || []).map(i => i.id)))
+  const filtered = search
+    ? allFlat.filter(opt =>
+        opt.name.toLowerCase().includes(search.toLowerCase()) ||
+        (opt.code && opt.code.toLowerCase().includes(search.toLowerCase()))
+      )
+    : allFlat
+
+  const selectedOption = items?.find(o => String(o.id) === String(value))
+
+  const handleCreate = async () => {
+    if (!newName.trim() || !infoType) return
+    setSaving(true)
+    try {
+      const res = await createInfo({ name: newName.trim(), type: infoType, parent_id: newParentId || null })
+      const created = res.data.data
+      if (onItemCreated) onItemCreated(created)
+      onChange(String(created.id))
+      setCreating(false)
+      setNewName('')
+      setNewParentId('')
+      setSearch('')
+      setIsOpen(false)
+    } catch (err) {
+      console.error('Ошибка создания:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const typeLabel = INFO_TYPES.find(t => t.value === infoType)?.label || infoType
+
+  return (
+    <div className="relative">
+      <label className="block text-sm font-medium text-gray-700 mb-1">Родитель</label>
+      <div className="relative">
+        <input
+          type="text"
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder={selectedOption ? selectedOption.name : "— Без родителя"}
+          value={search}
+          onFocus={() => setIsOpen(true)}
+          onChange={e => { setSearch(e.target.value); setIsOpen(true); setCreating(false) }}
+        />
+        {isOpen && (
+          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
+            <div
+              className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
+              onClick={() => { onChange(''); setSearch(''); setIsOpen(false); setCreating(false) }}
+            >
+              — Без родителя
+            </div>
+            {filtered.map(opt => (
+              <div
+                key={opt.id}
+                className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
+                onClick={() => { onChange(String(opt.id)); setSearch(''); setIsOpen(false); setCreating(false) }}
+              >
+                <span style={{ paddingLeft: search ? 0 : opt.depth * 16 }} className="truncate">
+                  {!search && opt.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
+                  <span className={opt.children?.length > 0 ? "font-medium text-gray-800" : "text-gray-700 group-hover:text-blue-700"}>
+                    {opt.name}
+                  </span>
+                </span>
+                {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
+              </div>
+            ))}
+            {filtered.length === 0 && !creating && (
+              <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>
+            )}
+
+            {/* Кнопка создания */}
+            {!creating && (
+              <div
+                className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
+                onClick={e => { e.stopPropagation(); setCreating(true); setNewName(search); setNewParentId('') }}
+              >
+                <span className="text-blue-500">+</span> Создать «{search || typeLabel}»
+              </div>
+            )}
+
+            {creating && (
+              <div className="p-3 border-t border-gray-100 bg-gray-50 space-y-2" onClick={e => e.stopPropagation()}>
+                <div className="text-xs text-gray-500 font-medium">Новый: {typeLabel}</div>
+                <input
+                  type="text"
+                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Название"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleCreate() }
+                    if (e.key === 'Escape') setCreating(false)
+                  }}
+                  autoFocus
+                />
+                <select
+                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={newParentId}
+                  onChange={e => setNewParentId(e.target.value)}
+                >
+                  <option value="">— Без родителя</option>
+                  {allFlat.map(opt => (
+                    <option key={opt.id} value={opt.id}>
+                      {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button type="button" onClick={handleCreate} disabled={!newName.trim() || saving}
+                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                    {saving ? 'Создаю...' : 'Создать'}
+                  </button>
+                  <button type="button" onClick={() => setCreating(false)}
+                    className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg">
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); setCreating(false) }}></div>}
+    </div>
+  )
+}
 
 export default function InfoPage() {
   const [items, setItems] = useState([])
@@ -77,6 +214,7 @@ export default function InfoPage() {
     setForm({
       name:        item.name,
       type:        item.type,
+      code:        item.code || '',
       description: item.description || '',
       inn:         item.inn || '',
       parent_id:   item.parent_id || '',
@@ -93,6 +231,7 @@ export default function InfoPage() {
     const payload = {
       name:       form.name,
       type:       form.type,
+      code:       form.code || null,
       inn:        form.inn || null,
       parent_id:  form.parent_id || null,
       sort_order: form.sort_order,
@@ -180,23 +319,31 @@ export default function InfoPage() {
                 <tbody>
                   {flat.map(item => (
                     <tr key={item.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 group">
-                      <td className="px-6 py-2.5 w-8">
-                        {item.children?.length > 0 && (
-                          <button onClick={() => toggleExpand(type, item.id)}
-                            className="text-gray-400 hover:text-gray-600 text-xs">
-                            {expandedSet.has(item.id) ? '▼' : '▶'}
-                          </button>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4" style={{ paddingLeft: `${24 + item.depth * 20}px` }}>
-                        <span className="text-sm text-gray-800">
-                          {item.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
-                          {item.name}
-                        </span>
-                        {/* Показываем ИНН для partner */}
-                        {item.type === 'partner' && item.inn && (
-                          <span className="ml-2 text-xs text-gray-400">ИНН: {item.inn}</span>
-                        )}
+                      <td className="py-2.5 pr-4">
+                        <div className="flex items-center" style={{ paddingLeft: `${24 + item.depth * 20}px` }}>
+                          <div className="w-5 flex items-center justify-center flex-shrink-0 mr-1.5">
+                            {item.children?.length > 0 ? (
+                              <button onClick={() => toggleExpand(type, item.id)}
+                                className="text-gray-400 hover:text-gray-600 transition-colors p-0.5">
+                                <svg
+                                  className={`w-3 h-3 transition-transform duration-200 ${expandedSet.has(item.id) ? 'rotate-90' : ''}`}
+                                  viewBox="0 0 24 24" fill="currentColor"
+                                >
+                                  <path d="M8 5v14l11-7z" />
+                                </svg>
+                              </button>
+                            ) : item.depth > 0 ? (
+                              <span className="text-gray-300 text-xs">└</span>
+                            ) : null}
+                          </div>
+                          <span className="text-sm text-gray-800">
+                            {item.name}
+                          </span>
+                          {/* Показываем ИНН для partner */}
+                          {item.type === 'partner' && item.inn && (
+                            <span className="ml-2 text-xs text-gray-400">ИНН: {item.inn}</span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2.5 pr-4">
                         {item.code && (
@@ -244,22 +391,13 @@ export default function InfoPage() {
               </div>
 
               {/* Родитель */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Родитель</label>
-                <select value={form.parent_id} onChange={e => setForm({ ...form, parent_id: e.target.value })} className={ic}>
-                  <option value="">— Без родителя</option>
-                  {(() => {
-                    const sameType = items.filter(i => i.type === form.type && i.id !== editItem?.id)
-                    const tree = buildTree(sameType)
-                    const flat = flattenTree(tree, 0, new Set(sameType.map(i => i.id)))
-                    return flat.map(item => (
-                      <option key={item.id} value={item.id}>
-                        {'\u00A0'.repeat(item.depth * 2)}{item.depth > 0 ? '└ ' : ''}{item.name}
-                      </option>
-                    ))
-                  })()}
-                </select>
-              </div>
+              <ParentSelect
+                items={items.filter(i => i.type === form.type && i.id !== editItem?.id)}
+                value={form.parent_id}
+                onChange={val => setForm({ ...form, parent_id: val })}
+                infoType={form.type}
+                onItemCreated={(newItem) => setItems(prev => [...prev, newItem])}
+              />
 
               {/* Название */}
               <div>
@@ -267,6 +405,18 @@ export default function InfoPage() {
                 <input type="text" value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
                   placeholder="Название" className={ic} required autoFocus />
+              </div>
+
+              {/* Код */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Код
+                  <span className="ml-1 text-xs text-gray-400 font-normal">необязательно</span>
+                </label>
+                <input type="text" value={form.code}
+                  onChange={e => setForm({ ...form, code: e.target.value })}
+                  placeholder="SALES" className={ic + ' font-mono'}
+                  maxLength={35} />
               </div>
 
               {/* ИНН — только для partner */}

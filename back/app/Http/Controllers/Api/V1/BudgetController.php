@@ -384,7 +384,7 @@ class BudgetController extends TenantController
         } else {
             // БДР: три счёта, каждый со своей аналитикой
             $biMap = [];
-            $drillFields = ['П587' => 'info_1_id', 'П588' => 'info_2_id', 'П589' => 'info_1_id'];
+            $drillFields = ['П587' => 'info_1_id', 'П588' => 'info_1_id', 'П589' => 'info_1_id'];
             foreach ($drillFields as $code => $field) {
                 $bi = (new BalanceItem)->setConnection($this->dbName)->newQuery()->where('code', $code)->first();
                 if ($bi) $biMap[$code] = ['bi_id' => $bi->id, 'info_field' => $field];
@@ -538,8 +538,9 @@ class BudgetController extends TenantController
     // ── Приватные: БДР ───────────────────────────────────────────────────────
 
     /**
-     * Дерево статей БДР: revenue + expenses (+ product для себестоимости).
-     * Возвращает разделённое дерево с group-маркерами.
+     * Дерево статей БДР: revenue (доходы + себестоимость) + expenses.
+     * Себестоимость использует те же статьи дохода (revenue), что и доходы,
+     * т.к. на счёте П588 аналитика info_1 = revenue.
      */
     private function getBdrArticles(): array
     {
@@ -559,17 +560,9 @@ class BudgetController extends TenantController
             ->orderBy('sort_order')->orderBy('name')
             ->get(['id', 'parent_id', 'code', 'name', 'sort_order']);
 
-        $products = DB::connection($this->dbName)
-            ->table('info')
-            ->where('type', 'product')
-            ->whereNull('deleted_at')
-            ->where('is_active', true)
-            ->orderBy('sort_order')->orderBy('name')
-            ->get(['id', 'parent_id', 'code', 'name', 'sort_order']);
-
         return [
             ['group' => 'revenue',    'label' => 'Доходы',        'items' => $this->buildTree($revenues)],
-            ['group' => 'cost',       'label' => 'Себестоимость', 'items' => $this->buildTree($products)],
+            ['group' => 'cost',       'label' => 'Себестоимость', 'items' => $this->buildTree($revenues)],
             ['group' => 'expenses',   'label' => 'Расходы',       'items' => $this->buildTree($expenses)],
         ];
     }
@@ -590,7 +583,7 @@ class BudgetController extends TenantController
         // Итого: доходы положительные, себестоимость и расходы — отрицательные (вычитаются)
         $biConfig = [
             'П587' => ['field' => 'info_1_id', 'sign' => -1],
-            'П588' => ['field' => 'info_2_id', 'sign' => -1],
+            'П588' => ['field' => 'info_1_id', 'sign' => -1],
             'П589' => ['field' => 'info_1_id', 'sign' => -1],
         ];
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getBalanceItems, createOperation, updateOperation } from '../api/operations'
-import { getInfo } from '../api/info'
+import { getInfo, createInfo } from '../api/info'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -56,10 +56,14 @@ const flattenTree = (nodes, depth = 0) => {
   return result
 }
 
-// 2. Кастомный компонент селекта с поиском и иерархией
-const SearchableInfoSelect = ({ items, value, onChange, label }) => {
+// 2. Кастомный компонент селекта с поиском, иерархией и inline-созданием
+const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemCreated }) => {
   const [search, setSearch] = useState('')
   const [isOpen, setIsOpen] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newParentId, setNewParentId] = useState('')
+  const [saving, setSaving] = useState(false)
 
   // Строим дерево и разворачиваем его для отображения
   const tree = buildTree(items || [])
@@ -72,6 +76,28 @@ const SearchableInfoSelect = ({ items, value, onChange, label }) => {
   )
 
   const selectedOption = items?.find(o => o.id == value)
+
+  const handleCreate = async () => {
+    if (!newName.trim() || !infoType) return
+    setSaving(true)
+    try {
+      const res = await createInfo({ name: newName.trim(), type: infoType, parent_id: newParentId || null })
+      const created = res.data.data
+      // Обновляем кеш в родительском компоненте
+      if (onItemCreated) onItemCreated(infoType, created)
+      // Выбираем созданный элемент
+      onChange(created.id)
+      setCreating(false)
+      setNewName('')
+      setNewParentId('')
+      setSearch('')
+      setIsOpen(false)
+    } catch (err) {
+      console.error('Ошибка создания:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="relative flex flex-col gap-1">
@@ -86,17 +112,19 @@ const SearchableInfoSelect = ({ items, value, onChange, label }) => {
           onChange={(e) => {
             setSearch(e.target.value)
             setIsOpen(true)
+            setCreating(false)
           }}
         />
         {/* Выпадающий список */}
         {isOpen && (
-          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
             <div
               className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
               onClick={() => {
                 onChange('')
                 setSearch('')
                 setIsOpen(false)
+                setCreating(false)
               }}
             >
               Не указано
@@ -109,6 +137,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label }) => {
                   onChange(opt.id)
                   setSearch('')
                   setIsOpen(false)
+                  setCreating(false)
                 }}
               >
                 {/* Отрисовка названия с отступом для дочерних элементов (если нет поиска) */}
@@ -120,12 +149,74 @@ const SearchableInfoSelect = ({ items, value, onChange, label }) => {
                 </span>
                 {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
               </div>
-            )) : <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
+            )) : !creating && <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
+
+            {/* Inline-создание */}
+            {infoType && !creating && (
+              <div
+                className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setCreating(true)
+                  setNewName(search)
+                  setNewParentId('')
+                }}
+              >
+                <span className="text-blue-500">+</span> Создать «{search || INFO_LABELS[infoType] || infoType}»
+              </div>
+            )}
+
+            {creating && (
+              <div className="p-3 border-t border-gray-100 bg-gray-50 space-y-2" onClick={e => e.stopPropagation()}>
+                <div className="text-xs text-gray-500 font-medium">Новый: {INFO_LABELS[infoType] || infoType}</div>
+                <input
+                  type="text"
+                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Название"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleCreate() }
+                    if (e.key === 'Escape') { setCreating(false) }
+                  }}
+                  autoFocus
+                />
+                <select
+                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-600"
+                  value={newParentId}
+                  onChange={e => setNewParentId(e.target.value)}
+                >
+                  <option value="">— Без родителя</option>
+                  {flatItems.map(opt => (
+                    <option key={opt.id} value={opt.id}>
+                      {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCreate}
+                    disabled={!newName.trim() || saving}
+                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {saving ? 'Создаю...' : 'Создать'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreating(false)}
+                    className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
       {/* Невидимый слой для закрытия списка при клике вне его */}
-      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => setIsOpen(false)}></div>}
+      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); setCreating(false) }}></div>}
     </div>
   )
 }
@@ -185,6 +276,14 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
         })
       }
     })
+  }
+
+  // Callback для inline-создания: добавляем элемент в кеш
+  const handleItemCreated = (type, newItem) => {
+    setInfoCache(prev => ({
+      ...prev,
+      [type]: [...(prev[type] || []), newItem]
+    }))
   }
 
   const inBi  = balanceItems.find(b => b.id == form.in_bi_id)
@@ -255,6 +354,8 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
               value={form.in_info_1_id}
               onChange={(val) => setForm({...form, in_info_1_id: val})}
               label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`}
+              infoType={inBi.info_1_type}
+              onItemCreated={handleItemCreated}
             />
           )}
           {inBi?.info_2_type && (
@@ -263,6 +364,8 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
               value={form.in_info_2_id}
               onChange={(val) => setForm({...form, in_info_2_id: val})}
               label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`}
+              infoType={inBi.info_2_type}
+              onItemCreated={handleItemCreated}
             />
           )}
 
@@ -286,6 +389,8 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
               value={form.out_info_1_id}
               onChange={(val) => setForm({...form, out_info_1_id: val})}
               label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`}
+              infoType={outBi.info_1_type}
+              onItemCreated={handleItemCreated}
             />
           )}
           {outBi?.info_2_type && (
@@ -294,6 +399,8 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
               value={form.out_info_2_id}
               onChange={(val) => setForm({...form, out_info_2_id: val})}
               label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`}
+              infoType={outBi.info_2_type}
+              onItemCreated={handleItemCreated}
             />
           )}
            
