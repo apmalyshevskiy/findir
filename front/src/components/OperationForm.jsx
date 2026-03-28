@@ -283,10 +283,17 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
   const [infoCache, setInfoCache] = useState({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Локальное время для datetime-local input без UTC-конвертации
+  const localNow = () => {
+    const d = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
   const [form, setForm] = useState({
     date:          operation
-      ? new Date(new Date(operation.date).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)
-      : new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
+      ? String(operation.date).replace(' ', 'T').slice(0, 16)
+      : localNow(),
     project_id:    operation?.project_id ?? 1,
     amount:        operation?.amount ?? '',
     in_bi_id:      operation?.in_bi_id ?? '',
@@ -354,7 +361,15 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     setError('')
     setLoading(true)
     try {
-      isEdit ? await updateOperation(operation.id, form) : await createOperation(form)
+      // datetime-local input даёт локальное время. Конвертируем в UTC ISO для сервера.
+      const payload = { ...form }
+      if (payload.date) {
+        // form.date = "2026-03-29T15:30" (локальное время)
+        // new Date("2026-03-29T15:30") парсит как локальное → .toISOString() отдаёт UTC
+        const utc = new Date(payload.date)
+        payload.date = utc.toISOString().slice(0, 19).replace('T', ' ')
+      }
+      isEdit ? await updateOperation(operation.id, payload) : await createOperation(payload)
       onSuccess()
     } catch (err) {
       const errors = err.response?.data?.errors

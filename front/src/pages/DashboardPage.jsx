@@ -491,7 +491,7 @@ export default function DashboardPage() {
                           </button>
                         ) : (
                           <>
-                            <button onClick={() => handleEdit(op)} className="text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50">✎</button>
+                            <button onClick={() => handleEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
                             <button onClick={() => handleDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
                           </>
                         )}
