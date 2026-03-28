@@ -152,6 +152,10 @@ class BudgetController extends TenantController
             $query->whereIn('article_id', $ids);
         }
 
+        if ($request->section) {
+            $query->where('section', $request->section);
+        }
+
         if ($request->period_date) {
             $query->whereDate('period_date', $request->period_date);
         }
@@ -173,6 +177,7 @@ class BudgetController extends TenantController
             'id'           => $item->id,
             'article_id'   => $item->article_id,
             'article_name' => $articles->get($item->article_id)?->name ?? "#{$item->article_id}",
+            'section'      => $item->section,
             'cash_id'      => $item->cash_id,
             'period_date'  => $item->period_date?->format('Y-m-d'),
             'content'      => $item->content,
@@ -192,6 +197,7 @@ class BudgetController extends TenantController
         $data = $request->validate([
             'budget_document_id' => 'required|integer',
             'article_id'         => 'required|integer',
+            'section'            => 'nullable|string|in:revenue,cost,expenses',
             'cash_id'            => 'nullable|integer',
             'period_date'        => 'required|date',
             'content'            => 'nullable|string|max:500',
@@ -209,6 +215,7 @@ class BudgetController extends TenantController
 
         return response()->json(['data' => array_merge($item->toArray(), [
             'article_name' => $articleName,
+            'section'      => $item->section,
             'period_date'  => $item->period_date?->format('Y-m-d'),
         ])], 201);
     }
@@ -337,11 +344,12 @@ class BudgetController extends TenantController
             ->get();
 
         $plan = [];
-        $planDetails = []; // "article_id:cash_id:period_date" => [ {id, content, amount}, ... ]
+        $planDetails = []; // "section:article_id:cash_id:period_date" => [ {id, content, amount}, ... ]
         foreach ($planRows as $row) {
             $pd  = Carbon::parse($row->period_date)->format('Y-m-d');
             $cashKey = $byCash ? ($row->cash_id ?? 0) : 0;
-            $key = $row->article_id . ':' . $cashKey . ':' . $pd;
+            $section = $row->section ?? '';
+            $key = $section . ':' . $row->article_id . ':' . $cashKey . ':' . $pd;
             $plan[$key] = ($plan[$key] ?? 0) + (float)$row->amount;
             $planDetails[$key][] = [
                 'id'      => $row->id,
@@ -582,9 +590,9 @@ class BudgetController extends TenantController
         // П589 расходы:      Дт (debit)  → balance_changes = +10423  → *(-1) = -10423
         // Итого: доходы положительные, себестоимость и расходы — отрицательные (вычитаются)
         $biConfig = [
-            'П587' => ['field' => 'info_1_id', 'sign' => -1],
-            'П588' => ['field' => 'info_1_id', 'sign' => -1],
-            'П589' => ['field' => 'info_1_id', 'sign' => -1],
+            'П587' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'revenue'],
+            'П588' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'cost'],
+            'П589' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'expenses'],
         ];
 
         $balanceItems = (new BalanceItem)->setConnection($this->dbName)
@@ -604,6 +612,7 @@ class BudgetController extends TenantController
 
             $infoField = $cfg['field'];
             $sign = $cfg['sign'];
+            $section = $cfg['section'];
 
             $rows = DB::connection($this->dbName)
                 ->table('balance_changes')
@@ -619,7 +628,7 @@ class BudgetController extends TenantController
                 ->get();
 
             foreach ($rows as $row) {
-                $key = $row->article_id . ':0:' . $row->period_date;
+                $key = $section . ':' . $row->article_id . ':0:' . $row->period_date;
                 $fact[$key] = (float)$row->total * $sign;
             }
         }

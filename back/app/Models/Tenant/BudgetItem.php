@@ -11,6 +11,7 @@ class BudgetItem extends Model
     protected $fillable = [
         'budget_document_id',
         'article_id',
+        'section',       // 'revenue' | 'cost' | 'expenses' для БДР, null для ДДС
         'cash_id',
         'period_date',
         'content',

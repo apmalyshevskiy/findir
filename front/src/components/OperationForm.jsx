@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getBalanceItems, createOperation, updateOperation } from '../api/operations'
-import { getInfo, createInfo } from '../api/info'
+import { getInfo, createInfo, updateInfo } from '../api/info'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -56,11 +56,13 @@ const flattenTree = (nodes, depth = 0) => {
   return result
 }
 
-// 2. Кастомный компонент селекта с поиском, иерархией и inline-созданием
+// 2. Кастомный компонент селекта с поиском, иерархией, inline-созданием и редактированием
 const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemCreated }) => {
   const [search, setSearch] = useState('')
   const [isOpen, setIsOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
+  // mode: null | 'create' | 'edit'
+  const [formMode, setFormMode] = useState(null)
+  const [editId, setEditId] = useState(null)
   const [newName, setNewName] = useState('')
   const [newParentId, setNewParentId] = useState('')
   const [saving, setSaving] = useState(false)
@@ -77,19 +79,22 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
 
   const selectedOption = items?.find(o => o.id == value)
 
+  const resetForm = () => {
+    setFormMode(null)
+    setEditId(null)
+    setNewName('')
+    setNewParentId('')
+  }
+
   const handleCreate = async () => {
     if (!newName.trim() || !infoType) return
     setSaving(true)
     try {
       const res = await createInfo({ name: newName.trim(), type: infoType, parent_id: newParentId || null })
       const created = res.data.data
-      // Обновляем кеш в родительском компоненте
       if (onItemCreated) onItemCreated(infoType, created)
-      // Выбираем созданный элемент
       onChange(created.id)
-      setCreating(false)
-      setNewName('')
-      setNewParentId('')
+      resetForm()
       setSearch('')
       setIsOpen(false)
     } catch (err) {
@@ -99,76 +104,128 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
     }
   }
 
+  const handleUpdate = async () => {
+    if (!newName.trim() || !editId) return
+    setSaving(true)
+    try {
+      const original = items?.find(o => o.id == editId)
+      const res = await updateInfo(editId, { name: newName.trim(), type: infoType, parent_id: newParentId || null })
+      const updated = res.data.data
+      // Обновляем элемент в кеше
+      if (onItemCreated) onItemCreated(infoType, updated, editId)
+      resetForm()
+      setSearch('')
+      setIsOpen(false)
+    } catch (err) {
+      console.error('Ошибка обновления:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const openEdit = (e) => {
+    e.stopPropagation()
+    if (!selectedOption) return
+    setFormMode('edit')
+    setEditId(selectedOption.id)
+    setNewName(selectedOption.name || '')
+    setNewParentId(selectedOption.parent_id || '')
+    setIsOpen(true)
+  }
+
   return (
     <div className="relative flex flex-col gap-1">
       <label className="block text-sm font-medium text-gray-700">{label}</label>
-      <div className="relative">
-        <input
-          type="text"
-          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder={selectedOption ? selectedOption.name : "Выберите значение..."}
-          value={search}
-          onFocus={() => setIsOpen(true)}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setIsOpen(true)
-            setCreating(false)
-          }}
-        />
+      <div className="relative flex items-center gap-1">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder={selectedOption ? selectedOption.name : "Выберите значение..."}
+            value={search}
+            onFocus={() => { setIsOpen(true); if (formMode === 'edit') resetForm() }}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setIsOpen(true)
+              resetForm()
+            }}
+          />
+        </div>
+        {/* Карандашик — редактирование выбранного элемента */}
+        {selectedOption && infoType && (
+          <button
+            type="button"
+            onClick={openEdit}
+            className="flex-shrink-0 p-1.5 text-gray-300 hover:text-gray-500 transition-colors"
+            title={`Переименовать «${selectedOption.name}»`}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+              <path d="m15 5 4 4"/>
+            </svg>
+          </button>
+        )}
         {/* Выпадающий список */}
         {isOpen && (
-          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
-            <div
-              className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
-              onClick={() => {
-                onChange('')
-                setSearch('')
-                setIsOpen(false)
-                setCreating(false)
-              }}
-            >
-              Не указано
-            </div>
-            {filtered.length > 0 ? filtered.map(opt => (
-              <div
-                key={opt.id}
-                className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
-                onClick={() => {
-                  onChange(opt.id)
-                  setSearch('')
-                  setIsOpen(false)
-                  setCreating(false)
-                }}
-              >
-                {/* Отрисовка названия с отступом для дочерних элементов (если нет поиска) */}
-                <span style={{ paddingLeft: search ? 0 : opt.depth * 16 }} className="truncate">
-                  {!search && opt.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
-                  <span className={(!search && opt.children?.length > 0) ? "font-medium text-gray-800" : "text-gray-700 group-hover:text-blue-700"}>
-                    {opt.name}
-                  </span>
-                </span>
-                {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
-              </div>
-            )) : !creating && <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
+          <div className="absolute left-0 right-0 top-full z-[60] mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
+            {formMode !== 'edit' && (
+              <>
+                <div
+                  className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
+                  onClick={() => {
+                    onChange('')
+                    setSearch('')
+                    setIsOpen(false)
+                    resetForm()
+                  }}
+                >
+                  Не указано
+                </div>
+                {filtered.length > 0 ? filtered.map(opt => (
+                  <div
+                    key={opt.id}
+                    className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
+                    onClick={() => {
+                      onChange(opt.id)
+                      setSearch('')
+                      setIsOpen(false)
+                      resetForm()
+                    }}
+                  >
+                    <span style={{ paddingLeft: search ? 0 : opt.depth * 16 }} className="truncate">
+                      {!search && opt.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
+                      <span className={(!search && opt.children?.length > 0) ? "font-medium text-gray-800" : "text-gray-700 group-hover:text-blue-700"}>
+                        {opt.name}
+                      </span>
+                    </span>
+                    {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
+                  </div>
+                )) : formMode !== 'create' && <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
 
-            {/* Inline-создание */}
-            {infoType && !creating && (
-              <div
-                className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setCreating(true)
-                  setNewName(search)
-                  setNewParentId('')
-                }}
-              >
-                <span className="text-blue-500">+</span> Создать «{search || INFO_LABELS[infoType] || infoType}»
-              </div>
+                {/* Кнопка создания */}
+                {infoType && formMode !== 'create' && (
+                  <div
+                    className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFormMode('create')
+                      setEditId(null)
+                      setNewName(search)
+                      setNewParentId('')
+                    }}
+                  >
+                    <span className="text-blue-500">+</span> Создать «{search || INFO_LABELS[infoType] || infoType}»
+                  </div>
+                )}
+              </>
             )}
 
-            {creating && (
+            {/* Inline-форма создания / редактирования */}
+            {formMode && (
               <div className="p-3 border-t border-gray-100 bg-gray-50 space-y-2" onClick={e => e.stopPropagation()}>
-                <div className="text-xs text-gray-500 font-medium">Новый: {INFO_LABELS[infoType] || infoType}</div>
+                <div className="text-xs text-gray-500 font-medium">
+                  {formMode === 'edit' ? `Редактировать: ${selectedOption?.name || ''}` : `Новый: ${INFO_LABELS[infoType] || infoType}`}
+                </div>
                 <input
                   type="text"
                   className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -176,8 +233,8 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter') { e.preventDefault(); handleCreate() }
-                    if (e.key === 'Escape') { setCreating(false) }
+                    if (e.key === 'Enter') { e.preventDefault(); formMode === 'edit' ? handleUpdate() : handleCreate() }
+                    if (e.key === 'Escape') resetForm()
                   }}
                   autoFocus
                 />
@@ -187,7 +244,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
                   onChange={e => setNewParentId(e.target.value)}
                 >
                   <option value="">— Без родителя</option>
-                  {flatItems.map(opt => (
+                  {flatItems.filter(o => o.id != editId).map(opt => (
                     <option key={opt.id} value={opt.id}>
                       {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
                     </option>
@@ -196,15 +253,15 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={handleCreate}
+                    onClick={formMode === 'edit' ? handleUpdate : handleCreate}
                     disabled={!newName.trim() || saving}
                     className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {saving ? 'Создаю...' : 'Создать'}
+                    {saving ? '...' : formMode === 'edit' ? 'Сохранить' : 'Создать'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCreating(false)}
+                    onClick={resetForm}
                     className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg"
                   >
                     Отмена
@@ -215,8 +272,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
           </div>
         )}
       </div>
-      {/* Невидимый слой для закрытия списка при клике вне его */}
-      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); setCreating(false) }}></div>}
+      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); resetForm() }}></div>}
     </div>
   )
 }
@@ -279,11 +335,15 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
   }
 
   // Callback для inline-создания: добавляем элемент в кеш
-  const handleItemCreated = (type, newItem) => {
-    setInfoCache(prev => ({
-      ...prev,
-      [type]: [...(prev[type] || []), newItem]
-    }))
+  // Callback для inline-создания/редактирования: добавляем или обновляем элемент в кеше
+  const handleItemCreated = (type, newItem, replaceId = null) => {
+    setInfoCache(prev => {
+      const list = prev[type] || []
+      if (replaceId) {
+        return { ...prev, [type]: list.map(i => i.id == replaceId ? newItem : i) }
+      }
+      return { ...prev, [type]: [...list, newItem] }
+    })
   }
 
   const inBi  = balanceItems.find(b => b.id == form.in_bi_id)

@@ -76,7 +76,7 @@ function PlanCellSimple({ value, onSave, disabled }) {
 }
 
 // ── Drawer (план + факт) ────────────────────────────────────────────────────
-function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact }) {
+function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact, section }) {
   const [tab, setTab] = useState(mode)
   const factLoaded = useRef(false)
 
@@ -175,7 +175,7 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
         </div>
         <div className="flex-1 overflow-y-auto">
           {tab === 'plan' ? (
-            <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} />
+            <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} section={section} />
           ) : (
             <FactTab ops={factOps} loading={factLoading} sign={factSign} targetBiIds={targetBiIds}
               onEditOp={setEditOp} onOpenDoc={openDocumentModal} />
@@ -218,7 +218,7 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
 }
 
 // ── Вкладка «План» ──────────────────────────────────────────────────────────
-function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate }) {
+function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate, section }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -245,7 +245,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
     try {
       const allIds = descendantAllMap?.[articleId]
       const ids = allIds && allIds.size > 0 ? [...allIds] : [articleId]
-      const res = await getBudgetItems({ budget_document_id: docId, article_ids: ids.join(','), period_date: periodDate })
+      const res = await getBudgetItems({ budget_document_id: docId, article_ids: ids.join(','), period_date: periodDate, ...(section ? { section } : {}) })
       setRows(res.data.data || [])
     } catch (e) { console.error('loadItems error', e) }
     finally { setLoading(false) }
@@ -261,7 +261,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
     if (!amount) return
     setSaving(true)
     try {
-      const res = await createBudgetItem({ budget_document_id: docId, article_id: newArticle, period_date: newDate, content: newContent.trim() || null, amount })
+      const res = await createBudgetItem({ budget_document_id: docId, article_id: newArticle, section: section || null, period_date: newDate, content: newContent.trim() || null, amount })
       setRows(prev => [...prev, res.data.data])
       setNewContent(''); setNewAmount('')
       onUpdate()
@@ -479,14 +479,14 @@ function FactTab({ ops, loading, sign = 1, targetBiIds = [], onEditOp, onOpenDoc
                     <button
                       onClick={() => onOpenDoc?.(op.table_id)}
                       title="Открыть документ"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
-                    >📄</button>
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
+                    ><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
                   ) : (
                     <button
                       onClick={() => onEditOp?.(op)}
                       title="Редактировать операцию"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-600 text-sm p-1 rounded hover:bg-blue-50"
-                    >✎</button>
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
+                    ><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
                   )}
                 </td>
               </tr>
@@ -569,8 +569,8 @@ export default function BudgetPage() {
   }
 
   // ── Открытие drawer (универсальный) ──────────────────────────────────────
-  const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan') => {
-    setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate) })
+  const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan', section = null) => {
+    setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate), section })
     setFactOps([]); setFactLoading(false)
   }
 
@@ -649,13 +649,19 @@ export default function BudgetPage() {
     const arts = report.articles
     if (Array.isArray(arts) && arts[0]?.id != null) return { flatArticles: flattenArticles(arts), descendantLeafMap: buildDescendantLeafMap(arts), descendantAllMap: buildDescendantAllMap(arts) }
     const allItems = [], allFlat = []
-    for (const g of arts) { allFlat.push({ id: `group_${g.group}`, name: g.label, depth: 0, isGroup: true, groupKey: g.group }); allFlat.push(...flattenArticles(g.items || [], 1)); allItems.push(...(g.items || [])) }
+    for (const g of arts) { allFlat.push({ id: `group_${g.group}`, name: g.label, depth: 0, isGroup: true, groupKey: g.group }); allFlat.push(...flattenArticles(g.items || [], 1).map(a => ({ ...a, section: g.group }))); allItems.push(...(g.items || [])) }
     return { flatArticles: allFlat, descendantLeafMap: buildDescendantLeafMap(allItems), descendantAllMap: buildDescendantAllMap(allItems) }
   }, [report])
 
-  const getArticleValue = useCallback((aid, pd, src) => {
+  const getArticleValue = useCallback((aid, pd, src, section = null) => {
     const allIds = descendantAllMap[aid]; const ids = (allIds?.size > 0) ? allIds : new Set([aid])
-    let t = 0; const sfx = ':' + pd; for (const l of ids) { const p = l + ':'; for (const [k, v] of Object.entries(src)) if (k.startsWith(p) && k.endsWith(sfx)) t += v }; return t
+    let t = 0; const sfx = ':' + pd
+    if (section) {
+      for (const l of ids) { const p = section + ':' + l + ':'; for (const [k, v] of Object.entries(src)) if (k.startsWith(p) && k.endsWith(sfx)) t += v }
+    } else {
+      for (const l of ids) { const p = l + ':'; for (const [k, v] of Object.entries(src)) if (k.startsWith(p) && k.endsWith(sfx)) t += v }
+    }
+    return t
   }, [descendantAllMap])
   const calcMonthTotal = useCallback((pd, src) => { let t = 0; for (const [k, v] of Object.entries(src)) if (k.endsWith(':' + pd)) t += v; return t }, [])
 
@@ -673,7 +679,7 @@ export default function BudgetPage() {
       for (const pd of periodDates) {
         let f = 0, p = 0
         for (const nid of allNodeIds) {
-          const sfx = ':' + pd; const pfx = nid + ':'
+          const sfx = ':' + pd; const pfx = g.group + ':' + nid + ':'
           for (const [k, v] of Object.entries(fact)) if (k.startsWith(pfx) && k.endsWith(sfx)) f += v
           for (const [k, v] of Object.entries(plan)) if (k.startsWith(pfx) && k.endsWith(sfx)) p += v
         }
@@ -835,22 +841,29 @@ export default function BudgetPage() {
                     <tr key={article.id} className={`border-b border-gray-50 hover:bg-gray-50/50 ${isParent ? 'bg-gray-50/50 font-medium' : ''}`}>
                       <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap" style={{ paddingLeft: 12 + article.depth * 20 }}>
                         <div className="flex items-center gap-1">
-                          {isParent && <button onClick={() => toggleExpand(article.id)} className="text-gray-400 hover:text-gray-600 text-[10px] w-4">{expanded.has(article.id) ? '▼' : '▶'}</button>}
+                          {isParent && (
+                            <button onClick={() => toggleExpand(article.id)} className="text-gray-400 hover:text-gray-600 transition-colors w-4 flex items-center justify-center">
+                              <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${expanded.has(article.id) ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M8 5v14l11-7z" />
+                              </svg>
+                            </button>
+                          )}
                           <span className={article.depth === 0 ? 'font-medium' : ''}>{article.depth > 0 && !isParent && <span className="text-gray-300 mr-1">└</span>}{article.name}</span>
                         </div>
                       </td>
                       {periodDates.map(pd => {
-                        const factVal = getArticleValue(article.id, pd, fact)
-                        const planVal = getArticleValue(article.id, pd, plan)
+                        const sec = article.section || null
+                        const factVal = getArticleValue(article.id, pd, fact, sec)
+                        const planVal = getArticleValue(article.id, pd, plan, sec)
                         const future = isFutureMonth(pd)
                         const editable = selectedDoc?.status !== 'approved'
-                        const key = `${article.id}:0:${pd}`
+                        const key = sec ? `${sec}:${article.id}:0:${pd}` : `${article.id}:0:${pd}`
                         const count = planDetails[key]?.length || 0
                         return (
                           <Fragment key={pd}>
-                            {editable ? <PlanCell value={planVal} detailCount={count} disabled={false} onClick={() => openDrawer(article.id, article.name, pd, 'plan')} />
+                            {editable ? <PlanCell value={planVal} detailCount={count} disabled={false} onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)} />
                               : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>}
-                            <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact') : null} />
+                            <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
                             {showDelta && <DeltaCell fact={future ? null : factVal} plan={planVal} />}
                           </Fragment>
                         )
@@ -907,7 +920,8 @@ export default function BudgetPage() {
           factOps={factOps} factLoading={factLoading} factSign={selectedDoc?.type === 'bdr' ? -1 : 1} targetBiIds={biIds}
           articleId={drawer.articleId} periodDate={drawer.periodDate} docId={selectedDocId}
           articles={report?.articles} descendantAllMap={descendantAllMap}
-          onClose={() => setDrawer(null)} onUpdate={() => loadReport(true)} onLoadFact={loadFactOps} />
+          onClose={() => setDrawer(null)} onUpdate={() => loadReport(true)} onLoadFact={loadFactOps}
+          section={drawer.section} />
       })()}
 
       {showCreateModal && <CreateDocModal projects={projects} onClose={() => setShowCreateModal(false)} onCreate={(doc) => { setDocuments(prev => [doc, ...prev]); setSelectedDocId(doc.id); setShowCreateModal(false) }} />}
