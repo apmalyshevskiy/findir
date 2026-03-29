@@ -348,12 +348,12 @@ class BudgetController extends TenantController
             ->get();
 
         $plan = [];
-        $planDetails = []; // "section:article_id:cash_id:period_date" => [ {id, content, amount}, ... ]
+        $planDetails = []; // "section:article_id:cash_id:period_date" или "article_id:cash_id:period_date"
         foreach ($planRows as $row) {
             $pd  = Carbon::parse($row->period_date)->format('Y-m-d');
             $cashKey = $byCash ? ($row->cash_id ?? 0) : 0;
             $section = $row->section ?? '';
-            $key = $section . ':' . $row->article_id . ':' . $cashKey . ':' . $pd;
+            $key = $section !== '' ? ($section . ':' . $row->article_id . ':' . $cashKey . ':' . $pd) : ($row->article_id . ':' . $cashKey . ':' . $pd);
             $plan[$key] = ($plan[$key] ?? 0) + (float)$row->amount;
             $planDetails[$key][] = [
                 'id'      => $row->id,
