@@ -59,6 +59,10 @@ class BudgetController extends TenantController
         $query = $this->docModel()->newQuery()
             ->orderByDesc('created_at');
 
+        if (!$request->show_archived) {
+            $query->where('status', '!=', 'archived');
+        }
+
         if ($request->type) {
             $query->where('type', $request->type);
         }
@@ -103,7 +107,7 @@ class BudgetController extends TenantController
             'name'       => 'sometimes|string|max:255',
             'period_from'=> 'sometimes|date',
             'period_to'  => 'sometimes|date',
-            'status'     => 'sometimes|in:draft,approved',
+            'status'     => 'sometimes|in:draft,approved,archived',
             'project_id' => 'sometimes|integer',
         ]);
 
@@ -648,10 +652,11 @@ class BudgetController extends TenantController
             if ($item->parent_id == $parentId) {
                 $children = $this->buildTree($items, $item->id);
                 $node = [
-                    'id'        => $item->id,
-                    'code'      => $item->code,
-                    'name'      => $item->name,
-                    'parent_id' => $item->parent_id,
+                    'id'         => $item->id,
+                    'code'       => $item->code,
+                    'name'       => $item->name,
+                    'parent_id'  => $item->parent_id,
+                    'sort_order' => $item->sort_order ?? 0,
                 ];
                 if (!empty($children)) {
                     $node['children'] = $children;

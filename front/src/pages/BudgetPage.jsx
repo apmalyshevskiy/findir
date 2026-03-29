@@ -7,7 +7,7 @@ import {
   getBudgetReport, getBudgetItems, createBudgetItem, updateBudgetItem, deleteBudgetItem, upsertOpeningBalance,
 } from '../api/budget'
 import { getDocument, postDocument, cancelDocument } from '../api/documents'
-import { getInfo } from '../api/info'
+import { getInfo, createInfo, updateInfo } from '../api/info'
 import { DocumentForm } from './DocumentsPage'
 import OperationForm from '../components/OperationForm'
 import Layout from '../components/Layout'
@@ -55,9 +55,35 @@ function DeltaCell({ fact, plan }) {
 }
 
 // ── Ячейки ─────────────────────────────────────────────────────────────────
-function PlanCell({ value, detailCount, disabled, onClick }) {
+function PlanCell({ value, detailCount, disabled, onClick, isCopied, onCopy, onPaste, canPaste, onClearClipboard }) {
   const title = detailCount > 1 ? `${detailCount} строк плана` : detailCount === 1 ? '1 строка плана' : 'Нажмите для ввода'
-  return <td className={`px-2 py-1.5 text-right text-xs tabular-nums border-l border-gray-100 ${disabled ? 'text-blue-400' : 'text-blue-600 cursor-pointer hover:bg-blue-50'}`} onClick={disabled ? undefined : onClick} title={title}>{fmt(value)}</td>
+
+  const handleClick = (e) => {
+    if (disabled) return
+    if (onClearClipboard) onClearClipboard()
+    if (onClick) onClick()
+  }
+
+  const handleContext = (e) => {
+    e.preventDefault()
+    if (disabled) return
+    if (canPaste && onPaste) {
+      onPaste()
+    } else if (onCopy) {
+      onCopy()
+    }
+  }
+
+  return (
+    <td
+      className={`px-2 py-1.5 text-right text-xs tabular-nums border-l border-gray-100 ${disabled ? 'text-blue-400' : 'text-blue-600 cursor-pointer hover:bg-blue-50'} ${isCopied ? 'outline outline-2 outline-dashed outline-blue-400 outline-offset-[-2px]' : ''}`}
+      onClick={handleClick}
+      onContextMenu={handleContext}
+      title={title}
+    >
+      {fmt(value)}
+    </td>
+  )
 }
 
 function FactCell({ value, future, onClick }) {
@@ -76,7 +102,7 @@ function PlanCellSimple({ value, onSave, disabled }) {
 }
 
 // ── Drawer (план + факт) ────────────────────────────────────────────────────
-function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact, section }) {
+function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact, section, periodDates }) {
   const [tab, setTab] = useState(mode)
   const factLoaded = useRef(false)
 
@@ -175,7 +201,7 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
         </div>
         <div className="flex-1 overflow-y-auto">
           {tab === 'plan' ? (
-            <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} section={section} />
+            <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} section={section} periodDates={periodDates} />
           ) : (
             <FactTab ops={factOps} loading={factLoading} sign={factSign} targetBiIds={targetBiIds}
               onEditOp={setEditOp} onOpenDoc={openDocumentModal} />
@@ -218,7 +244,7 @@ function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, fa
 }
 
 // ── Вкладка «План» ──────────────────────────────────────────────────────────
-function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate, section }) {
+function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate, section, periodDates }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -227,7 +253,18 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
   const [newContent, setNewContent] = useState('')
   const [newAmount, setNewAmount] = useState('')
   const [saving, setSaving] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [copyTargets, setCopyTargets] = useState([])
+  const [copyLoading, setCopyLoading] = useState(false)
   const amountRef = useRef(null)
+
+  // Месяцы после текущего для копирования
+  const futureMonths = useMemo(() => {
+    if (!periodDates) return []
+    const idx = periodDates.indexOf(periodDate)
+    if (idx < 0) return periodDates.filter(pd => pd > periodDate)
+    return periodDates.slice(idx + 1)
+  }, [periodDates, periodDate])
 
   const articleOptions = useMemo(() => {
     if (!articles) return []
@@ -280,6 +317,40 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
     onUpdate()
   }
 
+  const handleCopy = async () => {
+    if (copyTargets.length === 0 || rows.length === 0) return
+    setCopyLoading(true)
+    try {
+      for (const targetPd of copyTargets) {
+        for (const row of rows) {
+          await createBudgetItem({
+            budget_document_id: docId,
+            article_id: row.article_id,
+            section: section || null,
+            period_date: targetPd,
+            content: row.content || null,
+            amount: row.amount,
+          })
+        }
+      }
+      setCopying(false)
+      setCopyTargets([])
+      onUpdate()
+    } catch (err) {
+      console.error('Ошибка копирования:', err)
+    } finally {
+      setCopyLoading(false)
+    }
+  }
+
+  const toggleCopyTarget = (pd) => {
+    setCopyTargets(prev => prev.includes(pd) ? prev.filter(p => p !== pd) : [...prev, pd])
+  }
+
+  const selectAllTargets = () => {
+    setCopyTargets(prev => prev.length === futureMonths.length ? [] : [...futureMonths])
+  }
+
   if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка...</div>
 
   return (
@@ -326,6 +397,63 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
         <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
           <span className="text-xs text-gray-500">Итого ({rows.length})</span>
           <span className="text-sm font-semibold text-blue-700 tabular-nums">{fmt(total)}</span>
+        </div>
+      )}
+
+      {/* Копирование на другие месяцы */}
+      {rows.length > 0 && futureMonths.length > 0 && !copying && (
+        <button
+          onClick={() => { setCopying(true); setCopyTargets([]) }}
+          className="mt-3 w-full py-2 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg border border-dashed border-gray-200 flex items-center justify-center gap-1.5"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Копировать на другие месяцы
+        </button>
+      )}
+
+      {copying && (
+        <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-600">Копировать {rows.length} строк в:</span>
+            <button onClick={selectAllTargets} className="text-[10px] text-blue-600 hover:text-blue-800">
+              {copyTargets.length === futureMonths.length ? 'Снять все' : 'Выбрать все'}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {futureMonths.map(pd => {
+              const selected = copyTargets.includes(pd)
+              const label = new Date(pd + 'T00:00:00').toLocaleString('ru-RU', { month: 'short', year: '2-digit' })
+              return (
+                <button
+                  key={pd}
+                  type="button"
+                  onClick={() => toggleCopyTarget(pd)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                    selected
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleCopy}
+              disabled={copyTargets.length === 0 || copyLoading}
+              className="flex-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {copyLoading ? 'Копирую...' : `Копировать → ${copyTargets.length} мес.`}
+            </button>
+            <button
+              onClick={() => { setCopying(false); setCopyTargets([]) }}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg"
+            >
+              Отмена
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -548,9 +676,22 @@ export default function BudgetPage() {
   const [drawer, setDrawer] = useState(null)
   const [factOps, setFactOps] = useState([]); const [factLoading, setFactLoading] = useState(false)
   const [editDoc, setEditDoc] = useState(null) // { name, period_from, period_to }
+  const [clipboard, setClipboard] = useState(null) // { articleId, section, periodDate, articleName }
+  const [pasting, setPasting] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
+  // Inline-редактирование/создание статей справочника
+  const [editArticle, setEditArticle] = useState(null)   // { id, name, parent_id, sort_order, type }
+  const [addArticle, setAddArticle] = useState(null)      // { type, parent_id, groupKey }
+  const [articleSaving, setArticleSaving] = useState(false)
 
   useEffect(() => { api.get('/me').catch(() => navigate('/login')); api.get('/projects').then(r => setProjects(r.data.data || r.data)); loadDocuments() }, [])
-  const loadDocuments = async () => { const r = await getBudgetDocuments(); const d = r.data.data; setDocuments(d); if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id) }
+  const loadDocuments = async (withArchived) => {
+    const params = (withArchived ?? showArchived) ? { show_archived: 1 } : {}
+    const r = await getBudgetDocuments(params)
+    const d = r.data.data; setDocuments(d)
+    if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id)
+  }
+  useEffect(() => { loadDocuments() }, [showArchived])
   useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash])
 
   const loadReport = async (keepState = false) => {
@@ -572,6 +713,59 @@ export default function BudgetPage() {
   const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan', section = null) => {
     setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate), section })
     setFactOps([]); setFactLoading(false)
+  }
+
+  // ── Копирование / вставка ячейки плана ─────────────────────────────────
+  const handleCopyCell = (articleId, articleName, periodDate, section) => {
+    setClipboard({ articleId, section, periodDate, articleName })
+  }
+
+  const handlePasteCell = async (targetArticleId, targetPeriodDate, targetSection) => {
+    if (!clipboard) return
+    // Вставляем только если та же статья (и section)
+    if (clipboard.articleId !== targetArticleId || clipboard.section !== targetSection) return
+    setPasting(true)
+    try {
+      // 1. Загружаем строки источника
+      const srcIds = descendantAllMap[clipboard.articleId]
+      const ids = srcIds && srcIds.size > 0 ? [...srcIds] : [clipboard.articleId]
+      const res = await getBudgetItems({
+        budget_document_id: selectedDocId,
+        article_ids: ids.join(','),
+        period_date: clipboard.periodDate,
+        ...(clipboard.section ? { section: clipboard.section } : {}),
+      })
+      const srcRows = res.data.data || []
+      if (srcRows.length === 0) { setPasting(false); return }
+
+      // 2. Очищаем целевой месяц (та же статья + потомки)
+      const existing = await getBudgetItems({
+        budget_document_id: selectedDocId,
+        article_ids: ids.join(','),
+        period_date: targetPeriodDate,
+        ...(targetSection ? { section: targetSection } : {}),
+      })
+      for (const row of (existing.data.data || [])) {
+        await deleteBudgetItem(row.id)
+      }
+
+      // 3. Создаём копии в целевом месяце
+      for (const row of srcRows) {
+        await createBudgetItem({
+          budget_document_id: selectedDocId,
+          article_id: row.article_id,
+          section: targetSection || null,
+          period_date: targetPeriodDate,
+          content: row.content || null,
+          amount: row.amount,
+        })
+      }
+      loadReport(true)
+    } catch (err) {
+      console.error('Ошибка вставки:', err)
+    } finally {
+      setPasting(false)
+    }
   }
 
   const loadFactOps = async (articleId, periodDate) => {
@@ -638,6 +832,86 @@ export default function BudgetPage() {
     setEditDoc(null)
     loadReport()
   }
+
+  const changeStatus = async (newStatus) => {
+    if (!selectedDocId) return
+    await updateBudgetDocument(selectedDocId, { status: newStatus })
+    if (newStatus === 'archived') {
+      setDocuments(prev => {
+        const filtered = prev.filter(d => d.id !== selectedDocId)
+        if (filtered.length > 0) setSelectedDocId(filtered[0].id)
+        else { setSelectedDocId(null); setReport(null) }
+        return showArchived ? prev.map(d => d.id === selectedDocId ? { ...d, status: newStatus } : d) : filtered
+      })
+    } else {
+      setDocuments(prev => prev.map(d => d.id === selectedDocId ? { ...d, status: newStatus } : d))
+    }
+  }
+
+  // ── Inline-редактирование статей справочника ──────────────────────────────
+  const infoTypeFromSection = (section) => {
+    if (section === 'revenue' || section === 'cost') return 'revenue'
+    if (section === 'expenses') return 'expenses'
+    return 'flow' // ДДС
+  }
+
+  const openEditArticle = (article) => {
+    const type = infoTypeFromSection(article.section || article.groupKey)
+    setEditArticle({ id: article.id, name: article.name, parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0, type, section: article.section || article.groupKey })
+    setAddArticle(null)
+  }
+
+  const openAddArticle = (infoType, groupKey = null) => {
+    setAddArticle({ type: infoType, parent_id: '', name: '', sort_order: 0, groupKey })
+    setEditArticle(null)
+  }
+
+  const saveArticle = async () => {
+    if (!editArticle || !editArticle.name.trim()) return
+    setArticleSaving(true)
+    try {
+      await updateInfo(editArticle.id, {
+        name: editArticle.name.trim(),
+        type: editArticle.type,
+        parent_id: editArticle.parent_id || null,
+        sort_order: editArticle.sort_order || 0,
+      })
+      setEditArticle(null)
+      loadReport(true)
+    } catch (err) { console.error('Ошибка сохранения статьи:', err) }
+    finally { setArticleSaving(false) }
+  }
+
+  const createArticle = async () => {
+    if (!addArticle || !addArticle.name.trim()) return
+    setArticleSaving(true)
+    try {
+      await createInfo({
+        name: addArticle.name.trim(),
+        type: addArticle.type,
+        parent_id: addArticle.parent_id || null,
+        sort_order: addArticle.sort_order || 0,
+      })
+      setAddArticle(null)
+      loadReport(true)
+    } catch (err) { console.error('Ошибка создания статьи:', err) }
+    finally { setArticleSaving(false) }
+  }
+
+  // Все статьи текущей группы (для select родителя)
+  const getGroupArticleOptions = useCallback((groupKey) => {
+    if (!report?.articles) return []
+    const arts = report.articles
+    if (Array.isArray(arts) && arts[0]?.group) {
+      const g = arts.find(a => a.group === groupKey)
+      if (!g) return []
+      const flat = []; const walk = (items, depth = 0) => { for (const a of items) { flat.push({ id: a.id, name: a.name, depth }); if (a.children) walk(a.children, depth + 1) } }
+      walk(g.items || []); return flat
+    }
+    // ДДС — все статьи
+    const flat = []; const walk = (items, depth = 0) => { for (const a of items) { flat.push({ id: a.id, name: a.name, depth }); if (a.children) walk(a.children, depth + 1) } }
+    if (Array.isArray(arts)) walk(arts); return flat
+  }, [report])
 
   const selectedDoc = documents.find(d => d.id === selectedDocId)
   const periodDates = report?.period_dates || []; const plan = report?.plan || {}; const fact = report?.fact || {}
@@ -736,9 +1010,35 @@ export default function BudgetPage() {
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={selectedDocId || ''} onChange={e => setSelectedDocId(Number(e.target.value))}>
           {documents.length === 0 && <option value="">Нет документов</option>}
-          {documents.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type.toUpperCase()})</option>)}
+          {documents.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type.toUpperCase()}){d.status === 'archived' ? ' [архив]' : ''}</option>)}
         </select>
-        {selectedDoc && <span className={`text-xs px-2 py-1 rounded-full ${selectedDoc.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{selectedDoc.status === 'approved' ? 'Утверждён' : 'Черновик'}</span>}
+        {selectedDoc && (() => {
+          const s = selectedDoc.status
+          const statusCfg = {
+            draft:    { label: 'Черновик', cls: 'bg-amber-100 text-amber-700' },
+            approved: { label: 'Утверждён', cls: 'bg-emerald-100 text-emerald-700' },
+            archived: { label: 'Архив', cls: 'bg-gray-200 text-gray-500' },
+          }
+          const cfg = statusCfg[s] || statusCfg.draft
+          return (
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-2 py-1 rounded-full ${cfg.cls}`}>{cfg.label}</span>
+              {/* Переходы статусов */}
+              {s === 'draft' && (
+                <button onClick={() => changeStatus('approved')} className="text-[11px] text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-0.5 rounded" title="Утвердить бюджет">Утвердить</button>
+              )}
+              {s === 'approved' && (
+                <>
+                  <button onClick={() => changeStatus('draft')} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded" title="Вернуть в черновик">В черновик</button>
+                  <button onClick={() => changeStatus('archived')} className="text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-100 px-2 py-0.5 rounded" title="В архив">В архив</button>
+                </>
+              )}
+              {s === 'archived' && (
+                <button onClick={() => changeStatus('draft')} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded" title="Восстановить из архива">Восстановить</button>
+              )}
+            </div>
+          )
+        })()}
         {selectedDoc && <button onClick={openEditDoc} className="text-gray-400 hover:text-gray-600 text-sm" title="Настройки бюджета">⚙</button>}
         {selectedDoc?.type === 'dds' && (
           <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2">
@@ -747,7 +1047,13 @@ export default function BudgetPage() {
           </div>
         )}
         <button className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${showDelta ? 'bg-blue-900 text-white border-blue-900' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`} onClick={() => setShowDelta(v => !v)}>Δ Отклонение</button>
-        <div className="ml-auto"><button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый бюджет</button></div>
+        <div className="ml-auto flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer hover:text-gray-600">
+            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="rounded border-gray-300" />
+            Архив
+          </label>
+          <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый бюджет</button>
+        </div>
       </div>
 
       {/* Панель редактирования документа */}
@@ -778,11 +1084,32 @@ export default function BudgetPage() {
       : !report ? <div className="text-center py-20 text-gray-400">{documents.length === 0 ? 'Создайте первый бюджет' : 'Выберите документ'}</div>
       : (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          {/* Индикатор буфера обмена */}
+          {(clipboard || pasting) && (
+            <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
+              <span className="text-[11px] text-blue-600">
+                {pasting
+                  ? 'Вставка...'
+                  : <>Скопировано: <span className="font-medium">{clipboard.articleName}</span> / {monthLabel(clipboard.periodDate)} — ПКМ на ячейку плана для вставки</>
+                }
+              </span>
+              {!pasting && (
+                <button onClick={() => setClipboard(null)} className="text-[10px] text-blue-400 hover:text-blue-600">✕ Очистить</button>
+              )}
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-xs" style={{ minWidth: `${280 + periodDates.length * (showDelta ? 210 : 160)}px` }}>
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200" style={{ minWidth: 240 }}>Статья</th>
+                  <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200" style={{ minWidth: 240 }}>
+                    <div className="flex items-center gap-2">
+                      Статья
+                      {selectedDoc?.type === 'dds' && selectedDoc?.status === 'draft' && (
+                        <button onClick={() => openAddArticle('flow', '_dds')} className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded">+ статья</button>
+                      )}
+                    </div>
+                  </th>
                   {periodDates.map(pd => <th key={pd} colSpan={colsPerMonth} className={`text-center px-1 py-2 font-medium border-b border-l border-gray-200 ${isCurrentMonth(pd) ? 'bg-blue-50 text-blue-800' : 'text-gray-600'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && <span className="ml-1 text-[9px] text-blue-500">▸ тек.</span>}</th>)}
                 </tr>
                 <tr className="bg-gray-50/50"><th className="sticky left-0 z-10 bg-gray-50 border-b border-gray-200" />{periodDates.map(renderHeaderSub)}</tr>
@@ -805,6 +1132,32 @@ export default function BudgetPage() {
                   {byCash && cashItems.map(ci => <tr key={`co_${ci.id}`} className="border-b border-gray-50"><td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>{periodDates.map((pd, i) => { const cb = cashBalances[ci.id]?.[i]; return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.opening)}</td><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px]">{fmt(cb?.opening)}</td>{showDelta && <td />}</Fragment> })}</tr>)}
                 </>)}
 
+                {/* ДДС: inline-форма создания статьи */}
+                {addArticle?.groupKey === '_dds' && (
+                  <tr className="border-b border-blue-100 bg-blue-50/40">
+                    <td colSpan={1 + periodDates.length * colsPerMonth} className="px-4 py-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-44" placeholder="Название новой статьи"
+                          value={addArticle.name} onChange={e => setAddArticle(prev => ({ ...prev, name: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') createArticle(); if (e.key === 'Escape') setAddArticle(null) }}
+                          autoFocus />
+                        <select className="px-2 py-1 border border-gray-200 rounded text-xs bg-white text-gray-600 w-40"
+                          value={addArticle.parent_id} onChange={e => setAddArticle(prev => ({ ...prev, parent_id: e.target.value }))}>
+                          <option value="">— Без родителя</option>
+                          {getGroupArticleOptions(null).map(o => (
+                            <option key={o.id} value={o.id}>{'\u00A0'.repeat(o.depth * 2)}{o.depth > 0 ? '└ ' : ''}{o.name}</option>
+                          ))}
+                        </select>
+                        <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-16 text-center" type="number" placeholder="Порядок"
+                          value={addArticle.sort_order} onChange={e => setAddArticle(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))} />
+                        <button onClick={createArticle} disabled={!addArticle.name.trim() || articleSaving}
+                          className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{articleSaving ? '...' : 'Создать'}</button>
+                        <button onClick={() => setAddArticle(null)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">Отмена</button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
                 {/* Строки статей */}
                 {visibleArticles.map((article, artIdx) => {
                   if (article.isGroup) {
@@ -820,7 +1173,16 @@ export default function BudgetPage() {
                         )}
                         {/* Заголовок группы с итогами */}
                         <tr className="bg-gray-100 border-b border-gray-200">
-                          <td className="sticky left-0 z-10 bg-gray-100 px-3 py-2 font-semibold text-gray-700">{article.name}</td>
+                          <td className="sticky left-0 z-10 bg-gray-100 px-3 py-2 font-semibold text-gray-700">
+                            <div className="flex items-center gap-2">
+                              {article.name}
+                              <button
+                                onClick={() => openAddArticle(article.groupKey === 'expenses' ? 'expenses' : article.groupKey === 'cost' ? 'revenue' : 'revenue', article.groupKey)}
+                                className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded"
+                                title="Добавить статью"
+                              >+ статья</button>
+                            </div>
+                          </td>
                           {selectedDoc?.type === 'bdr' && totals ? periodDates.map(pd => {
                             const g = totals[pd] || { fact: 0, plan: 0 }
                             const future = isFutureMonth(pd)
@@ -833,12 +1195,39 @@ export default function BudgetPage() {
                             )
                           }) : periodDates.map(pd => <Fragment key={pd}><td /><td />{showDelta && <td />}</Fragment>)}
                         </tr>
+                        {/* Inline-форма создания новой статьи */}
+                        {addArticle?.groupKey === article.groupKey && (
+                          <tr className="border-b border-blue-100 bg-blue-50/40">
+                            <td colSpan={1 + periodDates.length * colsPerMonth} className="px-4 py-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-44" placeholder="Название новой статьи"
+                                  value={addArticle.name} onChange={e => setAddArticle(prev => ({ ...prev, name: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter') createArticle(); if (e.key === 'Escape') setAddArticle(null) }}
+                                  autoFocus />
+                                <select className="px-2 py-1 border border-gray-200 rounded text-xs bg-white text-gray-600 w-40"
+                                  value={addArticle.parent_id} onChange={e => setAddArticle(prev => ({ ...prev, parent_id: e.target.value }))}>
+                                  <option value="">— Без родителя</option>
+                                  {getGroupArticleOptions(article.groupKey).map(o => (
+                                    <option key={o.id} value={o.id}>{'\u00A0'.repeat(o.depth * 2)}{o.depth > 0 ? '└ ' : ''}{o.name}</option>
+                                  ))}
+                                </select>
+                                <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-16 text-center" type="number" placeholder="Порядок"
+                                  value={addArticle.sort_order} onChange={e => setAddArticle(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))} />
+                                <button onClick={createArticle} disabled={!addArticle.name.trim() || articleSaving}
+                                  className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{articleSaving ? '...' : 'Создать'}</button>
+                                <button onClick={() => setAddArticle(null)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">Отмена</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                       </Fragment>
                     )
                   }
                   const isParent = article.hasChildren
+                  const isEditing = editArticle?.id === article.id
                   return (
-                    <tr key={article.id} className={`border-b border-gray-50 hover:bg-gray-50/50 ${isParent ? 'bg-gray-50/50 font-medium' : ''}`}>
+                    <Fragment key={article.id}>
+                    <tr className={`border-b border-gray-50 hover:bg-gray-50/50 ${isParent ? 'bg-gray-50/50 font-medium' : ''} group/row`}>
                       <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap" style={{ paddingLeft: 12 + article.depth * 20 }}>
                         <div className="flex items-center gap-1">
                           {isParent && (
@@ -849,6 +1238,13 @@ export default function BudgetPage() {
                             </button>
                           )}
                           <span className={article.depth === 0 ? 'font-medium' : ''}>{article.depth > 0 && !isParent && <span className="text-gray-300 mr-1">└</span>}{article.name}</span>
+                          <button
+                            onClick={() => openEditArticle(article)}
+                            className="opacity-0 group-hover/row:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-0.5 ml-1"
+                            title="Редактировать статью"
+                          >
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                          </button>
                         </div>
                       </td>
                       {periodDates.map(pd => {
@@ -856,12 +1252,21 @@ export default function BudgetPage() {
                         const factVal = getArticleValue(article.id, pd, fact, sec)
                         const planVal = getArticleValue(article.id, pd, plan, sec)
                         const future = isFutureMonth(pd)
-                        const editable = selectedDoc?.status !== 'approved'
+                        const editable = selectedDoc?.status === 'draft'
                         const key = sec ? `${sec}:${article.id}:0:${pd}` : `${article.id}:0:${pd}`
                         const count = planDetails[key]?.length || 0
+                        const isCopied = clipboard && clipboard.articleId === article.id && clipboard.periodDate === pd && clipboard.section === sec
+                        const canPaste = !!clipboard && clipboard.articleId === article.id && clipboard.section === sec && clipboard.periodDate !== pd
                         return (
                           <Fragment key={pd}>
-                            {editable ? <PlanCell value={planVal} detailCount={count} disabled={false} onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)} />
+                            {editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
+                              onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
+                              isCopied={isCopied}
+                              onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
+                              onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null}
+                              canPaste={canPaste}
+                              onClearClipboard={() => setClipboard(null)}
+                            />
                               : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>}
                             <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
                             {showDelta && <DeltaCell fact={future ? null : factVal} plan={planVal} />}
@@ -869,6 +1274,32 @@ export default function BudgetPage() {
                         )
                       })}
                     </tr>
+                    {/* Inline-панель редактирования статьи */}
+                    {isEditing && (
+                      <tr className="border-b border-blue-100 bg-blue-50/40">
+                        <td colSpan={1 + periodDates.length * colsPerMonth} className="px-4 py-2">
+                          <div className="flex items-center gap-2 flex-wrap" style={{ paddingLeft: article.depth * 20 }}>
+                            <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-44" placeholder="Название"
+                              value={editArticle.name} onChange={e => setEditArticle(prev => ({ ...prev, name: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter') saveArticle(); if (e.key === 'Escape') setEditArticle(null) }}
+                              autoFocus />
+                            <select className="px-2 py-1 border border-gray-200 rounded text-xs bg-white text-gray-600 w-40"
+                              value={editArticle.parent_id} onChange={e => setEditArticle(prev => ({ ...prev, parent_id: e.target.value }))}>
+                              <option value="">— Без родителя</option>
+                              {getGroupArticleOptions(article.section || article.groupKey).filter(o => o.id !== article.id).map(o => (
+                                <option key={o.id} value={o.id}>{'\u00A0'.repeat(o.depth * 2)}{o.depth > 0 ? '└ ' : ''}{o.name}</option>
+                              ))}
+                            </select>
+                            <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-16 text-center" type="number" placeholder="Порядок"
+                              value={editArticle.sort_order} onChange={e => setEditArticle(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))} />
+                            <button onClick={saveArticle} disabled={!editArticle.name.trim() || articleSaving}
+                              className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{articleSaving ? '...' : 'OK'}</button>
+                            <button onClick={() => setEditArticle(null)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">Отмена</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
 
@@ -921,7 +1352,7 @@ export default function BudgetPage() {
           articleId={drawer.articleId} periodDate={drawer.periodDate} docId={selectedDocId}
           articles={report?.articles} descendantAllMap={descendantAllMap}
           onClose={() => setDrawer(null)} onUpdate={() => loadReport(true)} onLoadFact={loadFactOps}
-          section={drawer.section} />
+          section={drawer.section} periodDates={periodDates} />
       })()}
 
       {showCreateModal && <CreateDocModal projects={projects} onClose={() => setShowCreateModal(false)} onCreate={(doc) => { setDocuments(prev => [doc, ...prev]); setSelectedDocId(doc.id); setShowCreateModal(false) }} />}
