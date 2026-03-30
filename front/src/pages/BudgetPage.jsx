@@ -695,12 +695,14 @@ export default function BudgetPage() {
     if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id)
   }
   useEffect(() => { loadDocuments() }, [showArchived])
-  useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash])
+  useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash, factCutoffDate])
 
   const loadReport = async (keepState = false) => {
     if (!keepState) setLoading(true)
     try {
-      const r = await getBudgetReport(selectedDocId, { by_cash: byCash ? 1 : 0 })
+      const params = { by_cash: byCash ? 1 : 0 }
+      if (factCutoffDate) params.display_from = factCutoffDate
+      const r = await getBudgetReport(selectedDocId, params)
       setReport(r.data)
       if (!keepState) {
         const rootIds = new Set()
@@ -923,10 +925,10 @@ export default function BudgetPage() {
   const isFactOnly = viewMode === 'fact'
   const colsPerMonth = (isPlanOnly || isFactOnly) ? 1 : showDelta ? 3 : 2
 
-  // В режиме «Только план»: если пользователь задал factCutoffDate —
-  // месяцы строго ДО неё показывают факт вместо плана.
-  // Если factCutoffDate пуст — всегда план (isFactMonth = false).
-  const isFactMonth = (pd) => isPlanOnly && factCutoffDate && pd < factCutoffDate
+  // Месяцы ДО начала бюджета (расширение влево через «Показать с:») = фактические.
+  // Работает во всех режимах. budget_period_from приходит с бэка.
+  const budgetPeriodFrom = report?.budget_period_from || selectedDoc?.period_from?.slice(0, 10) || ''
+  const isFactMonth = (pd) => budgetPeriodFrom && pd < budgetPeriodFrom
 
   const { flatArticles, descendantLeafMap, descendantAllMap } = useMemo(() => {
     if (!report?.articles) return { flatArticles: [], descendantLeafMap: {}, descendantAllMap: {} }
@@ -995,7 +997,18 @@ export default function BudgetPage() {
   }, [selectedDocId, autoOpening])
 
   const factBalances = useMemo(() => { const r = []; let p = autoOpening; for (const pd of periodDates) { const o = p, m = calcMonthTotal(pd, fact); r.push({ opening: o, move: m, closing: o + m }); p = o + m }; return r }, [periodDates, fact, autoOpening, calcMonthTotal])
-  const planBalances = useMemo(() => { const r = []; let p = effectivePlanOpening; for (const pd of periodDates) { const o = p, m = calcMonthTotal(pd, plan); r.push({ opening: o, move: m, closing: o + m }); p = o + m }; return r }, [periodDates, plan, effectivePlanOpening, calcMonthTotal])
+  // planBalances: для фактических месяцев (до budgetPeriodFrom) берём fact-движение,
+  // чтобы остаток на начало первого планового месяца = факт на конец последнего фактического
+  const planBalances = useMemo(() => {
+    const r = []; let p = effectivePlanOpening
+    for (const pd of periodDates) {
+      const o = p
+      const isFact = budgetPeriodFrom && pd < budgetPeriodFrom
+      const m = isFact ? calcMonthTotal(pd, fact) : calcMonthTotal(pd, plan)
+      r.push({ opening: o, move: m, closing: o + m }); p = o + m
+    }
+    return r
+  }, [periodDates, plan, fact, effectivePlanOpening, budgetPeriodFrom, calcMonthTotal])
   const cashOpenings = useMemo(() => { if (!byCash) return {}; const r = {}; for (const [c, ob] of Object.entries(openBal)) r[c] = ob?.auto ?? 0; return r }, [openBal, byCash])
   const cashBalances = useMemo(() => { if (!byCash || !cashItems.length) return {}; const r = {}; for (const ci of cashItems) { const a = []; let p = cashOpenings[ci.id] ?? cashOpenings[String(ci.id)] ?? 0; for (const pd of periodDates) { const o = p; let m = 0; for (const [k, v] of Object.entries(fact)) if (k.split(':')[1] === String(ci.id) && k.endsWith(':' + pd)) m += v; a.push({ opening: o, move: m, closing: o + m }); p = o + m }; r[ci.id] = a }; return r }, [byCash, cashItems, cashOpenings, periodDates, fact])
 
@@ -1173,6 +1186,13 @@ export default function BudgetPage() {
           <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый бюджет</button>
         </div>
       </div>
+
+      {/* Период бюджета */}
+      {selectedDoc && (
+        <div className="text-[11px] text-gray-400 mb-3 -mt-2">
+          {new Date(selectedDoc.period_from).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })} – {new Date(selectedDoc.period_to).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })}
+        </div>
+      )}
 
       {loading ? <div className="text-center py-20 text-gray-400">Загрузка отчёта...</div>
       : !report ? <div className="text-center py-20 text-gray-400">{documents.length === 0 ? 'Создайте первый бюджет' : 'Выберите документ'}</div>
