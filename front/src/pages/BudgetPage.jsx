@@ -671,11 +671,14 @@ export default function BudgetPage() {
   const [documents, setDocuments] = useState([]); const [selectedDocId, setSelectedDocId] = useState(null)
   const [showCreateModal, setShowCreateModal] = useState(false); const [projects, setProjects] = useState([])
   const [report, setReport] = useState(null); const [loading, setLoading] = useState(false)
-  const [byCash, setByCash] = useState(false); const [showDelta, setShowDelta] = useState(false)
+  const [byCash, setByCash] = useState(false)
+  const [viewMode, setViewMode] = useState('plan_fact') // 'plan' | 'fact' | 'plan_fact' | 'plan_fact_delta'
+  const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
   const [factOps, setFactOps] = useState([]); const [factLoading, setFactLoading] = useState(false)
   const [editDoc, setEditDoc] = useState(null) // { name, period_from, period_to }
+  const [showSettingsPopup, setShowSettingsPopup] = useState(false) // попап настроек бюджета
   const [clipboard, setClipboard] = useState(null) // { articleId, section, periodDate, articleName }
   const [pasting, setPasting] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
@@ -820,11 +823,6 @@ export default function BudgetPage() {
 
   const toggleExpand = (id) => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
-  const openEditDoc = () => {
-    if (!selectedDoc) return
-    setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0, 10), period_to: selectedDoc.period_to?.slice(0, 10) })
-  }
-
   const saveDocSettings = async () => {
     if (!editDoc || !selectedDocId) return
     await updateBudgetDocument(selectedDocId, editDoc)
@@ -916,7 +914,19 @@ export default function BudgetPage() {
   const selectedDoc = documents.find(d => d.id === selectedDocId)
   const periodDates = report?.period_dates || []; const plan = report?.plan || {}; const fact = report?.fact || {}
   const planDetails = report?.plan_details || {}; const openBal = report?.opening_balances || {}; const cashItems = report?.cash_items || []
-  const colsPerMonth = showDelta ? 3 : 2
+
+  // ── Режимы отображения ─────────────────────────────────────────────────
+  const showPlan  = viewMode === 'plan' || viewMode === 'plan_fact' || viewMode === 'plan_fact_delta'
+  const showFact  = viewMode === 'fact' || viewMode === 'plan_fact' || viewMode === 'plan_fact_delta'
+  const showDelta = viewMode === 'plan_fact_delta'
+  const isPlanOnly = viewMode === 'plan'
+  const isFactOnly = viewMode === 'fact'
+  const colsPerMonth = (isPlanOnly || isFactOnly) ? 1 : showDelta ? 3 : 2
+
+  // В режиме «Только план»: если пользователь задал factCutoffDate —
+  // месяцы строго ДО неё показывают факт вместо плана.
+  // Если factCutoffDate пуст — всегда план (isFactMonth = false).
+  const isFactMonth = (pd) => isPlanOnly && factCutoffDate && pd < factCutoffDate
 
   const { flatArticles, descendantLeafMap, descendantAllMap } = useMemo(() => {
     if (!report?.articles) return { flatArticles: [], descendantLeafMap: {}, descendantAllMap: {} }
@@ -963,9 +973,21 @@ export default function BudgetPage() {
     return result
   }, [selectedDoc, report, periodDates, fact, plan])
 
-  const autoOpening = useMemo(() => { if (!byCash) { const ob = openBal[0] || openBal['0']; return ob?.auto ?? 0 }; let t = 0; for (const [, v] of Object.entries(openBal)) t += (v?.auto ?? 0); return t }, [openBal, byCash])
+  // autoOpening: фактический остаток на начало бюджета.
+  // Если общий (cash_id=null) = 0, берём сумму по всем кассам.
+  const autoOpening = useMemo(() => {
+    const ob0 = openBal[0] || openBal['0']
+    const generalAuto = ob0?.auto ?? 0
+    if (generalAuto !== 0) return generalAuto
+    // fallback: сумма по всем кассам
+    let t = 0; for (const [, v] of Object.entries(openBal)) t += (v?.auto ?? 0)
+    return t
+  }, [openBal])
   const manualOpening = useMemo(() => { const ob = openBal[0] || openBal['0']; return ob?.is_manual ? (ob.manual ?? null) : null }, [openBal])
   const isManualOpening = manualOpening !== null; const planOpeningAmount = isManualOpening ? manualOpening : autoOpening
+
+  // В режимах план / план+факт: плановые балансы стартуют от фактического остатка
+  const effectivePlanOpening = (isPlanOnly || viewMode === 'plan_fact' || viewMode === 'plan_fact_delta') ? autoOpening : planOpeningAmount
 
   const resetOpeningBalance = useCallback(async () => {
     await upsertOpeningBalance({ budget_document_id: selectedDocId, cash_id: null, amount: autoOpening, is_manual: false })
@@ -973,19 +995,24 @@ export default function BudgetPage() {
   }, [selectedDocId, autoOpening])
 
   const factBalances = useMemo(() => { const r = []; let p = autoOpening; for (const pd of periodDates) { const o = p, m = calcMonthTotal(pd, fact); r.push({ opening: o, move: m, closing: o + m }); p = o + m }; return r }, [periodDates, fact, autoOpening, calcMonthTotal])
-  const planBalances = useMemo(() => { const r = []; let p = planOpeningAmount; for (const pd of periodDates) { const o = p, m = calcMonthTotal(pd, plan); r.push({ opening: o, move: m, closing: o + m }); p = o + m }; return r }, [periodDates, plan, planOpeningAmount, calcMonthTotal])
+  const planBalances = useMemo(() => { const r = []; let p = effectivePlanOpening; for (const pd of periodDates) { const o = p, m = calcMonthTotal(pd, plan); r.push({ opening: o, move: m, closing: o + m }); p = o + m }; return r }, [periodDates, plan, effectivePlanOpening, calcMonthTotal])
   const cashOpenings = useMemo(() => { if (!byCash) return {}; const r = {}; for (const [c, ob] of Object.entries(openBal)) r[c] = ob?.auto ?? 0; return r }, [openBal, byCash])
   const cashBalances = useMemo(() => { if (!byCash || !cashItems.length) return {}; const r = {}; for (const ci of cashItems) { const a = []; let p = cashOpenings[ci.id] ?? cashOpenings[String(ci.id)] ?? 0; for (const pd of periodDates) { const o = p; let m = 0; for (const [k, v] of Object.entries(fact)) if (k.split(':')[1] === String(ci.id) && k.endsWith(':' + pd)) m += v; a.push({ opening: o, move: m, closing: o + m }); p = o + m }; r[ci.id] = a }; return r }, [byCash, cashItems, cashOpenings, periodDates, fact])
 
   const visibleArticles = useMemo(() => { const r = []; let skip = null; for (const a of flatArticles) { if (skip !== null && a.depth > skip) continue; skip = null; r.push(a); if (a.hasChildren && !expanded.has(a.id)) skip = a.depth }; return r }, [flatArticles, expanded])
 
-  const renderHeaderSub = (pd) => (
-    <Fragment key={pd}>
-      <th className="text-center px-1 py-1 text-[10px] text-blue-500 font-medium border-b border-l border-gray-200" style={{ width: 80 }}>План</th>
-      <th className="text-center px-1 py-1 text-[10px] text-gray-400 font-medium border-b border-gray-200" style={{ width: 80 }}>Факт</th>
-      {showDelta && <th className="text-center px-1 py-1 text-[10px] text-gray-400 font-medium border-b border-gray-200" style={{ width: 50 }}>Δ</th>}
-    </Fragment>
-  )
+  const renderHeaderSub = (pd) => {
+    const fm = isFactMonth(pd)
+    if (isPlanOnly) return <Fragment key={pd}><th className={`text-center px-1 py-1 text-[10px] font-medium border-b border-l border-gray-200 ${fm ? 'text-gray-400' : 'text-blue-500'}`} style={{ width: 80 }}>{fm ? 'Факт' : 'План'}</th></Fragment>
+    if (isFactOnly) return <Fragment key={pd}><th className="text-center px-1 py-1 text-[10px] text-gray-500 font-medium border-b border-l border-gray-200" style={{ width: 80 }}>Факт</th></Fragment>
+    return (
+      <Fragment key={pd}>
+        <th className="text-center px-1 py-1 text-[10px] text-blue-500 font-medium border-b border-l border-gray-200" style={{ width: 80 }}>План</th>
+        <th className="text-center px-1 py-1 text-[10px] text-gray-400 font-medium border-b border-gray-200" style={{ width: 80 }}>Факт</th>
+        {showDelta && <th className="text-center px-1 py-1 text-[10px] text-gray-400 font-medium border-b border-gray-200" style={{ width: 50 }}>Δ</th>}
+      </Fragment>
+    )
+  }
 
   // ── Строка-итог БДР (прибыль) ─────────────────────────────────────────────
   const renderProfitRow = (label, calcFn, borderCls = 'border-t border-gray-200') => (
@@ -994,6 +1021,14 @@ export default function BudgetPage() {
       {periodDates.map(pd => {
         const { factVal, planVal } = calcFn(pd)
         const future = isFutureMonth(pd)
+        const fm = isFactMonth(pd)
+        if (isPlanOnly) {
+          const val = fm ? factVal : planVal
+          return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${fm ? 'text-gray-400 italic' : 'text-blue-600'}`}>{fmt(val)}</td></Fragment>
+        }
+        if (isFactOnly) {
+          return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${future ? 'text-gray-300' : factVal >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{future ? '—' : fmt(factVal)}</td></Fragment>
+        }
         return (
           <Fragment key={pd}>
             <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>
@@ -1008,77 +1043,136 @@ export default function BudgetPage() {
   return (
     <Layout>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <select className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={selectedDocId || ''} onChange={e => setSelectedDocId(Number(e.target.value))}>
+        {/* Селект бюджета — с цветовой подсветкой статуса */}
+        <select
+          className={`px-3 py-2 border rounded-lg text-sm ${
+            selectedDoc?.status === 'approved' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' :
+            selectedDoc?.status === 'archived' ? 'border-gray-300 bg-gray-100 text-gray-500' :
+            'border-amber-300 bg-amber-50 text-amber-800'
+          }`}
+          value={selectedDocId || ''}
+          onChange={e => setSelectedDocId(Number(e.target.value))}
+        >
           {documents.length === 0 && <option value="">Нет документов</option>}
-          {documents.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type.toUpperCase()}){d.status === 'archived' ? ' [архив]' : ''}</option>)}
+          {documents.map(d => (
+            <option key={d.id} value={d.id}>
+              {d.status === 'approved' ? '✓ ' : d.status === 'archived' ? '⊘ ' : '○ '}{d.name} ({d.type.toUpperCase()})
+            </option>
+          ))}
         </select>
-        {selectedDoc && (() => {
-          const s = selectedDoc.status
-          const statusCfg = {
-            draft:    { label: 'Черновик', cls: 'bg-amber-100 text-amber-700' },
-            approved: { label: 'Утверждён', cls: 'bg-emerald-100 text-emerald-700' },
-            archived: { label: 'Архив', cls: 'bg-gray-200 text-gray-500' },
-          }
-          const cfg = statusCfg[s] || statusCfg.draft
-          return (
-            <div className="flex items-center gap-2">
-              <span className={`text-xs px-2 py-1 rounded-full ${cfg.cls}`}>{cfg.label}</span>
-              {/* Переходы статусов */}
-              {s === 'draft' && (
-                <button onClick={() => changeStatus('approved')} className="text-[11px] text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-0.5 rounded" title="Утвердить бюджет">Утвердить</button>
-              )}
-              {s === 'approved' && (
-                <>
-                  <button onClick={() => changeStatus('draft')} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded" title="Вернуть в черновик">В черновик</button>
-                  <button onClick={() => changeStatus('archived')} className="text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-100 px-2 py-0.5 rounded" title="В архив">В архив</button>
-                </>
-              )}
-              {s === 'archived' && (
-                <button onClick={() => changeStatus('draft')} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded" title="Восстановить из архива">Восстановить</button>
-              )}
-            </div>
-          )
-        })()}
-        {selectedDoc && <button onClick={openEditDoc} className="text-gray-400 hover:text-gray-600 text-sm" title="Настройки бюджета">⚙</button>}
+
+        {/* Кнопка ⚙ — попап настроек бюджета */}
+        {selectedDoc && (
+          <div className="relative">
+            <button
+              onClick={() => setShowSettingsPopup(v => !v)}
+              className={`text-gray-400 hover:text-gray-600 text-sm px-1.5 py-1 rounded ${showSettingsPopup ? 'bg-gray-100 text-gray-600' : ''}`}
+              title="Настройки бюджета"
+            >⚙</button>
+            {showSettingsPopup && (
+              <>
+                <div className="fixed inset-0 z-30" onClick={() => setShowSettingsPopup(false)} />
+                <div className="absolute left-0 top-full mt-1 z-40 bg-white rounded-xl shadow-xl border border-gray-200 w-80 p-4 space-y-3">
+                  {/* Статус */}
+                  <div>
+                    <div className="text-[10px] uppercase text-gray-400 font-medium mb-1.5">Статус</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-xs px-2 py-1 rounded-full ${
+                        selectedDoc.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                        selectedDoc.status === 'archived' ? 'bg-gray-200 text-gray-500' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {selectedDoc.status === 'approved' ? 'Утверждён' : selectedDoc.status === 'archived' ? 'Архив' : 'Черновик'}
+                      </span>
+                      {selectedDoc.status === 'draft' && (
+                        <button onClick={() => { changeStatus('approved'); setShowSettingsPopup(false) }} className="text-[11px] text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-0.5 rounded">Утвердить</button>
+                      )}
+                      {selectedDoc.status === 'approved' && (
+                        <>
+                          <button onClick={() => { changeStatus('draft'); setShowSettingsPopup(false) }} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded">В черновик</button>
+                          <button onClick={() => { changeStatus('archived'); setShowSettingsPopup(false) }} className="text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-100 px-2 py-0.5 rounded">В архив</button>
+                        </>
+                      )}
+                      {selectedDoc.status === 'archived' && (
+                        <button onClick={() => { changeStatus('draft'); setShowSettingsPopup(false) }} className="text-[11px] text-amber-600 hover:text-amber-800 hover:bg-amber-50 px-2 py-0.5 rounded">Восстановить</button>
+                      )}
+                    </div>
+                  </div>
+                  {/* Редактирование */}
+                  <div className="border-t border-gray-100 pt-3 space-y-2">
+                    <div className="text-[10px] uppercase text-gray-400 font-medium mb-1">Параметры</div>
+                    <div>
+                      <label className="block text-[11px] text-gray-500 mb-0.5">Название</label>
+                      <input className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm bg-white"
+                        value={editDoc?.name ?? selectedDoc.name}
+                        onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), name: e.target.value }))}
+                        onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-0.5">Период с</label>
+                        <input type="date" className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
+                          value={editDoc?.period_from ?? selectedDoc.period_from?.slice(0,10)}
+                          onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), period_from: e.target.value }))}
+                          onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-gray-500 mb-0.5">Период по</label>
+                        <input type="date" className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
+                          value={editDoc?.period_to ?? selectedDoc.period_to?.slice(0,10)}
+                          onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), period_to: e.target.value }))}
+                          onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
+                        />
+                      </div>
+                    </div>
+                    {editDoc && (
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => { saveDocSettings(); setShowSettingsPopup(false) }} className="px-3 py-1.5 text-xs bg-blue-900 text-white rounded-lg hover:bg-blue-800">Сохранить</button>
+                        <button onClick={() => { setEditDoc(null) }} className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Архив */}
+                  <div className="border-t border-gray-100 pt-3">
+                    <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                      <input type="checkbox" checked={showArchived} onChange={e => { setShowArchived(e.target.checked); setShowSettingsPopup(false) }} className="rounded border-gray-300" />
+                      Показывать архивные бюджеты
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Режимы отображения */}
         {selectedDoc?.type === 'dds' && (
           <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2">
             <button className={`px-3 py-1.5 text-xs font-medium ${!byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(false)}>Общая сумма</button>
             <button className={`px-3 py-1.5 text-xs font-medium ${byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(true)}>По кассам</button>
           </div>
         )}
-        <button className={`px-3 py-1.5 text-xs font-medium rounded-lg border ${showDelta ? 'bg-blue-900 text-white border-blue-900' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`} onClick={() => setShowDelta(v => !v)}>Δ Отклонение</button>
-        <div className="ml-auto flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer hover:text-gray-600">
-            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="rounded border-gray-300" />
-            Архив
-          </label>
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
+          {[{k:'plan',l:'План'},{k:'fact',l:'Факт'},{k:'plan_fact',l:'П+Ф'},{k:'plan_fact_delta',l:'П+Ф+Δ'}].map(m => (
+            <button key={m.k} className={`px-2.5 py-1.5 text-[11px] font-medium ${viewMode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setViewMode(m.k)}>{m.l}</button>
+          ))}
+        </div>
+        {selectedDoc && (
+          <div className="flex items-center gap-1.5 ml-2">
+            <span className="text-[11px] text-gray-400">Показать с:</span>
+            <input type="month" className="px-1.5 py-1 border border-gray-200 rounded text-[11px] bg-white w-[130px]"
+              value={factCutoffDate ? factCutoffDate.slice(0, 7) : ''}
+              placeholder={selectedDoc?.period_from?.slice(0, 7) || ''}
+              onChange={e => { const v = e.target.value; setFactCutoffDate(v ? v + '-01' : '') }} />
+            {factCutoffDate && <button className="text-[10px] text-gray-400 hover:text-gray-600 ml-0.5" onClick={() => setFactCutoffDate('')} title="Сбросить к началу бюджета">✕</button>}
+          </div>
+        )}
+        <div className="ml-auto">
           <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый бюджет</button>
         </div>
       </div>
-
-      {/* Панель редактирования документа */}
-      {editDoc && (
-        <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-          <div className="grid grid-cols-4 gap-3 items-end">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Название</label>
-              <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={editDoc.name} onChange={e => setEditDoc(prev => ({ ...prev, name: e.target.value }))} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Период с</label>
-              <input type="date" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={editDoc.period_from} onChange={e => setEditDoc(prev => ({ ...prev, period_from: e.target.value }))} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Период по</label>
-              <input type="date" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" value={editDoc.period_to} onChange={e => setEditDoc(prev => ({ ...prev, period_to: e.target.value }))} />
-            </div>
-            <div className="flex gap-2">
-              <button onClick={saveDocSettings} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">Сохранить</button>
-              <button onClick={() => setEditDoc(null)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {loading ? <div className="text-center py-20 text-gray-400">Загрузка отчёта...</div>
       : !report ? <div className="text-center py-20 text-gray-400">{documents.length === 0 ? 'Создайте первый бюджет' : 'Выберите документ'}</div>
@@ -1099,7 +1193,7 @@ export default function BudgetPage() {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs" style={{ minWidth: `${280 + periodDates.length * (showDelta ? 210 : 160)}px` }}>
+            <table className="w-full border-collapse text-xs" style={{ minWidth: `${280 + periodDates.length * ((isPlanOnly || isFactOnly) ? 85 : showDelta ? 210 : 160)}px` }}>
               <thead>
                 <tr className="bg-gray-50">
                   <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200" style={{ minWidth: 240 }}>
@@ -1110,7 +1204,7 @@ export default function BudgetPage() {
                       )}
                     </div>
                   </th>
-                  {periodDates.map(pd => <th key={pd} colSpan={colsPerMonth} className={`text-center px-1 py-2 font-medium border-b border-l border-gray-200 ${isCurrentMonth(pd) ? 'bg-blue-50 text-blue-800' : 'text-gray-600'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && <span className="ml-1 text-[9px] text-blue-500">▸ тек.</span>}</th>)}
+                  {periodDates.map(pd => { const fm = isFactMonth(pd); return <th key={pd} colSpan={colsPerMonth} className={`text-center px-1 py-2 font-medium border-b border-l border-gray-200 ${fm ? 'bg-gray-50 text-gray-400' : isCurrentMonth(pd) ? 'bg-blue-50 text-blue-800' : 'text-gray-600'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && !fm && <span className="ml-1 text-[9px] text-blue-500">▸ тек.</span>}{fm && <span className="ml-1 text-[9px] text-gray-400">● факт</span>}</th> })}
                 </tr>
                 <tr className="bg-gray-50/50"><th className="sticky left-0 z-10 bg-gray-50 border-b border-gray-200" />{periodDates.map(renderHeaderSub)}</tr>
               </thead>
@@ -1123,13 +1217,28 @@ export default function BudgetPage() {
                         {isManualOpening && <button onClick={resetOpeningBalance} className="text-[10px] font-normal text-amber-600 hover:text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded" title="Сбросить к факту">↻ сброс</button>}
                       </div>
                     </td>
-                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}><td /><td />{showDelta && <td />}</Fragment>; return (<Fragment key={pd}>
-                      {i === 0 ? <PlanCellSimple value={planOpeningAmount} onSave={saveOpeningBalance} disabled={selectedDoc.status === 'approved'} /> : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.opening)}</td>}
+                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>
+                      if (isPlanOnly) {
+                        // Режим «Только план»: первый месяц = фактический остаток, read-only
+                        return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${i === 0 ? 'text-gray-500 italic' : 'text-blue-600'}`} title={i === 0 ? 'Фактический остаток' : undefined}>{fmt(pb.opening)}</td></Fragment>
+                      }
+                      if (isFactOnly) {
+                        return <Fragment key={pd}><td className="text-right px-2 py-1.5 tabular-nums text-gray-700 border-l border-gray-100">{fmt(fb.opening)}</td></Fragment>
+                      }
+                      // План+Факт / +Δ: первый месяц колонка «План» = факт (read-only)
+                      return (<Fragment key={pd}>
+                      {i === 0
+                        ? <td className="text-right px-2 py-1.5 tabular-nums text-gray-500 italic border-l border-gray-100" title="Фактический остаток">{fmt(effectivePlanOpening)}</td>
+                        : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.opening)}</td>
+                      }
                       <td className="text-right px-2 py-1.5 tabular-nums text-gray-700">{fmt(fb.opening)}</td>
                       {showDelta && <DeltaCell fact={fb.opening} plan={pb.opening} />}
                     </Fragment>) })}
                   </tr>
-                  {byCash && cashItems.map(ci => <tr key={`co_${ci.id}`} className="border-b border-gray-50"><td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>{periodDates.map((pd, i) => { const cb = cashBalances[ci.id]?.[i]; return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.opening)}</td><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px]">{fmt(cb?.opening)}</td>{showDelta && <td />}</Fragment> })}</tr>)}
+                  {byCash && cashItems.map(ci => <tr key={`co_${ci.id}`} className="border-b border-gray-50"><td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>{periodDates.map((pd, i) => { const cb = cashBalances[ci.id]?.[i]
+                    if (isPlanOnly) return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.opening)}</td></Fragment>
+                    if (isFactOnly) return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px] border-l border-gray-100">{fmt(cb?.opening)}</td></Fragment>
+                    return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.opening)}</td><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px]">{fmt(cb?.opening)}</td>{showDelta && <td />}</Fragment> })}</tr>)}
                 </>)}
 
                 {/* ДДС: inline-форма создания статьи */}
@@ -1186,6 +1295,14 @@ export default function BudgetPage() {
                           {selectedDoc?.type === 'bdr' && totals ? periodDates.map(pd => {
                             const g = totals[pd] || { fact: 0, plan: 0 }
                             const future = isFutureMonth(pd)
+                            const fm = isFactMonth(pd)
+                            if (isPlanOnly) {
+                              const val = fm ? g.fact : g.plan
+                              return <Fragment key={pd}><td className={`text-right px-2 py-2 tabular-nums font-semibold border-l border-gray-200 ${fm ? 'text-gray-400 italic' : 'text-blue-700'}`}>{fmt(val)}</td></Fragment>
+                            }
+                            if (isFactOnly) {
+                              return <Fragment key={pd}><td className={`text-right px-2 py-2 tabular-nums font-semibold border-l border-gray-200 ${future ? 'text-gray-300' : g.fact >= 0 ? 'text-gray-800' : 'text-red-600'}`}>{future ? '—' : fmt(g.fact)}</td></Fragment>
+                            }
                             return (
                               <Fragment key={pd}>
                                 <td className="text-right px-2 py-2 tabular-nums text-blue-700 font-semibold border-l border-gray-200">{fmt(g.plan)}</td>
@@ -1193,7 +1310,7 @@ export default function BudgetPage() {
                                 {showDelta && <DeltaCell fact={future ? null : g.fact} plan={g.plan} />}
                               </Fragment>
                             )
-                          }) : periodDates.map(pd => <Fragment key={pd}><td /><td />{showDelta && <td />}</Fragment>)}
+                          }) : periodDates.map(pd => <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>)}
                         </tr>
                         {/* Inline-форма создания новой статьи */}
                         {addArticle?.groupKey === article.groupKey && (
@@ -1259,17 +1376,27 @@ export default function BudgetPage() {
                         const canPaste = !!clipboard && clipboard.articleId === article.id && clipboard.section === sec && clipboard.periodDate !== pd
                         return (
                           <Fragment key={pd}>
-                            {editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
-                              onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
-                              isCopied={isCopied}
-                              onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
-                              onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null}
-                              canPaste={canPaste}
-                              onClearClipboard={() => setClipboard(null)}
-                            />
-                              : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>}
-                            <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
-                            {showDelta && <DeltaCell fact={future ? null : factVal} plan={planVal} />}
+                            {isPlanOnly ? (
+                              isFactMonth(pd)
+                                ? <td className="text-right px-2 py-1.5 tabular-nums text-gray-400 italic border-l border-gray-100">{fmt(factVal)}</td>
+                                : editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
+                                    onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
+                                    isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
+                                    onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
+                                  : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>
+                            ) : isFactOnly ? (
+                              <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
+                            ) : (
+                              <>
+                                {editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
+                                  onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
+                                  isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
+                                  onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
+                                  : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>}
+                                <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
+                                {showDelta && <DeltaCell fact={future ? null : factVal} plan={planVal} />}
+                              </>
+                            )}
                           </Fragment>
                         )
                       })}
@@ -1317,7 +1444,9 @@ export default function BudgetPage() {
                 {selectedDoc?.type === 'dds' && (
                   <tr className="bg-gray-50 font-semibold border-t border-gray-200">
                     <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-gray-700">02 Движение</td>
-                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}><td /><td />{showDelta && <td />}</Fragment>; const future = isFutureMonth(pd)
+                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isFutureMonth(pd); const fm = isFactMonth(pd)
+                      if (isPlanOnly) { const val = fm ? fb.move : pb.move; return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${fm ? 'text-gray-400 italic' : 'text-blue-600'}`}>{fmt(val)}</td></Fragment> }
+                      if (isFactOnly) { return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${future ? 'text-gray-300' : fb.move >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{future ? '—' : fmt(fb.move)}</td></Fragment> }
                       return <Fragment key={pd}><td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.move)}</td><td className={`text-right px-2 py-1.5 tabular-nums ${future ? 'text-gray-300' : fb.move >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{future ? '—' : fmt(fb.move)}</td>{showDelta && <DeltaCell fact={future ? null : fb.move} plan={pb.move} />}</Fragment>
                     })}
                   </tr>
@@ -1327,19 +1456,25 @@ export default function BudgetPage() {
                 {selectedDoc?.type === 'dds' && (<>
                   <tr className="bg-gray-50 font-semibold border-t-2 border-gray-300">
                     <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-gray-700">03 Остаток на конец</td>
-                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}><td /><td />{showDelta && <td />}</Fragment>; const future = isFutureMonth(pd)
+                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isFutureMonth(pd); const fm = isFactMonth(pd)
+                      if (isPlanOnly) { const val = fm ? fb.closing : pb.closing; return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${fm ? 'text-gray-400 italic' : 'text-blue-600'}`}>{fmt(val)}</td></Fragment> }
+                      if (isFactOnly) { return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${future ? 'text-gray-300' : 'text-gray-700'}`}>{future ? '—' : fmt(fb.closing)}</td></Fragment> }
                       return <Fragment key={pd}><td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.closing)}</td><td className={`text-right px-2 py-1.5 tabular-nums ${future ? 'text-gray-300' : 'text-gray-700'}`}>{future ? '—' : fmt(fb.closing)}</td>{showDelta && <DeltaCell fact={future ? null : fb.closing} plan={pb.closing} />}</Fragment>
                     })}
                   </tr>
-                  {byCash && cashItems.map(ci => <tr key={`cc_${ci.id}`} className="border-b border-gray-50"><td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>{periodDates.map((pd, i) => { const cb = cashBalances[ci.id]?.[i]; return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.closing)}</td><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px]">{fmt(cb?.closing)}</td>{showDelta && <td />}</Fragment> })}</tr>)}
+                  {byCash && cashItems.map(ci => <tr key={`cc_${ci.id}`} className="border-b border-gray-50"><td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>{periodDates.map((pd, i) => { const cb = cashBalances[ci.id]?.[i]
+                    if (isPlanOnly) return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.closing)}</td></Fragment>
+                    if (isFactOnly) return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px] border-l border-gray-100">{fmt(cb?.closing)}</td></Fragment>
+                    return <Fragment key={pd}><td className="text-right px-2 py-1 tabular-nums text-blue-400 text-[11px] border-l border-gray-100">{fmt(cb?.closing)}</td><td className="text-right px-2 py-1 tabular-nums text-gray-500 text-[11px]">{fmt(cb?.closing)}</td>{showDelta && <td />}</Fragment> })}</tr>)}
                 </>)}
               </tbody>
             </table>
           </div>
           <div className="px-4 py-3 border-t border-gray-100 flex gap-5 text-[11px] text-gray-400">
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /> План (клик для деталей)</span>
-            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> Факт (клик для расшифровки)</span>
+            {showPlan && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /> План{!isFactOnly && ' (клик для деталей)'}</span>}
+            {showFact && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> Факт{!isPlanOnly && ' (клик для расшифровки)'}</span>}
             {showDelta && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Δ отклонение</span>}
+            {isPlanOnly && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-300" /> <em>курсив = факт за прошлые месяцы</em></span>}
           </div>
         </div>
       )}

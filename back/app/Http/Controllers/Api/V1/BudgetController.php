@@ -338,8 +338,20 @@ class BudgetController extends TenantController
         $this->initTenant($request);
 
         $doc = $this->docModel()->newQuery()->findOrFail($id);
-        $periodDates = $this->periodDatesBetween($doc->period_from, $doc->period_to);
         $byCash = (bool)$request->by_cash;
+
+        // display_from — расширение диапазона влево (показать факт до начала бюджета)
+        $displayFrom = $request->display_from
+            ? Carbon::parse($request->display_from)->startOfMonth()->format('Y-m-d')
+            : null;
+
+        $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+
+        $effectiveFrom = ($displayFrom && $displayFrom < $budgetPeriodFrom)
+            ? $displayFrom
+            : $budgetPeriodFrom;
+
+        $periodDates = $this->periodDatesBetween($effectiveFrom, $doc->period_to);
 
         // ── Плановые данные ──────────────────────────────────────────────
         $planRows = $this->itemModel()->newQuery()
@@ -365,11 +377,11 @@ class BudgetController extends TenantController
         // ── Дерево статей + фактические данные ───────────────────────────
         if ($doc->type === 'dds') {
             $articles = $this->getDdsArticles();
-            $fact = $this->getDdsFact($doc, $periodDates, $byCash);
-            $openingBalances = $this->getOpeningBalances($doc, $byCash);
+            $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom);
+            $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom);
         } else {
             $articles = $this->getBdrArticles();
-            $fact = $this->getBdrFact($doc, $periodDates);
+            $fact = $this->getBdrFact($doc, $periodDates, $effectiveFrom);
             $openingBalances = [];
         }
 
@@ -405,15 +417,17 @@ class BudgetController extends TenantController
         }
 
         return response()->json([
-            'document'          => $doc,
-            'period_dates'      => $periodDates,
-            'articles'          => $articles,
-            'plan'              => $plan,
-            'plan_details'      => $planDetails,
-            'fact'              => $fact,
-            'opening_balances'  => $openingBalances,
-            'cash_items'        => $cashItems,
-            'fact_drill_config' => $factDrillConfig,
+            'document'           => $doc,
+            'period_dates'       => $periodDates,
+            'budget_period_from' => $budgetPeriodFrom,
+            'display_from'       => $effectiveFrom,
+            'articles'           => $articles,
+            'plan'               => $plan,
+            'plan_details'       => $planDetails,
+            'fact'               => $fact,
+            'opening_balances'   => $openingBalances,
+            'cash_items'         => $cashItems,
+            'fact_drill_config'  => $factDrillConfig,
         ]);
     }
 
@@ -440,9 +454,8 @@ class BudgetController extends TenantController
      * Факт ДДС — обороты по А100, группировка по info_2_id (flow) и началу месяца.
      * При by_cash=true дополнительно по info_1_id (cash).
      */
-    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash): array
+    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash, ?string $effectiveFrom = null): array
     {
-        // Найти id счёта А100
         $a100 = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
             ->where('code', 'А100')
@@ -450,7 +463,9 @@ class BudgetController extends TenantController
 
         if (!$a100) return [];
 
-        $dateFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        $dateFrom = $effectiveFrom
+            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
+            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
         $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
 
         $selectFields = [
@@ -490,14 +505,16 @@ class BudgetController extends TenantController
      * Автоматически: сумма по А100 до period_from.
      * Ручные: из budget_opening_balances если is_manual=true.
      */
-    private function getOpeningBalances(BudgetDocument $doc, bool $byCash): array
+    private function getOpeningBalances(BudgetDocument $doc, bool $byCash, ?string $effectiveFrom = null): array
     {
         $a100 = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
             ->where('code', 'А100')
             ->first();
 
-        $dateFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        $dateFrom = $effectiveFrom
+            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
+            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
 
         // Авто-остаток из balance_changes
         $autoQuery = DB::connection($this->dbName)
@@ -585,14 +602,8 @@ class BudgetController extends TenantController
      * В balance_changes пассивные счета (П) хранят кредитовые обороты как отрицательные.
      * Для БДР инвертируем знак: доходы → положительные, расходы → отрицательные.
      */
-    private function getBdrFact(BudgetDocument $doc, array $periodDates): array
+    private function getBdrFact(BudgetDocument $doc, array $periodDates, ?string $effectiveFrom = null): array
     {
-        // code => [info_field, sign_multiplier]
-        // В balance_changes: Дт = +, Кт = -
-        // П587 доходы:       Кт (credit) → balance_changes = -114000 → *(-1) = +114000
-        // П588 себестоимость: Дт (debit)  → balance_changes = +76560  → *(-1) = -76560
-        // П589 расходы:      Дт (debit)  → balance_changes = +10423  → *(-1) = -10423
-        // Итого: доходы положительные, себестоимость и расходы — отрицательные (вычитаются)
         $biConfig = [
             'П587' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'revenue'],
             'П588' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'cost'],
@@ -605,7 +616,9 @@ class BudgetController extends TenantController
             ->get()
             ->keyBy('code');
 
-        $dateFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        $dateFrom = $effectiveFrom
+            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
+            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
         $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
 
         $fact = [];
