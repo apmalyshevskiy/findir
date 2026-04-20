@@ -16,12 +16,13 @@ export default function Layout({ children }) {
   }
 
   const nav = [
-    { path: '/info',           label: 'Справочники' },
-    { path: '/dashboard',      label: 'Операции' },
-    { path: '/documents',      label: 'Документы' },
-    { path: '/balance-sheet',  label: 'Оборотка' },
-    { path: '/bank-statement', label: 'Выписка' },
-    { path: '/budget',         label: 'Бюджет' }, 
+    { path: '/info',             label: 'Справочники' },
+    { path: '/dashboard',        label: 'Операции' },
+    { path: '/documents',        label: 'Документы' },
+    { path: '/balance-sheet',    label: 'Оборотка' },
+    { path: '/bank-statement',   label: 'Выписка' },
+    { path: '/budget',           label: 'Бюджет' },
+    { path: '/payment-calendar', label: 'Календарь' },
   ]
 
   return (

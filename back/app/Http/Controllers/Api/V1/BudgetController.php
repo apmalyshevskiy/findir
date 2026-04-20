@@ -31,16 +31,27 @@ class BudgetController extends TenantController
     }
 
     /**
-     * Генерирует список дат начала каждого месяца (YYYY-MM-DD) между двумя датами.
+     * Генерирует список дат периода между двумя датами (YYYY-MM-DD).
+     *
+     * granularity = 'month' — первое число каждого месяца (БДР/ДДС).
+     * granularity = 'day'   — каждый день диапазона (платёжный календарь).
      */
-    private function periodDatesBetween(string $from, string $to): array
+    private function periodDatesBetween(string $from, string $to, string $granularity = 'month'): array
     {
         $dates = [];
-        $period = CarbonPeriod::create(
-            Carbon::parse($from)->startOfMonth(),
-            '1 month',
-            Carbon::parse($to)->startOfMonth()
-        );
+        if ($granularity === 'day') {
+            $period = CarbonPeriod::create(
+                Carbon::parse($from)->startOfDay(),
+                '1 day',
+                Carbon::parse($to)->startOfDay()
+            );
+        } else {
+            $period = CarbonPeriod::create(
+                Carbon::parse($from)->startOfMonth(),
+                '1 month',
+                Carbon::parse($to)->startOfMonth()
+            );
+        }
         foreach ($period as $date) {
             $dates[] = $date->format('Y-m-d');
         }
@@ -82,7 +93,7 @@ class BudgetController extends TenantController
 
         $data = $request->validate([
             'name'       => 'required|string|max:255',
-            'type'       => 'required|in:dds,bdr',
+            'type'       => 'required|in:dds,bdr,pdc',
             'period_from'=> 'required|date',
             'period_to'  => 'required|date|after_or_equal:period_from',
             'project_id' => 'required|integer',
@@ -273,12 +284,21 @@ class BudgetController extends TenantController
 
     /**
      * Проверяет что period_date попадает в рамки документа.
+     *
+     * Для PDC — строго день в день внутри [period_from, period_to].
+     * Для БДР/ДДС — расширяем до полных месяцев (исторически план хранится 1-м числом).
      */
     private function validatePeriodDate(string $date, BudgetDocument $doc): void
     {
         $d = Carbon::parse($date);
-        $from = Carbon::parse($doc->period_from)->startOfMonth();
-        $to   = Carbon::parse($doc->period_to)->endOfMonth();
+
+        if ($doc->type === 'pdc') {
+            $from = Carbon::parse($doc->period_from)->startOfDay();
+            $to   = Carbon::parse($doc->period_to)->endOfDay();
+        } else {
+            $from = Carbon::parse($doc->period_from)->startOfMonth();
+            $to   = Carbon::parse($doc->period_to)->endOfMonth();
+        }
 
         if ($d->lt($from) || $d->gt($to)) {
             abort(422, "period_date {$date} выходит за рамки бюджета ({$doc->period_from} — {$doc->period_to})");
@@ -323,14 +343,17 @@ class BudgetController extends TenantController
      * GET /budget-report/{id}
      *
      * Параметры:
-     *   - by_cash=1  — детализация по кассам (только для ДДС)
+     *   - by_cash=1       — детализация по кассам (только для ДДС/PDC)
+     *   - display_from    — расширение диапазона влево (показать факт до начала бюджета)
+     *   - granularity     — 'day' | 'month'. По умолчанию: 'day' для PDC, 'month' для остальных.
      *
      * Возвращает:
      *   - document: шапка
-     *   - period_dates: ['2026-01-01', '2026-02-01', ...]
+     *   - period_dates: ['2026-01-01', '2026-02-01', ...] или ['2026-10-15', '2026-10-16', ...]
+     *   - granularity: 'day' | 'month'
      *   - articles: дерево статей (flow или revenue+expenses)
-     *   - plan: { "article_id:cash_id:2026-01-01" => amount }
-     *   - fact: { "article_id:cash_id:2026-01-01" => amount }
+     *   - plan: { "article_id:cash_id:period_date" => amount }
+     *   - fact: { "article_id:cash_id:period_date" => amount }
      *   - opening_balances: { "cash_id" => { auto: X, manual: Y, is_manual: bool } }
      */
     public function report(Request $request, int $id)
@@ -340,18 +363,34 @@ class BudgetController extends TenantController
         $doc = $this->docModel()->newQuery()->findOrFail($id);
         $byCash = (bool)$request->by_cash;
 
-        // display_from — расширение диапазона влево (показать факт до начала бюджета)
-        $displayFrom = $request->display_from
-            ? Carbon::parse($request->display_from)->startOfMonth()->format('Y-m-d')
-            : null;
+        // Гранулярность периода:
+        // - явно указана через ?granularity=day|month
+        // - иначе: для PDC по умолчанию 'day', для остальных — 'month'
+        $granularity = $request->granularity
+            ?: ($doc->type === 'pdc' ? 'day' : 'month');
+        if (!in_array($granularity, ['day', 'month'], true)) {
+            $granularity = 'month';
+        }
 
-        $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        // display_from — расширение диапазона влево.
+        // Для подневной гранулярности оперируем днями, для месячной — началом месяца.
+        if ($granularity === 'day') {
+            $displayFrom = $request->display_from
+                ? Carbon::parse($request->display_from)->startOfDay()->format('Y-m-d')
+                : null;
+            $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfDay()->format('Y-m-d');
+        } else {
+            $displayFrom = $request->display_from
+                ? Carbon::parse($request->display_from)->startOfMonth()->format('Y-m-d')
+                : null;
+            $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        }
 
         $effectiveFrom = ($displayFrom && $displayFrom < $budgetPeriodFrom)
             ? $displayFrom
             : $budgetPeriodFrom;
 
-        $periodDates = $this->periodDatesBetween($effectiveFrom, $doc->period_to);
+        $periodDates = $this->periodDatesBetween($effectiveFrom, $doc->period_to, $granularity);
 
         // ── Плановые данные ──────────────────────────────────────────────
         $planRows = $this->itemModel()->newQuery()
@@ -375,10 +414,11 @@ class BudgetController extends TenantController
         }
 
         // ── Дерево статей + фактические данные ───────────────────────────
-        if ($doc->type === 'dds') {
+        // PDC использует те же статьи и факт-источник, что и ДДС.
+        if ($doc->type === 'dds' || $doc->type === 'pdc') {
             $articles = $this->getDdsArticles();
-            $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom);
-            $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom);
+            $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom, $granularity);
+            $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom, $granularity);
         } else {
             $articles = $this->getBdrArticles();
             $fact = $this->getBdrFact($doc, $periodDates, $effectiveFrom);
@@ -387,7 +427,7 @@ class BudgetController extends TenantController
 
         // ── Справочник касс (при by_cash) ─────────────────────────────────
         $cashItems = [];
-        if ($byCash && $doc->type === 'dds') {
+        if ($byCash && ($doc->type === 'dds' || $doc->type === 'pdc')) {
             $cashItems = DB::connection($this->dbName)
                 ->table('info')
                 ->where('type', 'cash')
@@ -400,7 +440,7 @@ class BudgetController extends TenantController
 
         // ── Конфиг для drill-down факта ──────────────────────────────────
         $factDrillConfig = [];
-        if ($doc->type === 'dds') {
+        if ($doc->type === 'dds' || $doc->type === 'pdc') {
             $a100 = (new BalanceItem)->setConnection($this->dbName)->newQuery()->where('code', 'А100')->first();
             if ($a100) {
                 $factDrillConfig = ['bi_id' => $a100->id, 'info_field' => 'info_2_id'];
@@ -421,6 +461,7 @@ class BudgetController extends TenantController
             'period_dates'       => $periodDates,
             'budget_period_from' => $budgetPeriodFrom,
             'display_from'       => $effectiveFrom,
+            'granularity'        => $granularity,
             'articles'           => $articles,
             'plan'               => $plan,
             'plan_details'       => $planDetails,
@@ -451,10 +492,13 @@ class BudgetController extends TenantController
     }
 
     /**
-     * Факт ДДС — обороты по А100, группировка по info_2_id (flow) и началу месяца.
+     * Факт ДДС — обороты по А100, группировка по info_2_id (flow) и периоду.
      * При by_cash=true дополнительно по info_1_id (cash).
+     *
+     * granularity = 'month' — группировка по началу месяца.
+     * granularity = 'day'   — группировка по конкретному дню.
      */
-    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash, ?string $effectiveFrom = null): array
+    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash, ?string $effectiveFrom = null, string $granularity = 'month'): array
     {
         $a100 = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
@@ -463,17 +507,28 @@ class BudgetController extends TenantController
 
         if (!$a100) return [];
 
-        $dateFrom = $effectiveFrom
-            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
-            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
-        $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
+        // Для подневной гранулярности диапазон дат берём день-в-день,
+        // для месячной — расширяем до полных месяцев.
+        if ($granularity === 'day') {
+            $dateFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfDay()->format('Y-m-d')
+                : Carbon::parse($doc->period_from)->startOfDay()->format('Y-m-d');
+            $dateTo   = Carbon::parse($doc->period_to)->endOfDay()->format('Y-m-d 23:59:59');
+            $dateFormat = '%Y-%m-%d';
+        } else {
+            $dateFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
+                : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+            $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
+            $dateFormat = '%Y-%m-01';
+        }
 
         $selectFields = [
             'info_2_id as article_id',
-            DB::raw("DATE_FORMAT(date, '%Y-%m-01') as period_date"),
+            DB::raw("DATE_FORMAT(date, '{$dateFormat}') as period_date"),
             DB::raw('SUM(amount) as total'),
         ];
-        $groupBy = ['info_2_id', DB::raw("DATE_FORMAT(date, '%Y-%m-01')")];
+        $groupBy = ['info_2_id', DB::raw("DATE_FORMAT(date, '{$dateFormat}')")];
 
         if ($byCash) {
             array_unshift($selectFields, 'info_1_id as cash_id');
@@ -500,21 +555,30 @@ class BudgetController extends TenantController
     }
 
     /**
-     * Начальные остатки для ДДС.
+     * Начальные остатки для ДДС/PDC.
      *
-     * Автоматически: сумма по А100 до period_from.
+     * Автоматически: сумма по А100 до effectiveFrom.
      * Ручные: из budget_opening_balances если is_manual=true.
+     *
+     * granularity = 'day' — берём остаток на конкретную дату.
+     * granularity = 'month' — округляем до начала месяца.
      */
-    private function getOpeningBalances(BudgetDocument $doc, bool $byCash, ?string $effectiveFrom = null): array
+    private function getOpeningBalances(BudgetDocument $doc, bool $byCash, ?string $effectiveFrom = null, string $granularity = 'month'): array
     {
         $a100 = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
             ->where('code', 'А100')
             ->first();
 
-        $dateFrom = $effectiveFrom
-            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
-            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        if ($granularity === 'day') {
+            $dateFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfDay()->format('Y-m-d')
+                : Carbon::parse($doc->period_from)->startOfDay()->format('Y-m-d');
+        } else {
+            $dateFrom = $effectiveFrom
+                ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
+                : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        }
 
         // Авто-остаток из balance_changes
         $autoQuery = DB::connection($this->dbName)

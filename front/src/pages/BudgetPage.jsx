@@ -1,16 +1,13 @@
 import { Fragment, useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
-import { getOperations, getBalanceItems } from '../api/operations'
 import {
   getBudgetDocuments, createBudgetDocument, updateBudgetDocument,
-  getBudgetReport, getBudgetItems, createBudgetItem, updateBudgetItem, deleteBudgetItem, upsertOpeningBalance,
+  getBudgetReport, getBudgetItems, createBudgetItem, deleteBudgetItem, upsertOpeningBalance,
 } from '../api/budget'
-import { getDocument, postDocument, cancelDocument } from '../api/documents'
-import { getInfo, createInfo, updateInfo } from '../api/info'
-import { DocumentForm } from './DocumentsPage'
-import OperationForm from '../components/OperationForm'
+import { createInfo, updateInfo } from '../api/info'
 import Layout from '../components/Layout'
+import BudgetDrawer from '../components/budget/BudgetDrawer'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
@@ -101,537 +98,6 @@ function PlanCellSimple({ value, onSave, disabled }) {
   return <td className={`px-2 py-1.5 text-right text-xs tabular-nums ${disabled ? 'text-blue-400' : 'text-blue-600 cursor-pointer hover:bg-blue-50 rounded'}`} onDoubleClick={() => { if (!disabled) { setText(value ? String(Math.round(value)) : ''); setEditing(true) } }}>{fmt(value)}</td>
 }
 
-// ── Drawer (план + факт) ────────────────────────────────────────────────────
-function BudgetDrawer({ mode, articleName, periodLabel, factOps, factLoading, factSign, targetBiIds, articleId, periodDate, docId, articles, descendantAllMap, onClose, onUpdate, onLoadFact, section, periodDates }) {
-  const [tab, setTab] = useState(mode)
-  const factLoaded = useRef(false)
-
-  // Редактирование операции / открытие документа прямо из drawer
-  const [editOp, setEditOp] = useState(null)
-  const [docModal, setDocModal] = useState(null)
-  const [docInfoCache, setDocInfoCache] = useState({})
-  const [docActionError, setDocActionError] = useState('')
-  const [docActionLoading, setDocActionLoading] = useState(false)
-  const [balanceItems, setBalanceItems] = useState([])
-  useEffect(() => { getBalanceItems().then(r => setBalanceItems(r.data.data || [])).catch(() => {}) }, [])
-
-  useEffect(() => { setTab(mode); factLoaded.current = false }, [mode, articleId, periodDate])
-
-  const switchTab = (t) => {
-    setTab(t)
-    if (t === 'fact' && !factLoaded.current) {
-      factLoaded.current = true
-      onLoadFact(articleId, periodDate)
-    }
-  }
-
-  useEffect(() => {
-    if (mode === 'fact' && !factLoaded.current) {
-      factLoaded.current = true
-      onLoadFact(articleId, periodDate)
-    }
-  }, [mode, articleId, periodDate])
-
-  // ── Хэндлеры для операций ──────────────────────────────────────────────────
-  const handleEditSaved = () => {
-    setEditOp(null)
-    onLoadFact(articleId, periodDate) // обновить список операций
-    onUpdate()
-  }
-
-  const openDocumentModal = async (tableId) => {
-    try {
-      const r = await getDocument(tableId)
-      setDocModal({ doc: r.data.data })
-    } catch { /* ignore */ }
-  }
-
-  const refreshAfterDocAction = () => {
-    setDocModal(null)
-    onLoadFact(articleId, periodDate)
-    onUpdate()
-  }
-
-  const handleDocSaved = () => refreshAfterDocAction()
-
-  const handleDocPost = async (doc) => {
-    setDocActionLoading(true); setDocActionError('')
-    try {
-      await postDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      onLoadFact(articleId, periodDate); onUpdate()
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    } finally { setDocActionLoading(false) }
-  }
-
-  const handleDocCancel = async (doc) => {
-    setDocActionLoading(true); setDocActionError('')
-    try {
-      await cancelDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      onLoadFact(articleId, periodDate); onUpdate()
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка отмены проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    } finally { setDocActionLoading(false) }
-  }
-
-  const loadDocInfo = (type) => {
-    getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/20 z-40" onClick={editOp || docModal ? undefined : onClose} />
-      <div className="fixed top-0 right-0 h-full w-[460px] max-w-full bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
-        <div className="px-5 py-4 border-b border-gray-100 flex-shrink-0">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-gray-800">{articleName}</h3>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
-          </div>
-          <div className="text-xs text-gray-400 mb-3">{periodLabel}</div>
-          <div className="flex gap-1">
-            <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'plan' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => switchTab('plan')}>План</button>
-            <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'fact' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => switchTab('fact')}>Факт</button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {tab === 'plan' ? (
-            <PlanTab articleId={articleId} periodDate={periodDate} docId={docId} articles={articles} descendantAllMap={descendantAllMap} onUpdate={onUpdate} section={section} periodDates={periodDates} />
-          ) : (
-            <FactTab ops={factOps} loading={factLoading} sign={factSign} targetBiIds={targetBiIds}
-              onEditOp={setEditOp} onOpenDoc={openDocumentModal} />
-          )}
-        </div>
-      </div>
-
-      {/* Редактирование операции */}
-      {editOp && (
-        <OperationForm
-          operation={editOp}
-          onSuccess={handleEditSaved}
-          onCancel={() => setEditOp(null)}
-        />
-      )}
-
-      {/* Инлайн-просмотр документа */}
-      {docModal && (
-        <>
-          {docActionError && (
-            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
-              {docActionError}
-            </div>
-          )}
-          <DocumentForm
-            docType={docModal.doc.type}
-            doc={docModal.doc}
-            balanceItems={balanceItems}
-            infoCache={docInfoCache}
-            loadInfo={loadDocInfo}
-            onSave={handleDocSaved}
-            onCancel={refreshAfterDocAction}
-            onPost={handleDocPost}
-            onCancelDoc={handleDocCancel}
-          />
-        </>
-      )}
-    </>
-  )
-}
-
-// ── Вкладка «План» ──────────────────────────────────────────────────────────
-function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate, section, periodDates }) {
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [adding, setAdding] = useState(false)
-  const [newArticle, setNewArticle] = useState(articleId)
-  const [newDate, setNewDate] = useState(periodDate)
-  const [newContent, setNewContent] = useState('')
-  const [newAmount, setNewAmount] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [copying, setCopying] = useState(false)
-  const [copyTargets, setCopyTargets] = useState([])
-  const [copyLoading, setCopyLoading] = useState(false)
-  const amountRef = useRef(null)
-
-  // Месяцы после текущего для копирования
-  const futureMonths = useMemo(() => {
-    if (!periodDates) return []
-    const idx = periodDates.indexOf(periodDate)
-    if (idx < 0) return periodDates.filter(pd => pd > periodDate)
-    return periodDates.slice(idx + 1)
-  }, [periodDates, periodDate])
-
-  const articleOptions = useMemo(() => {
-    if (!articles) return []
-    const flat = []
-    const walk = (items, depth = 0) => {
-      for (const a of items) { flat.push({ id: a.id, name: a.name, depth }); if (a.children) walk(a.children, depth + 1) }
-    }
-    if (Array.isArray(articles) && articles[0]?.id != null) walk(articles)
-    else if (Array.isArray(articles)) articles.forEach(g => walk(g.items || [], 0))
-    return flat
-  }, [articles])
-
-  const loadItems = async () => {
-    setLoading(true)
-    try {
-      const allIds = descendantAllMap?.[articleId]
-      const ids = allIds && allIds.size > 0 ? [...allIds] : [articleId]
-      const res = await getBudgetItems({ budget_document_id: docId, article_ids: ids.join(','), period_date: periodDate, ...(section ? { section } : {}) })
-      setRows(res.data.data || [])
-    } catch (e) { console.error('loadItems error', e) }
-    finally { setLoading(false) }
-  }
-
-  useEffect(() => { loadItems() }, [articleId, periodDate, docId])
-  useEffect(() => { if (adding && amountRef.current) amountRef.current.focus() }, [adding])
-
-  const total = rows.reduce((s, r) => s + (r.amount || 0), 0)
-
-  const handleAdd = async () => {
-    const amount = parseFloat(newAmount.replace(/\s/g, '').replace(',', '.')) || 0
-    if (!amount) return
-    setSaving(true)
-    try {
-      const res = await createBudgetItem({ budget_document_id: docId, article_id: newArticle, section: section || null, period_date: newDate, content: newContent.trim() || null, amount })
-      setRows(prev => [...prev, res.data.data])
-      setNewContent(''); setNewAmount('')
-      onUpdate()
-    } finally { setSaving(false) }
-  }
-
-  const handleRowUpdate = async (item, updates) => {
-    const res = await updateBudgetItem(item.id, updates)
-    setRows(prev => prev.map(r => r.id === item.id ? res.data.data : r))
-    onUpdate()
-  }
-
-  const handleDelete = async (item) => {
-    await deleteBudgetItem(item.id)
-    setRows(prev => prev.filter(r => r.id !== item.id))
-    onUpdate()
-  }
-
-  const handleCopy = async () => {
-    if (copyTargets.length === 0 || rows.length === 0) return
-    setCopyLoading(true)
-    try {
-      for (const targetPd of copyTargets) {
-        for (const row of rows) {
-          await createBudgetItem({
-            budget_document_id: docId,
-            article_id: row.article_id,
-            section: section || null,
-            period_date: targetPd,
-            content: row.content || null,
-            amount: row.amount,
-          })
-        }
-      }
-      setCopying(false)
-      setCopyTargets([])
-      onUpdate()
-    } catch (err) {
-      console.error('Ошибка копирования:', err)
-    } finally {
-      setCopyLoading(false)
-    }
-  }
-
-  const toggleCopyTarget = (pd) => {
-    setCopyTargets(prev => prev.includes(pd) ? prev.filter(p => p !== pd) : [...prev, pd])
-  }
-
-  const selectAllTargets = () => {
-    setCopyTargets(prev => prev.length === futureMonths.length ? [] : [...futureMonths])
-  }
-
-  if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка...</div>
-
-  return (
-    <div className="px-4 py-4">
-      {rows.length === 0 && !adding && <div className="text-center py-8 text-gray-400 text-sm">Нет строк плана</div>}
-      <div className="space-y-2">
-        {rows.map(item => (
-          <DrawerRow key={item.id} item={item} articleOptions={articleOptions} onUpdate={handleRowUpdate} onDelete={handleDelete} />
-        ))}
-      </div>
-
-      {/* Форма добавления */}
-      {adding ? (
-        <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100 space-y-2">
-          {/* Строка 1: статья + дата */}
-          <div className="flex gap-2">
-            <select className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
-              value={newArticle} onChange={e => setNewArticle(Number(e.target.value))}>
-              {articleOptions.map(a => (
-                <option key={a.id} value={a.id}>{'\u00A0\u00A0'.repeat(a.depth)}{a.name}</option>
-              ))}
-            </select>
-            <input type="date" className="w-32 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
-              value={newDate} onChange={e => setNewDate(e.target.value)} />
-          </div>
-          {/* Строка 2: содержание + сумма */}
-          <div className="flex gap-2">
-            <input className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
-              placeholder="Содержание" value={newContent} onChange={e => setNewContent(e.target.value)} />
-            <input ref={amountRef} className="w-28 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white text-right"
-              placeholder="Сумма" value={newAmount} onChange={e => setNewAmount(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') setAdding(false) }} />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={handleAdd} disabled={saving} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? '...' : 'Добавить'}</button>
-            <button onClick={() => { setAdding(false); setNewContent(''); setNewAmount('') }} className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={() => { setAdding(true); setNewArticle(articleId); setNewDate(periodDate) }} className="mt-3 w-full py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg border border-dashed border-blue-200">+ Добавить строку</button>
-      )}
-
-      {rows.length > 0 && (
-        <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
-          <span className="text-xs text-gray-500">Итого ({rows.length})</span>
-          <span className="text-sm font-semibold text-blue-700 tabular-nums">{fmt(total)}</span>
-        </div>
-      )}
-
-      {/* Копирование на другие месяцы */}
-      {rows.length > 0 && futureMonths.length > 0 && !copying && (
-        <button
-          onClick={() => { setCopying(true); setCopyTargets([]) }}
-          className="mt-3 w-full py-2 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg border border-dashed border-gray-200 flex items-center justify-center gap-1.5"
-        >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          Копировать на другие месяцы
-        </button>
-      )}
-
-      {copying && (
-        <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-600">Копировать {rows.length} строк в:</span>
-            <button onClick={selectAllTargets} className="text-[10px] text-blue-600 hover:text-blue-800">
-              {copyTargets.length === futureMonths.length ? 'Снять все' : 'Выбрать все'}
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {futureMonths.map(pd => {
-              const selected = copyTargets.includes(pd)
-              const label = new Date(pd + 'T00:00:00').toLocaleString('ru-RU', { month: 'short', year: '2-digit' })
-              return (
-                <button
-                  key={pd}
-                  type="button"
-                  onClick={() => toggleCopyTarget(pd)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
-                    selected
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-600'
-                  }`}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={handleCopy}
-              disabled={copyTargets.length === 0 || copyLoading}
-              className="flex-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              {copyLoading ? 'Копирую...' : `Копировать → ${copyTargets.length} мес.`}
-            </button>
-            <button
-              onClick={() => { setCopying(false); setCopyTargets([]) }}
-              className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg"
-            >
-              Отмена
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
-  const [editField, setEditField] = useState(null) // 'content' | 'amount' | 'article' | 'date'
-  const [text, setText] = useState('')
-  const ref = useRef(null)
-
-  useEffect(() => { if (editField && ref.current) ref.current.focus() }, [editField])
-
-  const commit = (field, value) => {
-    setEditField(null)
-    if (field === 'amount') {
-      const n = parseFloat(String(value).replace(/\s/g, '').replace(',', '.')) || 0
-      if (n !== item.amount) onUpdate(item, { amount: n })
-    } else if (field === 'content') {
-      if (value !== item.content) onUpdate(item, { content: value })
-    } else if (field === 'article') {
-      const id = Number(value)
-      if (id !== item.article_id) onUpdate(item, { article_id: id })
-    } else if (field === 'date') {
-      if (value !== item.period_date) onUpdate(item, { period_date: value })
-    }
-  }
-
-  return (
-    <div className="group p-3 bg-white rounded-lg border border-gray-100 hover:border-gray-200 transition-colors space-y-1.5">
-      {/* Строка 1: статья + дата */}
-      <div className="flex items-center gap-2 text-[11px]">
-        {editField === 'article' ? (
-          <select ref={ref} className="flex-1 px-2 py-1 border border-blue-300 rounded text-[11px]"
-            value={item.article_id} onChange={e => commit('article', e.target.value)} onBlur={() => setEditField(null)}>
-            {articleOptions.map(a => <option key={a.id} value={a.id}>{'\u00A0\u00A0'.repeat(a.depth)}{a.name}</option>)}
-          </select>
-        ) : (
-          <span className="flex-1 text-gray-500 cursor-pointer hover:text-blue-600 truncate"
-            onClick={() => setEditField('article')} title="Изменить статью">
-            {item.article_name}
-          </span>
-        )}
-        {editField === 'date' ? (
-          <input ref={ref} type="date" className="px-2 py-1 border border-blue-300 rounded text-[11px]"
-            value={text} onChange={e => setText(e.target.value)}
-            onBlur={() => commit('date', text)} onKeyDown={e => { if (e.key === 'Enter') commit('date', text) }} />
-        ) : (
-          <span className="text-gray-400 cursor-pointer hover:text-blue-600"
-            onClick={() => { setText(item.period_date || ''); setEditField('date') }}>
-            {item.period_date ? new Date(item.period_date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '—'}
-          </span>
-        )}
-      </div>
-      {/* Строка 2: содержание + сумма */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          {editField === 'content' ? (
-            <input ref={ref} className="w-full px-2 py-1 border border-blue-300 rounded text-sm"
-              value={text} onChange={e => setText(e.target.value)}
-              onBlur={() => commit('content', text)} onKeyDown={e => { if (e.key === 'Enter') commit('content', text); if (e.key === 'Escape') setEditField(null) }} />
-          ) : (
-            <div className="text-sm text-gray-700 cursor-pointer hover:text-blue-600"
-              onClick={() => { setText(item.content || ''); setEditField('content') }}>
-              {item.content || <span className="text-gray-300 italic">без описания</span>}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {editField === 'amount' ? (
-            <input ref={ref} className="w-24 px-2 py-1 border border-blue-300 rounded text-sm text-right"
-              value={text} onChange={e => setText(e.target.value)}
-              onBlur={() => commit('amount', text)} onKeyDown={e => { if (e.key === 'Enter') commit('amount', text); if (e.key === 'Escape') setEditField(null) }} />
-          ) : (
-            <div className="text-sm font-medium text-blue-600 tabular-nums cursor-pointer hover:text-blue-800"
-              onClick={() => { setText(String(Math.round(item.amount))); setEditField('amount') }}>
-              {fmt(item.amount)}
-            </div>
-          )}
-          <button onClick={() => onDelete(item)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity text-sm">&times;</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Вкладка «Факт» ──────────────────────────────────────────────────────────
-// targetBiIds — id счетов по которым фильтровали (для определения стороны)
-// sign — множитель: для БДР = -1 (дебет П = расход, кредит П = возврат)
-// onEditOp   — callback(op) для ручных операций
-// onOpenDoc  — callback(tableId) для операций из документов
-function FactTab({ ops, loading, sign = 1, targetBiIds = [], onEditOp, onOpenDoc }) {
-  if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка операций...</div>
-  if (!ops || ops.length === 0) return <div className="text-center py-12 text-gray-400 text-sm">Операций не найдено</div>
-
-  const biIdSet = new Set(targetBiIds.map(String))
-
-  const getAmount = (op) => {
-    const raw = parseFloat(op.amount)
-    if (biIdSet.size === 0) return raw * sign
-    const isDebit = biIdSet.has(String(op.in_bi_id))
-    return isDebit ? raw * sign : raw * (-sign)
-  }
-
-  const total = ops.reduce((s, op) => s + getAmount(op), 0)
-  return (
-    <div className="px-2 py-2">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-white">
-          <tr className="text-[10px] text-gray-400 uppercase">
-            <th className="text-left px-2 py-2 whitespace-nowrap">Дата</th>
-            <th className="text-left px-2 py-2">Счета / Аналитика / Содержание</th>
-            <th className="text-right px-2 py-2 whitespace-nowrap">Сумма</th>
-            <th className="w-7" />
-          </tr>
-        </thead>
-        <tbody>
-          {ops.map(op => {
-            const amt = getAmount(op)
-            const isDoc = op.table_name === 'documents' && op.table_id
-            const note = op.note || op.content
-
-            return (
-              <tr key={op.id} className="border-b border-gray-50 hover:bg-gray-50 group">
-                <td className="px-2 py-2 text-gray-500 whitespace-nowrap align-top">{fmtDate(op.date)}</td>
-                <td className="px-2 py-2 align-top">
-                  {/* Дебет и кредит в два столбца */}
-                  <div className="flex items-start gap-1.5">
-                    {/* Дебет (in) */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
-                      {op.in_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_1_name}</div>}
-                      {op.in_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_2_name}</div>}
-                    </div>
-                    <span className="text-[9px] text-gray-300 mt-1 flex-shrink-0">→</span>
-                    {/* Кредит (out) */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
-                      {op.out_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_1_name}</div>}
-                      {op.out_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_2_name}</div>}
-                    </div>
-                  </div>
-                  {/* Содержание */}
-                  {note && (
-                    <div className="text-[10px] text-gray-400 italic mt-1.5 leading-tight">{note}</div>
-                  )}
-                </td>
-                <td className={`px-2 py-2 text-right tabular-nums font-medium align-top whitespace-nowrap ${amt >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{fmt(amt)}</td>
-                <td className="px-1 py-2 text-right align-top">
-                  {isDoc ? (
-                    <button
-                      onClick={() => onOpenDoc?.(op.table_id)}
-                      title="Открыть документ"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
-                    ><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
-                  ) : (
-                    <button
-                      onClick={() => onEditOp?.(op)}
-                      title="Редактировать операцию"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
-                    ><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-gray-200 bg-gray-50">
-            <td colSpan={2} className="px-2 py-2 text-[10px] font-semibold text-gray-600">Итого ({ops.length})</td>
-            <td className="px-2 py-2 text-right text-xs font-bold text-gray-800 tabular-nums">{fmt(total)}</td>
-            <td />
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  )
-}
 
 // ── Модалка создания ────────────────────────────────────────────────────────
 function CreateDocModal({ projects, onClose, onCreate }) {
@@ -676,7 +142,6 @@ export default function BudgetPage() {
   const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
-  const [factOps, setFactOps] = useState([]); const [factLoading, setFactLoading] = useState(false)
   const [editDoc, setEditDoc] = useState(null) // { name, period_from, period_to }
   const [showSettingsPopup, setShowSettingsPopup] = useState(false) // попап настроек бюджета
   const [clipboard, setClipboard] = useState(null) // { articleId, section, periodDate, articleName }
@@ -717,7 +182,6 @@ export default function BudgetPage() {
   // ── Открытие drawer (универсальный) ──────────────────────────────────────
   const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan', section = null) => {
     setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate), section })
-    setFactOps([]); setFactLoading(false)
   }
 
   // ── Копирование / вставка ячейки плана ─────────────────────────────────
@@ -771,51 +235,6 @@ export default function BudgetPage() {
     } finally {
       setPasting(false)
     }
-  }
-
-  const loadFactOps = async (articleId, periodDate) => {
-    setFactLoading(true); setFactOps([])
-    try {
-      const cfg = report?.fact_drill_config
-      if (!cfg) return
-      const dateFrom = periodDate
-      const dateTo = endOfMonth(periodDate)
-
-      // Все потомки включая промежуточные (операция может быть на parent-узле)
-      const allIds = descendantAllMap[articleId]
-      const validIds = new Set(allIds && allIds.size > 0 ? allIds : [articleId])
-      const validIdsStr = new Set([...validIds].map(String))
-
-      let ops = []
-
-      if (selectedDoc?.type === 'dds') {
-        const biId = cfg.bi_id
-        const [resIn, resOut] = await Promise.all([
-          getOperations({ in_bi_id: biId, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-          getOperations({ out_bi_id: biId, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-        ])
-        const all = [...(resIn.data.data || []), ...(resOut.data.data || [])]
-        ops = all.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
-        ops = ops.filter(op => validIdsStr.has(String(op.in_info_2_id)) || validIdsStr.has(String(op.out_info_2_id)))
-      } else {
-        const allOps = []
-        for (const [code, c] of Object.entries(cfg)) {
-          const [resIn, resOut] = await Promise.all([
-            getOperations({ in_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-            getOperations({ out_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-          ])
-          const infoField = c.info_field
-          const inKey = `in_${infoField}`
-          const outKey = `out_${infoField}`
-          const biOps = [...(resIn.data.data || []), ...(resOut.data.data || [])]
-          const filtered = biOps.filter(op => validIdsStr.has(String(op[inKey])) || validIdsStr.has(String(op[outKey])))
-          allOps.push(...filtered)
-        }
-        ops = allOps.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
-      }
-      ops.sort((a, b) => new Date(b.date) - new Date(a.date))
-      setFactOps(ops)
-    } finally { setFactLoading(false) }
   }
 
   const saveOpeningBalance = useCallback(async (amount) => {
@@ -1499,16 +918,25 @@ export default function BudgetPage() {
         </div>
       )}
 
-      {drawer && (() => {
-        const cfg = report?.fact_drill_config || {}
-        const biIds = selectedDoc?.type === 'dds' ? (cfg.bi_id ? [cfg.bi_id] : []) : Object.values(cfg).map(c => c.bi_id)
-        return <BudgetDrawer mode={drawer.mode} articleName={drawer.articleName} periodLabel={drawer.periodLabel}
-          factOps={factOps} factLoading={factLoading} factSign={selectedDoc?.type === 'bdr' ? -1 : 1} targetBiIds={biIds}
-          articleId={drawer.articleId} periodDate={drawer.periodDate} docId={selectedDocId}
-          articles={report?.articles} descendantAllMap={descendantAllMap}
-          onClose={() => setDrawer(null)} onUpdate={() => loadReport(true)} onLoadFact={loadFactOps}
-          section={drawer.section} periodDates={periodDates} />
-      })()}
+      {drawer && (
+        <BudgetDrawer
+          mode={drawer.mode}
+          articleId={drawer.articleId}
+          articleName={drawer.articleName}
+          periodDate={drawer.periodDate}
+          periodLabel={drawer.periodLabel}
+          section={drawer.section}
+          docId={selectedDocId}
+          docType={selectedDoc?.type}
+          articles={report?.articles}
+          descendantAllMap={descendantAllMap}
+          periodDates={periodDates}
+          granularity="month"
+          factDrillConfig={report?.fact_drill_config}
+          onClose={() => setDrawer(null)}
+          onUpdate={() => loadReport(true)}
+        />
+      )}
 
       {showCreateModal && <CreateDocModal projects={projects} onClose={() => setShowCreateModal(false)} onCreate={(doc) => { setDocuments(prev => [doc, ...prev]); setSelectedDocId(doc.id); setShowCreateModal(false) }} />}
     </Layout>
