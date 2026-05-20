@@ -1,4 +1,4 @@
-# FINDIR — Docker Compose (dev)
+# FINDIR — Docker Compose (dev) — MariaDB
 
 services:
 
@@ -21,13 +21,13 @@ services:
       context: ./php
       dockerfile: Dockerfile
     container_name: findir_php
-    restart: always # Важно, чтобы контейнер сам поднимался после "bye-bye"
+    restart: always
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
       APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
       APP_URL: "http://localhost"
-      DB_HOST: mysql
+      DB_HOST: mariadb
       DB_PORT: 3306
       DB_DATABASE: findir_central
       DB_USERNAME: findir
@@ -37,40 +37,44 @@ services:
       CACHE_DRIVER: redis
       SESSION_DRIVER: redis
       QUEUE_CONNECTION: redis
-      # ... твои существующие переменные (DB_HOST, APP_KEY и т.д.)
       PHP_MEMORY_LIMIT: 256M
-      PHP_MAX_EXECUTION_TIME: 120 # Даем больше времени на создание базы
+      PHP_MAX_EXECUTION_TIME: 120
     volumes:
       - ./back:/var/www/html
     deploy:
       resources:
         limits:
-          memory: 512M # Ограничиваем сверху, чтобы не "съел" всю память хоста
+          memory: 512M
     depends_on:
-      - mysql
+      - mariadb
       - redis
     networks:
       - findir_net
 
-  mysql:
-    image: mysql:8.0
-    container_name: findir_mysql
+  mariadb:
+    image: mariadb:11.4
+    container_name: findir_mariadb
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: rootsecret
-      MYSQL_DATABASE: findir_central
-      MYSQL_USER: findir
-      MYSQL_PASSWORD: secret
+      MARIADB_ROOT_PASSWORD: rootsecret
+      MARIADB_DATABASE: findir_central
+      MARIADB_USER: findir
+      MARIADB_PASSWORD: secret
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - mariadb_data:/var/lib/mysql
+      - ./mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      - ./mariadb/init.sql:/docker-entrypoint-initdb.d/01-grants.sql:ro
     ports:
       - "3307:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --log-bin-trust-function-creators=1
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootsecret"]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 30s
     networks:
       - findir_net
@@ -95,7 +99,7 @@ services:
     environment:
       APP_ENV: local
       APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
-      DB_HOST: mysql
+      DB_HOST: mariadb
       DB_DATABASE: findir_central
       DB_USERNAME: findir
       DB_PASSWORD: secret
@@ -104,7 +108,7 @@ services:
     volumes:
       - ./back:/var/www/html
     depends_on:
-      - mysql
+      - mariadb
       - redis
     networks:
       - findir_net
@@ -119,7 +123,7 @@ services:
     environment:
       APP_ENV: local
       APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
-      DB_HOST: mysql
+      DB_HOST: mariadb
       DB_DATABASE: findir_central
       DB_USERNAME: findir
       DB_PASSWORD: secret
@@ -127,7 +131,7 @@ services:
     volumes:
       - ./back:/var/www/html
     depends_on:
-      - mysql
+      - mariadb
       - redis
     networks:
       - findir_net
@@ -147,13 +151,13 @@ services:
     container_name: findir_phpmyadmin
     restart: unless-stopped
     environment:
-      PMA_HOST: mysql
+      PMA_HOST: mariadb
       PMA_USER: findir
       PMA_PASSWORD: secret
     ports:
       - "8080:80"
     depends_on:
-      - mysql
+      - mariadb
     networks:
       - findir_net
 
@@ -184,7 +188,7 @@ services:
       - findir_net
 
 volumes:
-  mysql_data:
+  mariadb_data:
   redis_data:
 
 networks:
