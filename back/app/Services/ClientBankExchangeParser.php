@@ -132,6 +132,12 @@ class ClientBankExchangeParser
             $counterpartyAcc  = $d['ПолучательСчет'] ?? null;
         }
 
+        // Перевод между своими счетами: ИНН плательщика == ИНН получателя в самом документе.
+        // Самодостаточный сигнал — внешние реквизиты организации не нужны.
+        $payerInn = isset($d['ПлательщикИНН']) ? trim($d['ПлательщикИНН']) : '';
+        $payeeInn = isset($d['ПолучательИНН']) ? trim($d['ПолучательИНН']) : '';
+        $isSelfTransfer = $payerInn !== '' && $payerInn === $payeeInn;
+
         $purpose = $d['НазначениеПлатежа'] ?? null;
 
         return [
@@ -142,7 +148,8 @@ class ClientBankExchangeParser
             'direction'        => $direction,
             'counterparty_raw' => $counterpartyName ? trim($counterpartyName) : null,
             'counterparty_inn' => $counterpartyInn   ? trim($counterpartyInn) : null,
-            'counterparty_acc' => $counterpartyAcc   ? trim($counterpartyAcc) : null,
+            'counterparty_account' => $counterpartyAcc ? trim($counterpartyAcc) : null,
+            'is_self_transfer' => $isSelfTransfer,
             'purpose_raw'      => $purpose ? trim($purpose) : null,
             // Поля для записи в операцию
             'external_id'      => $docNumber ? (string) $docNumber : null,

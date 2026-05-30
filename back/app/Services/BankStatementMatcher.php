@@ -25,6 +25,15 @@ class BankStatementMatcher
     /** @var array<string, int|null> Кэш поиска по названию */
     private array $nameCache      = [];
 
+    /** @var array<string, object> category → строка category_postings */
+    private array $postings       = [];
+
+    /** @var array<string, int> code → balance_items.id (счёт по коду) */
+    private array $biIdByCode     = [];
+
+    /** @var array<int, object> правила классификации тенанта, отсортированы по priority DESC */
+    private array $rules          = [];
+
     public function __construct(string $dbName)
     {
         $this->dbName = $dbName;
@@ -87,15 +96,140 @@ class BankStatementMatcher
 
     private function matchRow(array $row): array
     {
+        // ── Ступень 1: классификация (сигнал → категория) ──
+        $category = $this->classify($row);
+        $row['suggested_category'] = $category;
+
+        // ── Ступень 2: разноска (категория → счёт + статья + контрагент) ──
+        // Если для категории есть строка в карте разноски — берём оттуда.
+        if ($category !== PaymentCategory::OTHER && isset($this->postings[$category])) {
+            return $this->applyPosting($row, $this->postings[$category]);
+        }
+
+        // ── Fallback (OTHER или категория без настроенной разноски) ──
+        // Прежнее поведение: keyword-флоу + партнёр по ИНН. Ничего не ломаем.
         $row['suggested_partner_id'] = $this->matchPartner(
             $row['counterparty_inn'] ?? null,
             $row['counterparty_raw'] ?? null
         );
-
         $row['suggested_flow_id'] = $this->matchFlow(
             $row['purpose_raw'] ?? null,
             $row['direction']   ?? 'out'
         );
+
+        return $row;
+    }
+
+    /**
+     * Ступень 1 — отнести строку к категории.
+     *
+     * Порядок:
+     *  1. Универсальные определённости в коде (верны для всех тенантов, не
+     *     требуют разметки): перевод между своими по ИНН==ИНН.
+     *  2. Правила тенанта из payment_classification_rules по убыванию priority,
+     *     первое совпадение побеждает. Наполняются пользователем.
+     *  3. OTHER — не распознано, дальше пойдёт прежний fallback (keyword+партнёр).
+     */
+    private function classify(array $row): string
+    {
+        // 1. Универсальные определённости (в коде)
+        if (!empty($row['is_self_transfer'])) {
+            return PaymentCategory::TRANSFER;
+        }
+
+        // 2. Правила тенанта (из таблицы, по приоритету)
+        foreach ($this->rules as $rule) {
+            if ($this->ruleMatches($rule, $row)) {
+                return $rule->category;
+            }
+        }
+
+        // 3. Не распознано
+        return PaymentCategory::OTHER;
+    }
+
+    /**
+     * Проверить, совпадает ли правило со строкой. Все ЗАДАННЫЕ условия — по AND.
+     * Пустое условие не проверяется.
+     */
+    private function ruleMatches(object $rule, array $row): bool
+    {
+        // direction
+        if (($rule->direction ?? 'any') !== 'any') {
+            if (($row['direction'] ?? null) !== $rule->direction) {
+                return false;
+            }
+        }
+
+        // inn (точное совпадение)
+        if (!empty($rule->inn)) {
+            $cpInn = isset($row['counterparty_inn']) ? trim((string) $row['counterparty_inn']) : '';
+            if ($cpInn === '' || $cpInn !== trim((string) $rule->inn)) {
+                return false;
+            }
+        }
+
+        // purpose_keywords (contains, любая подстрока совпала)
+        if (!empty($rule->purpose_keywords)) {
+            $purpose = mb_strtolower((string) ($row['purpose_raw'] ?? ''));
+            if ($purpose === '') {
+                return false;
+            }
+            $keywords = array_filter(array_map(
+                fn($k) => mb_strtolower(trim($k)),
+                explode('|', $rule->purpose_keywords)
+            ));
+            $hit = false;
+            foreach ($keywords as $kw) {
+                if ($kw !== '' && mb_strpos($purpose, $kw) !== false) {
+                    $hit = true;
+                    break;
+                }
+            }
+            if (!$hit) {
+                return false;
+            }
+        }
+
+        // has_kbk (для TAX, шаг 3): требуем заполненный КБК/статус
+        if ($rule->has_kbk !== null) {
+            $rowHasKbk = !empty($row['has_kbk']);
+            if ((bool) $rule->has_kbk !== $rowHasKbk) {
+                return false;
+            }
+        }
+
+        // amount_min / amount_max
+        $amount = isset($row['amount']) ? (float) $row['amount'] : null;
+        if ($rule->amount_min !== null && ($amount === null || $amount < (float) $rule->amount_min)) {
+            return false;
+        }
+        if ($rule->amount_max !== null && ($amount === null || $amount > (float) $rule->amount_max)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Ступень 2 — проставить счёт/статью/контрагента по карте разноски.
+     * Заполняет suggested_* поля, которые читает фронт.
+     */
+    private function applyPosting(array $row, object $posting): array
+    {
+        // Корр-счёт по коду (коды плана счетов общие для всех тенантов)
+        $row['suggested_counter_bi_id'] = $posting->counter_account_code
+            ? ($this->biIdByCode[$posting->counter_account_code] ?? null)
+            : null;
+
+        // Статья ДДС: дефолт из карты разноски.
+        // (на шаге 3 здесь появится уточнение статьи по назначению для TAX)
+        $row['suggested_flow_id'] = $posting->flow_info_id ? (int) $posting->flow_info_id : null;
+
+        // Контрагент
+        $row['suggested_partner_id'] = ($posting->partner_mode === 'from_inn')
+            ? $this->matchPartner($row['counterparty_inn'] ?? null, $row['counterparty_raw'] ?? null)
+            : null;
 
         return $row;
     }
@@ -189,7 +323,7 @@ class BankStatementMatcher
             [['комисси', 'за прием', 'банковск обслуж'],             'OD-OUT-ADM'],
             [['реклам', 'маркетинг'],                                'OD-OUT-COM'],
             [['материал', 'закупк', 'товар', 'сырьё', 'сырье'],     'OD-OUT-MAT'],
-            [['перемещени', 'перевод между'],                        'OD-TRF'],
+            [['перемещени', 'перевод средств между', 'между счетами', 'между своими'], 'OD-TRF'],
         ];
     }
 
@@ -241,6 +375,49 @@ class BankStatementMatcher
 
         foreach ($flows as $f) {
             $this->flowItems[(int) $f->id] = $f;
+        }
+
+        // План счетов: code → id (счёт по коду, коды общие для всех тенантов)
+        $bis = DB::connection($this->dbName)
+            ->table('balance_items')
+            ->select('id', 'code')
+            ->get();
+
+        foreach ($bis as $bi) {
+            if ($bi->code !== null && $bi->code !== '') {
+                $this->biIdByCode[$bi->code] = (int) $bi->id;
+            }
+        }
+
+        // Карта разноски: category → строка (ступень 2). Таблица может ещё
+        // не существовать на тенантах, где миграция не прогнана — тогда
+        // конвейер просто работает по fallback-пути, без разноски.
+        try {
+            $postings = DB::connection($this->dbName)
+                ->table('category_postings')
+                ->where('is_active', true)
+                ->get();
+
+            foreach ($postings as $p) {
+                $this->postings[$p->category] = $p;
+            }
+        } catch (\Throwable $e) {
+            $this->postings = [];
+        }
+
+        // Правила классификации тенанта (ступень 1). Таблица может ещё не
+        // существовать — тогда работают только универсальные правила в коде.
+        // Сортируем по priority DESC: первое совпадение при проходе побеждает.
+        try {
+            $this->rules = DB::connection($this->dbName)
+                ->table('payment_classification_rules')
+                ->where('is_active', true)
+                ->orderByDesc('priority')
+                ->orderBy('id')
+                ->get()
+                ->all();
+        } catch (\Throwable $e) {
+            $this->rules = [];
         }
     }
 }

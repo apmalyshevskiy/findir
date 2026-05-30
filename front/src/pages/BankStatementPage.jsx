@@ -120,7 +120,7 @@ const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать
 }
 
 // ── Строка операции внутри строки выписки ─────────────────────────────────────
-const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, onChange, onRemove }) => {
+const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, onChange, onRemove }) => {
   const ic = 'w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400'
 
   // А100 — наша сторона (зафиксирована)
@@ -150,9 +150,38 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
   // и пробуем подобрать партнёра по ИНН если info_1_type = partner
   const handleCounterBiChange = (biId) => {
     const newBi = balanceItems.find(b => b.id == biId)
-    let autoInfo1 = null
 
-    // Автоподбор: если тип аналитики = partner и есть ИНН из выписки
+    // ── Перевод между своими счетами: корр-счёт тоже А100 ──
+    // Обе ноги = А100, статья «Перемещение денег» на ОБЕИХ (иначе переток
+    // не схлопнётся в ОСВ). Касса-получатель ищется по номеру счёта из выписки.
+    if (newBi?.code === 'А100') {
+      const flows = infoCache['flow'] || []
+      const moveFlow = flows.find(f => (f.name || '').toLowerCase().includes('перемещение денег'))
+
+      // Подбор кассы-получателя: ищем номер счёта-контрагента в code/name/description
+      let destCash = null
+      if (counterpartyAccount) {
+        const acc = String(counterpartyAccount).trim()
+        const found = (infoCache['cash'] || []).find(c =>
+          (c.code || '').includes(acc) ||
+          (c.name || '').includes(acc) ||
+          (c.description || '').includes(acc)
+        )
+        if (found) destCash = found.id
+      }
+
+      onChange({
+        ...op,
+        [counterBiField]:    biId,
+        [counterInfo1Field]: destCash,             // касса-получатель (или вручную)
+        [counterInfo2Field]: moveFlow?.id || null, // ДДС на корр-ноге
+        [a100Info2Field]:    moveFlow?.id || null, // ДДС на нашей ноге — обе должны совпадать
+      })
+      return
+    }
+
+    // ── Обычный корр-счёт: сброс аналитики + автоподбор партнёра по ИНН ──
+    let autoInfo1 = null
     if (newBi?.info_1_type === 'partner' && counterpartyInn) {
       const partners = infoCache['partner'] || []
       const found = partners.find(p => p.inn && p.inn.trim() === counterpartyInn.trim())
@@ -229,8 +258,10 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             onChange={e => handleCounterBiChange(parseInt(e.target.value) || null)}
           >
             <option value="">— Выбрать счёт —</option>
-            {balanceItems.filter(b => b.code !== 'А100').map(b => (
-              <option key={b.id} value={b.id}>{b.code} {b.name.replace(/^[А-ЯA-Z]\d+\s/, '')}</option>
+            {balanceItems.map(b => (
+              <option key={b.id} value={b.id}>
+                {b.code} {b.name.replace(/^[А-ЯA-Z]\d+\s/, '')}
+              </option>
             ))}
           </select>
         </div>
@@ -279,20 +310,53 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
   const a100 = balanceItems.find(b => b.code === 'А100')
   const a100Id = a100?.id
 
+  // ── Распознавание перевода между своими счетами ──
+  // Флаг приходит из бэкенда (ИНН плательщика == ИНН получателя в документе).
+  const isSelfTransfer = !!row.is_self_transfer
+
+  // Статья «Перемещение денег» — по подстроке в справочнике ДДС
+  const moveFlowId = (infoCache['flow'] || [])
+    .find(f => (f.name || '').toLowerCase().includes('перемещение денег'))?.id || null
+
+  // Касса-получатель — по номеру счёта-контрагента из выписки (code → name → description)
+  const findDestCashId = () => {
+    if (!row.counterparty_account) return null
+    const acc = String(row.counterparty_account).trim()
+    const f = (infoCache['cash'] || []).find(c =>
+      (c.code || '').includes(acc) || (c.name || '').includes(acc) || (c.description || '').includes(acc))
+    return f?.id || null
+  }
+
   const makeDefaultOp = () => {
     const op = { amount: row.amount }
+
+    // Корр-счёт: перевод → А100; иначе → подсказка матчера (suggested_counter_bi_id), если есть
+    const suggestedCounterBi = row.suggested_counter_bi_id || null
+    const counterBi    = isSelfTransfer ? (a100Id || null) : suggestedCounterBi
+    const counterInfo1 = isSelfTransfer ? findDestCashId() : (row.suggested_partner_id || null)
+
+    // Статья ДДС (тип flow) живёт только на денежной ноге А100 (info_2),
+    // т.к. расходные счёта (П589) поля под ДДС не имеют — у них info_1=expenses.
+    //  - перевод: «Перемещение денег» на обеих А100-ногах;
+    //  - иначе: статья-подсказка матчера на нашей А100-ноге, корр-нога без ДДС.
+    // (Статью расхода для П589 пока не заполняем — отдельная история со справочником.)
+    const ourFlow     = isSelfTransfer ? moveFlowId : (row.suggested_flow_id || null)
+    const counterFlow = isSelfTransfer ? moveFlowId : null
+
     if (row.direction === 'in') {
-      op.in_bi_id     = a100Id || null
-      op.in_info_1_id = cashInfoId || null
-      op.in_info_2_id = row.suggested_flow_id || null
-      op.out_bi_id    = null
-      op.out_info_1_id = row.suggested_partner_id || null
+      op.in_bi_id      = a100Id || null
+      op.in_info_1_id  = cashInfoId || null
+      op.in_info_2_id  = ourFlow
+      op.out_bi_id     = counterBi
+      op.out_info_1_id = counterInfo1
+      op.out_info_2_id = counterFlow
     } else {
       op.out_bi_id     = a100Id || null
       op.out_info_1_id = cashInfoId || null
-      op.out_info_2_id = row.suggested_flow_id || null
-      op.in_bi_id      = null
-      op.in_info_1_id  = row.suggested_partner_id || null
+      op.out_info_2_id = ourFlow
+      op.in_bi_id      = counterBi
+      op.in_info_1_id  = counterInfo1
+      op.in_info_2_id  = counterFlow
     }
     return op
   }
@@ -305,6 +369,19 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
   const [savedOps, setSavedOps] = useState(null) // снимок для отмены
   // Локальный список уже созданных id (можно обновить после пересоздания)
   const [postedIds, setPostedIds] = useState(row.existing_operation_ids || [])
+
+  // На момент монтирования план счетов и справочники могут быть ещё не загружены,
+  // поэтому makeDefaultOp() в useState даёт неполный результат. Когда данные приедут —
+  // один раз пересобираем дефолтную операцию (если строка не создана и не редактировалась).
+  const autoApplied = useRef(false)
+  useEffect(() => {
+    if (autoApplied.current) return
+    if (postedIds.length > 0) return          // уже созданные не трогаем
+    if (!a100Id) return                        // ждём план счетов
+    if (isSelfTransfer && !moveFlowId) return   // для перевода ждём статью ДДС, чтобы не оставить пусто
+    autoApplied.current = true
+    setOps([makeDefaultOp()])
+  }, [a100Id, moveFlowId, isSelfTransfer, infoCache, cashInfoId, postedIds.length])
 
   // Загрузить данные существующих операций и заполнить форму
   const loadAndExpand = async () => {
@@ -446,6 +523,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
               infoCache={infoCache}
               direction={row.direction}
               counterpartyInn={row.counterparty_inn}
+              counterpartyAccount={row.counterparty_account}
               onChange={v => setOps(ops.map((o, i) => i === idx ? v : o))}
               onRemove={() => setOps(ops.filter((_, i) => i !== idx))}
             />
@@ -587,7 +665,7 @@ export default function BankStatementPage() {
     getBalanceItems().then(r => setBalanceItems(r.data.data))
     getInfo({ type: 'cash' }).then(r => setCashInfoList(r.data.data))
     // Загружаем все типы аналитики которые могут встретиться в balance_items
-    const infoTypes = ['flow', 'partner', 'employee', 'department', 'expenses', 'revenue', 'product']
+    const infoTypes = ['flow', 'partner', 'employee', 'department', 'expenses', 'revenue', 'product', 'cash']
     infoTypes.forEach(type =>
       getInfo({ type }).then(r => setInfoCache(c => ({ ...c, [type]: r.data.data })))
     )
