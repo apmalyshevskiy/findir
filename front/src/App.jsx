@@ -9,6 +9,7 @@ import BankStatementPage from './pages/BankStatementPage'
 import DocumentsPage from './pages/DocumentsPage'
 import BudgetPage from './pages/BudgetPage'
 import PaymentCalendarPage from './pages/PaymentCalendarPage'
+import ClassificationRulesPage from './pages/ClassificationRulesPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -19,17 +20,18 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login"             element={<LoginPage />} />
-        <Route path="/register"          element={<RegisterPage />} />
-        <Route path="/dashboard"         element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
-        <Route path="/info"              element={<PrivateRoute><InfoPage /></PrivateRoute>} />
-        <Route path="/balance-sheet"     element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
-        <Route path="/bank-statement"    element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
-        <Route path="/documents"         element={<PrivateRoute><DocumentsPage /></PrivateRoute>} />
-        <Route path="/budget"            element={<PrivateRoute><BudgetPage /></PrivateRoute>} />
-        <Route path="/payment-calendar"  element={<PrivateRoute><PaymentCalendarPage /></PrivateRoute>} />
-        <Route path="/health"            element={<HealthPage />} />
-        <Route path="/"                  element={<Navigate to="/dashboard" />} />
+        <Route path="/login"                element={<LoginPage />} />
+        <Route path="/register"             element={<RegisterPage />} />
+        <Route path="/dashboard"            element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+        <Route path="/info"                 element={<PrivateRoute><InfoPage /></PrivateRoute>} />
+        <Route path="/balance-sheet"        element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
+        <Route path="/bank-statement"       element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
+        <Route path="/documents"            element={<PrivateRoute><DocumentsPage /></PrivateRoute>} />
+        <Route path="/budget"               element={<PrivateRoute><BudgetPage /></PrivateRoute>} />
+        <Route path="/payment-calendar"     element={<PrivateRoute><PaymentCalendarPage /></PrivateRoute>} />
+        <Route path="/classification-rules" element={<PrivateRoute><ClassificationRulesPage /></PrivateRoute>} />
+        <Route path="/health"               element={<HealthPage />} />
+        <Route path="/"                     element={<Navigate to="/dashboard" />} />
       </Routes>
     </BrowserRouter>
   )

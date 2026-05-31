@@ -39,6 +39,7 @@ class InfoController extends TenantController
             'inn'         => 'nullable|string|max:12',
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
+            'default_expense_id' => 'nullable|integer',
         ]);
 
         $info = $this->model()->newQuery()->create([
@@ -50,6 +51,7 @@ class InfoController extends TenantController
             'parent_id'   => $data['parent_id'] ?? null,
             'sort_order'  => $data['sort_order'] ?? 0,
             'is_active'   => true,
+            'default_expense_id' => $data['default_expense_id'] ?? null,
         ]);
 
         return response()->json(['data' => $info], 201);
@@ -68,6 +70,7 @@ class InfoController extends TenantController
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
             'is_active'   => 'nullable|boolean',
+            'default_expense_id' => 'nullable|integer',
         ]);
 
         $info = $this->model()->newQuery()->findOrFail($id);

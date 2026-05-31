@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\V1\ProjectsController;
 use App\Http\Controllers\Api\V1\DocumentsController;
 use App\Http\Controllers\Api\V1\CostController;
 use App\Http\Controllers\Api\V1\BudgetController;
+use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
+use App\Http\Controllers\Api\V1\CategoryPostingController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -42,6 +44,16 @@ Route::prefix('v1')->group(function () {
     Route::post('/info',              [InfoController::class, 'store']);
     Route::put('/info/{id}',          [InfoController::class, 'update']);
     Route::delete('/info/{id}',       [InfoController::class, 'destroy']);
+
+    Route::get   ('/classification-rules',      [PaymentClassificationRuleController::class, 'index']);
+    Route::post  ('/classification-rules',      [PaymentClassificationRuleController::class, 'store']);
+    Route::put   ('/classification-rules/{id}', [PaymentClassificationRuleController::class, 'update']);
+    Route::delete('/classification-rules/{id}', [PaymentClassificationRuleController::class, 'destroy']);
+
+    Route::get   ('/category-postings',      [CategoryPostingController::class, 'index']);
+    Route::post  ('/category-postings',      [CategoryPostingController::class, 'store']);
+    Route::put   ('/category-postings/{id}', [CategoryPostingController::class, 'update']);
+    Route::delete('/category-postings/{id}', [CategoryPostingController::class, 'destroy']);
 
     // Документы — статические маршруты ПЕРЕД динамическими {id}
     Route::get('/documents',                   [DocumentsController::class, 'index']);

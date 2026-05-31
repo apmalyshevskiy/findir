@@ -45,7 +45,7 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0 }
+const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '' }
 
 const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
   const [search, setSearch] = useState('')
@@ -193,8 +193,27 @@ export default function InfoPage() {
   const [form, setForm] = useState(emptyForm)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [expenseOptions, setExpenseOptions] = useState([])
+  const [copiedId, setCopiedId] = useState(null)
 
   useEffect(() => { loadItems() }, [filterType])
+
+  // Список статей расходов для выпадашки «Статья расходов по умолчанию» (тип flow).
+  // Грузим при каждом открытии формы — список items при активном фильтре по типу
+  // может не содержать расходов.
+  useEffect(() => {
+    if (showForm) {
+      getInfo({ type: 'expenses' })
+        .then(res => setExpenseOptions(res.data.data || []))
+        .catch(() => {})
+    }
+  }, [showForm])
+
+  const copyId = (id) => {
+    navigator.clipboard?.writeText(String(id))
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(c => (c === id ? null : c)), 1200)
+  }
 
   const loadItems = () => {
     setLoading(true)
@@ -219,6 +238,7 @@ export default function InfoPage() {
       inn:         item.inn || '',
       parent_id:   item.parent_id || '',
       sort_order:  item.sort_order || 0,
+      default_expense_id: item.default_expense_id || '',
     })
     setShowForm(true)
   }
@@ -236,6 +256,7 @@ export default function InfoPage() {
       parent_id:  form.parent_id || null,
       sort_order: form.sort_order,
       description: form.description || null,
+      default_expense_id: form.default_expense_id || null,
     }
 
     try {
@@ -345,6 +366,12 @@ export default function InfoPage() {
                           )}
                         </div>
                       </td>
+                      <td className="py-2.5 pr-4 whitespace-nowrap">
+                        <button type="button" onClick={() => copyId(item.id)} title="Скопировать ID"
+                          className="text-[10px] font-mono text-gray-400 hover:text-blue-600">
+                          {copiedId === item.id ? '✓ скопировано' : `#${item.id}`}
+                        </button>
+                      </td>
                       <td className="py-2.5 pr-4">
                         {item.code && (
                           <span className="text-xs font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{item.code}</span>
@@ -379,6 +406,21 @@ export default function InfoPage() {
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
+
+              {/* ID — только при редактировании, нередактируемый, с копированием */}
+              {editItem && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">ID</label>
+                  <div className="flex items-center gap-2">
+                    <input type="text" value={editItem.id} readOnly
+                      className={ic + ' font-mono bg-gray-50 text-gray-500'} />
+                    <button type="button" onClick={() => copyId(editItem.id)}
+                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 whitespace-nowrap">
+                      {copiedId === editItem.id ? 'Скопировано ✓' : 'Копировать'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Тип */}
               <div>
@@ -418,6 +460,28 @@ export default function InfoPage() {
                   placeholder="SALES" className={ic + ' font-mono'}
                   maxLength={35} />
               </div>
+
+              {/* Статья расходов по умолчанию — только для flow */}
+              {form.type === 'flow' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Статья расходов по умолчанию
+                    <span className="ml-1 text-xs text-gray-400 font-normal">для автозаполнения выписки</span>
+                  </label>
+                  <select
+                    value={form.default_expense_id || ''}
+                    onChange={e => setForm({ ...form, default_expense_id: e.target.value })}
+                    className={ic}
+                  >
+                    <option value="">— Не выбрана</option>
+                    {flattenTree(buildTree(expenseOptions), 0, new Set((expenseOptions || []).map(i => i.id))).map(opt => (
+                      <option key={opt.id} value={opt.id}>
+                        {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* ИНН — только для partner */}
               {form.type === 'partner' && (

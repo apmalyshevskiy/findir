@@ -9,6 +9,26 @@ namespace App\Services;
 class ClientBankExchangeParser
 {
     /**
+     * Паттерны извлечения суммы комиссии из назначения для «свёрнутого»
+     * эквайринга (банк удержал комиссию ДО зачисления, отдельной строки в
+     * выписке нет — только текст). Срабатывание паттерна = признак свода:
+     * такую строку нужно развернуть в 2 операции (приход нетто + комиссия).
+     *
+     * Сейчас только Тбанк. Формат: "Сумма комиссии 2534 руб. 77 коп.".
+     * Альфа сюда НЕ входит: у неё комиссия идёт отдельным документом, ей
+     * разворот не нужен (закрывается обычным правилом классификации).
+     * Новый банк со свёрнутой комиссией → добавить паттерн сюда; позже
+     * этот список можно вынести в конфиг/таблицу без изменения логики.
+     */
+    private const ACQUIRING_FEE_PATTERNS = [
+        [
+            'bank'  => 'tbank',
+            // рубли и копейки раздельно: "... 2534 руб. 77 коп."
+            'regex' => '/Сумма\s+комиссии\s+(\d+)\s*руб\.?\s*(\d+)\s*коп/iu',
+        ],
+    ];
+
+    /**
      * Распарсить содержимое файла (строка в UTF-8 после декодирования).
      *
      * @return array{header: array, rows: array}
@@ -140,6 +160,10 @@ class ClientBankExchangeParser
 
         $purpose = $d['НазначениеПлатежа'] ?? null;
 
+        // Эквайринг-свод: пытаемся извлечь удержанную комиссию из назначения.
+        // Срабатывание = признак свода (строку развернём в 2 операции на фронте).
+        $acquiring = $this->extractAcquiringFee($purpose);
+
         return [
             'doc_type'         => $d['_doc_type']     ?? null,
             'doc_number'       => $docNumber,
@@ -151,12 +175,43 @@ class ClientBankExchangeParser
             'counterparty_account' => $counterpartyAcc ? trim($counterpartyAcc) : null,
             'is_self_transfer' => $isSelfTransfer,
             'purpose_raw'      => $purpose ? trim($purpose) : null,
+            // Эквайринг-свод (только при срабатывании паттерна комиссии)
+            'is_acquiring_split' => $acquiring !== null,
+            'acquiring_fee'      => $acquiring['fee']  ?? null,
+            'acquiring_bank'     => $acquiring['bank'] ?? null,
             // Поля для записи в операцию
             'external_id'      => $docNumber ? (string) $docNumber : null,
             'external_date'    => $docDate,
             // note формируется: [Номер от Дата] НазначениеПлатежа
             'note'             => $this->buildNote($docNumber, $docDate, $purpose),
         ];
+    }
+
+    /**
+     * Извлечь сумму удержанной комиссии из назначения эквайринг-свода.
+     * Возвращает ['fee' => float, 'bank' => string] или null, если ни один
+     * паттерн не совпал (значит это не свод).
+     */
+    private function extractAcquiringFee(?string $purpose): ?array
+    {
+        if ($purpose === null || trim($purpose) === '') {
+            return null;
+        }
+
+        foreach (self::ACQUIRING_FEE_PATTERNS as $pattern) {
+            if (preg_match($pattern['regex'], $purpose, $m)) {
+                // m[1] — рубли, m[2] — копейки
+                $rub = (int) $m[1];
+                $kop = (int) $m[2];
+                $fee = $rub + $kop / 100;
+                if ($fee <= 0) {
+                    continue;
+                }
+                return ['fee' => round($fee, 2), 'bank' => $pattern['bank']];
+            }
+        }
+
+        return null;
     }
 
     private function resolveDirection(array $d): string

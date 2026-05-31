@@ -42,7 +42,12 @@ class BankStatementMatcher
 
     /**
      * Обогатить массив строк из парсера результатами автосопоставления.
-     * Добавляет поля: suggested_partner_id, suggested_flow_id, existing_operation_ids
+     * Добавляет поля: suggested_category, suggested_partner_id, suggested_flow_id,
+     * suggested_expense_id (статья расхода из flow.default_expense_id) и, в ветке
+     * разноски, suggested_counter_bi_id. existing_operation_ids считается отдельно
+     * (findExistingOperations). Для эквайринг-свода (is_acquiring_split) добавляет
+     * подсказки второй операции — комиссии: suggested_fee_amount, suggested_fee_bi_id,
+     * suggested_fee_flow_id, suggested_fee_expense_id.
      */
     public function matchRows(array $rows, string $ourAccountNumber): array
     {
@@ -103,21 +108,91 @@ class BankStatementMatcher
         // ── Ступень 2: разноска (категория → счёт + статья + контрагент) ──
         // Если для категории есть строка в карте разноски — берём оттуда.
         if ($category !== PaymentCategory::OTHER && isset($this->postings[$category])) {
-            return $this->applyPosting($row, $this->postings[$category]);
+            $row = $this->applyPosting($row, $this->postings[$category]);
+        } else {
+            // ── Fallback (OTHER или категория без настроенной разноски) ──
+            // Прежнее поведение: keyword-флоу + партнёр по ИНН. Ничего не ломаем.
+            $row['suggested_partner_id'] = $this->matchPartner(
+                $row['counterparty_inn'] ?? null,
+                $row['counterparty_raw'] ?? null
+            );
+            $row['suggested_flow_id'] = $this->matchFlow(
+                $row['purpose_raw'] ?? null,
+                $row['direction']   ?? 'out'
+            );
         }
 
-        // ── Fallback (OTHER или категория без настроенной разноски) ──
-        // Прежнее поведение: keyword-флоу + партнёр по ИНН. Ничего не ломаем.
-        $row['suggested_partner_id'] = $this->matchPartner(
-            $row['counterparty_inn'] ?? null,
-            $row['counterparty_raw'] ?? null
-        );
-        $row['suggested_flow_id'] = $this->matchFlow(
-            $row['purpose_raw'] ?? null,
-            $row['direction']   ?? 'out'
-        );
+        // ── Статья расхода (Вариант 1): из flow.default_expense_id ──
+        // Работает одинаково для обеих веток: берём итоговый suggested_flow_id
+        // и читаем у этой статьи ДДС статью расхода по умолчанию.
+        $row['suggested_expense_id'] = $this->defaultExpenseForFlow($row['suggested_flow_id'] ?? null);
+
+        // ── Нога комиссии эквайринг-свода (Тбанк) ──
+        // Строка-свод: банк удержал комиссию до зачисления (есть acquiring_fee).
+        // Нога прихода размечена выше как обычно (нетто). Здесь добавляем
+        // подсказки для ВТОРОЙ операции — комиссии. Счёт/статью берём из
+        // разноски категории ACQUIRING_FEE (Дт П589 + статья). Кредит ноги
+        // комиссии фронт наследует от ноги прихода. Сумма = acquiring_fee.
+        if (!empty($row['is_acquiring_split']) && !empty($row['acquiring_fee'])) {
+            $row = $this->applyAcquiringFeeLeg($row);
+        }
 
         return $row;
+    }
+
+    /**
+     * Категория, из разноски которой берётся счёт+статья ноги комиссии
+     * эквайринг-свода. Должна быть настроена в category_postings
+     * (по умолчанию: ACQUIRING_FEE → П589, статья эквайринга).
+     */
+    private const ACQUIRING_FEE_CATEGORY = 'ACQUIRING_FEE';
+
+    /**
+     * Добавить к строке-своду подсказки для операции комиссии (вторая нога).
+     * Поля suggested_fee_*: счёт расхода, статья ДДС, статья расхода, сумма.
+     * Дебет (suggested_fee_bi_id) — из разноски ACQUIRING_FEE. Кредит наследует
+     * фронт от ноги прихода. Если разноска не настроена — кладём только сумму,
+     * счёт/статью пользователь выберет вручную.
+     */
+    private function applyAcquiringFeeLeg(array $row): array
+    {
+        $row['suggested_fee_amount'] = round((float) $row['acquiring_fee'], 2);
+
+        $posting = $this->postings[self::ACQUIRING_FEE_CATEGORY] ?? null;
+
+        $feeBiId   = null;
+        $feeFlowId = null;
+        if ($posting) {
+            $feeBiId   = $posting->counter_account_code
+                ? ($this->biIdByCode[$posting->counter_account_code] ?? null)
+                : null;
+            $feeFlowId = $posting->flow_info_id ? (int) $posting->flow_info_id : null;
+        }
+
+        $row['suggested_fee_bi_id']      = $feeBiId;
+        $row['suggested_fee_flow_id']    = $feeFlowId;
+        $row['suggested_fee_expense_id'] = $this->defaultExpenseForFlow($feeFlowId);
+
+        return $row;
+    }
+
+    /**
+     * Статья расхода по умолчанию для статьи ДДС (flow).
+     * Читает info.default_expense_id из словаря flow. Null-safe:
+     * нет flow_id / нет такой записи / поле пустое → null.
+     */
+    private function defaultExpenseForFlow(?int $flowId): ?int
+    {
+        if (!$flowId) {
+            return null;
+        }
+        $flow = $this->flowItems[$flowId] ?? null;
+        if (!$flow) {
+            return null;
+        }
+        return isset($flow->default_expense_id) && $flow->default_expense_id !== null
+            ? (int) $flow->default_expense_id
+            : null;
     }
 
     /**
@@ -217,7 +292,7 @@ class BankStatementMatcher
      */
     private function applyPosting(array $row, object $posting): array
     {
-        // Корр-счёт по коду (коды плана счетов общие для всех тенантов)
+        // Корр-счёт по коду (коды плана счетов общие для всех тенантов).
         $row['suggested_counter_bi_id'] = $posting->counter_account_code
             ? ($this->biIdByCode[$posting->counter_account_code] ?? null)
             : null;
@@ -370,7 +445,7 @@ class BankStatementMatcher
             ->where('type', 'flow')
             ->where('is_active', true)
             ->whereNull('deleted_at')
-            ->select('id', 'name', 'code')
+            ->select('id', 'name', 'code', 'default_expense_id')
             ->get();
 
         foreach ($flows as $f) {

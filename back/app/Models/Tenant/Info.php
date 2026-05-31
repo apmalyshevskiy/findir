@@ -15,11 +15,13 @@ class Info extends Model
     protected $fillable = [
         'name', 'type', 'code', 'description',
         'inn',
+        'default_expense_id',
         'parent_id', 'sort_order', 'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'default_expense_id' => 'integer',
     ];
 
     public function scopeActive(Builder $query): Builder

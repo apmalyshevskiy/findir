@@ -120,8 +120,82 @@ const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать
 }
 
 // ── Строка операции внутри строки выписки ─────────────────────────────────────
-const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, onChange, onRemove }) => {
+const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, suggestedExpenseId, onChange, onRemove }) => {
   const ic = 'w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400'
+
+  // ── Нога комиссии эквайринг-свода: свободный режим, обе стороны — обычные счета ──
+  // Не привязана к А100. Дт (in) и Кт (out) выбираются вручную; аналитика info_1
+  // каждой ноги — по типу её счёта.
+  if (op._kind === 'fee') {
+    const dtBi = balanceItems.find(b => b.id == op.in_bi_id)
+    const ktBi = balanceItems.find(b => b.id == op.out_bi_id)
+    const dtInfo1Type = dtBi?.info_1_type || null
+    const ktInfo1Type = ktBi?.info_1_type || null
+    const LBL = {
+      partner: 'Контрагент', employee: 'Сотрудник', department: 'Отдел',
+      cash: 'Счёт', flow: 'Статья ДДС', expenses: 'Статья расхода',
+      product: 'Товар/Услуга', revenue: 'Статья дохода',
+    }
+    const acctOption = (b) => (
+      <option key={b.id} value={b.id}>{b.code} {b.name.replace(/^[А-ЯA-Z]\d+\s/, '')}</option>
+    )
+    return (
+      <div className="space-y-2 p-2 bg-amber-50 rounded-lg border border-amber-100">
+        <div className="text-[10px] text-amber-700 font-medium">Комиссия эквайринга (отдельная операция)</div>
+        <div className="grid gap-x-2 gap-y-1.5" style={{ gridTemplateColumns: '110px 1fr 1fr 24px' }}>
+          {/* Сумма */}
+          <div>
+            <div className="text-[10px] text-gray-400 mb-0.5">Сумма</div>
+            <input type="number" step="0.01" className={ic}
+              value={op.amount || ''}
+              onChange={e => onChange({ ...op, amount: parseFloat(e.target.value) || 0 })} />
+          </div>
+          {/* Счёт Дт (расход) */}
+          <div>
+            <div className="text-[10px] text-gray-400 mb-0.5">Счёт Дт</div>
+            <select className={ic} value={op.in_bi_id || ''}
+              onChange={e => onChange({ ...op, in_bi_id: parseInt(e.target.value) || null, in_info_1_id: null })}>
+              <option value="">— Выбрать счёт —</option>
+              {balanceItems.map(acctOption)}
+            </select>
+          </div>
+          {/* info_1 ноги Дт */}
+          {dtInfo1Type ? (
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">{LBL[dtInfo1Type] || dtInfo1Type}</div>
+              <InfoSelect items={infoCache[dtInfo1Type] || []} value={op.in_info_1_id}
+                onChange={v => onChange({ ...op, in_info_1_id: v })} placeholder="Выбрать..." />
+            </div>
+          ) : <div />}
+          {/* Удалить */}
+          <div className="flex items-end justify-center">
+            {!isOnly && (
+              <button onClick={onRemove} className="text-gray-300 hover:text-red-500 text-base leading-none pb-1" title="Удалить операцию">×</button>
+            )}
+          </div>
+        </div>
+        <div className="grid gap-x-2" style={{ gridTemplateColumns: ktInfo1Type ? '1fr 1fr' : '1fr' }}>
+          {/* Счёт Кт (доход, наследован) */}
+          <div>
+            <div className="text-[10px] text-gray-400 mb-0.5">Счёт Кт</div>
+            <select className={ic} value={op.out_bi_id || ''}
+              onChange={e => onChange({ ...op, out_bi_id: parseInt(e.target.value) || null, out_info_1_id: null })}>
+              <option value="">— Выбрать счёт —</option>
+              {balanceItems.map(acctOption)}
+            </select>
+          </div>
+          {/* info_1 ноги Кт */}
+          {ktInfo1Type && (
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">{LBL[ktInfo1Type] || ktInfo1Type}</div>
+              <InfoSelect items={infoCache[ktInfo1Type] || []} value={op.out_info_1_id}
+                onChange={v => onChange({ ...op, out_info_1_id: v })} placeholder="Выбрать..." />
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // А100 — наша сторона (зафиксирована)
   const a100 = balanceItems.find(b => b.code === 'А100')
@@ -180,9 +254,13 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
       return
     }
 
-    // ── Обычный корр-счёт: сброс аналитики + автоподбор партнёра по ИНН ──
+    // ── Обычный корр-счёт: сброс аналитики + автоподстановка info_1 ──
+    //  - expenses → статья расхода (suggested_expense_id);
+    //  - partner  → контрагент по ИНН.
     let autoInfo1 = null
-    if (newBi?.info_1_type === 'partner' && counterpartyInn) {
+    if (newBi?.info_1_type === 'expenses') {
+      autoInfo1 = suggestedExpenseId || null
+    } else if (newBi?.info_1_type === 'partner' && counterpartyInn) {
       const partners = infoCache['partner'] || []
       const found = partners.find(p => p.inn && p.inn.trim() === counterpartyInn.trim())
       if (found) autoInfo1 = found.id
@@ -306,9 +384,18 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
 }
 
 // ── Строка выписки ────────────────────────────────────────────────────────────
-const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onOperationsChange }) => {
+const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, forcedIgnored, onOperationsChange }) => {
   const a100 = balanceItems.find(b => b.code === 'А100')
   const a100Id = a100?.id
+
+  const [innCopied, setInnCopied] = useState(false)
+  const copyInn = (e) => {
+    e.stopPropagation()
+    if (!row.counterparty_inn) return
+    navigator.clipboard?.writeText(String(row.counterparty_inn))
+    setInnCopied(true)
+    setTimeout(() => setInnCopied(false), 1200)
+  }
 
   // ── Распознавание перевода между своими счетами ──
   // Флаг приходит из бэкенда (ИНН плательщика == ИНН получателя в документе).
@@ -330,16 +417,20 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
   const makeDefaultOp = () => {
     const op = { amount: row.amount }
 
-    // Корр-счёт: перевод → А100; иначе → подсказка матчера (suggested_counter_bi_id), если есть
     const suggestedCounterBi = row.suggested_counter_bi_id || null
     const counterBi    = isSelfTransfer ? (a100Id || null) : suggestedCounterBi
-    const counterInfo1 = isSelfTransfer ? findDestCashId() : (row.suggested_partner_id || null)
 
-    // Статья ДДС (тип flow) живёт только на денежной ноге А100 (info_2),
-    // т.к. расходные счёта (П589) поля под ДДС не имеют — у них info_1=expenses.
-    //  - перевод: «Перемещение денег» на обеих А100-ногах;
-    //  - иначе: статья-подсказка матчера на нашей А100-ноге, корр-нога без ДДС.
-    // (Статью расхода для П589 пока не заполняем — отдельная история со справочником.)
+    // info_1 корр-ноги: перевод → касса; expenses → статья расхода; иначе партнёр.
+    const counterBiItem = balanceItems.find(b => b.id == counterBi)
+    let counterInfo1
+    if (isSelfTransfer) {
+      counterInfo1 = findDestCashId()
+    } else if (counterBiItem?.info_1_type === 'expenses') {
+      counterInfo1 = row.suggested_expense_id || null
+    } else {
+      counterInfo1 = row.suggested_partner_id || null
+    }
+
     const ourFlow     = isSelfTransfer ? moveFlowId : (row.suggested_flow_id || null)
     const counterFlow = isSelfTransfer ? moveFlowId : null
 
@@ -361,9 +452,46 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
     return op
   }
 
-  const [ops, setOps] = useState([makeDefaultOp()])
+  // Операция комиссии эквайринг-свода (вторая нога). НЕ привязана к А100:
+  // обе стороны — обычные счета. Помечена _kind='fee', чтобы рендер и сохранение
+  // не навязывали ей фиксированную ногу А100.
+  //   Дт = suggested_fee_bi_id (П589, расход) + статья расхода (info_1) + статья ДДС (info_2)
+  //   Кт = наследует доходный счёт приходной операции (incomeOp.out_bi_id) + его info_1
+  const makeFeeOp = (incomeOp) => {
+    return {
+      _kind: 'fee',
+      amount: row.suggested_fee_amount || 0,
+      in_bi_id:      row.suggested_fee_bi_id || null,       // П589 расход (Дт)
+      in_info_1_id:  row.suggested_fee_expense_id || null,  // статья расхода на П589
+      in_info_2_id:  row.suggested_fee_flow_id || null,     // статья ДДС комиссии
+      out_bi_id:     incomeOp.out_bi_id || null,            // доходный счёт прихода (Кт, наследуем)
+      out_info_1_id: incomeOp.out_info_1_id || null,
+      out_info_2_id: null,
+    }
+  }
+
+  // Начальный набор операций: эквайринг-свод → [приход нетто, комиссия].
+  const makeDefaultOps = () => {
+    const incomeOp = makeDefaultOp()
+    if (row.is_acquiring_split && row.suggested_fee_amount) {
+      return [incomeOp, makeFeeOp(incomeOp)]
+    }
+    return [incomeOp]
+  }
+
+  const [ops, setOps] = useState(makeDefaultOps())
   const [expanded, setExpanded] = useState(false)
   const [ignored, setIgnored] = useState(false)
+
+  // Массовое управление выбором из родителя («Снять все» / «Выбрать все»).
+  // forcedIgnored — { value: bool, nonce: number }; nonce меняется на каждое
+  // нажатие, чтобы повторное «Снять все» тоже срабатывало.
+  const forcedNonce = forcedIgnored?.nonce
+  useEffect(() => {
+    if (forcedNonce === undefined) return
+    if (postedIds.length > 0) return   // уже созданные не трогаем
+    setIgnored(!!forcedIgnored.value)
+  }, [forcedNonce])
   const [reloading, setReloading] = useState(false)
   const [loadingOps, setLoadingOps] = useState(false)
   const [savedOps, setSavedOps] = useState(null) // снимок для отмены
@@ -380,7 +508,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
     if (!a100Id) return                        // ждём план счетов
     if (isSelfTransfer && !moveFlowId) return   // для перевода ждём статью ДДС, чтобы не оставить пусто
     autoApplied.current = true
-    setOps([makeDefaultOp()])
+    setOps(makeDefaultOps())
   }, [a100Id, moveFlowId, isSelfTransfer, infoCache, cashInfoId, postedIds.length])
 
   // Загрузить данные существующих операций и заполнить форму
@@ -413,23 +541,32 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
     }
   }
 
-  // Синхронизируем операции вверх
-  useEffect(() => {
-    onOperationsChange(ops, ignored)
-  }, [ops, ignored])
-
   const distributed = ops.reduce((s, o) => s + (parseFloat(o.amount) || 0), 0)
-  const remainder   = Math.round((row.amount - distributed) * 100) / 100
+  // Целевая сумма распределения. Для эквайринг-свода нога комиссии добавляется
+  // СВЕРХ нетто, поэтому цель = нетто (amount) + комиссия.
+  const feeExtra    = (row.is_acquiring_split && row.suggested_fee_amount) ? row.suggested_fee_amount : 0
+  const targetAmount = Math.round((row.amount + feeExtra) * 100) / 100
+  const remainder   = Math.round((targetAmount - distributed) * 100) / 100
 
   const isPosted  = postedIds.length > 0
   // isReady — заполнены все обязательные поля (не зависит от isPosted)
   const isReady = !ignored && ops.every(op => {
+    if (op._kind === 'fee') {
+      return op.in_bi_id && op.out_bi_id && (parseFloat(op.amount) || 0) > 0
+    }
     const hasFlow    = row.direction === 'in' ? op.in_info_2_id : op.out_info_2_id
     const hasCounter = row.direction === 'in' ? op.out_bi_id : op.in_bi_id
     return hasFlow && hasCounter && (parseFloat(op.amount) || 0) > 0
   }) && Math.abs(remainder) < 0.01
   // isMatched — для новых строк (не загруженных) — управляет статусом «✓ Готово»
   const isMatched = isReady && !isPosted
+
+  // Синхронизируем вверх: операции, признак «пропущена», готовность.
+  // readyForCreate — строку реально можно создать (готова, не пропущена, не создана).
+  const readyForCreate = isReady && !ignored && !isPosted
+  useEffect(() => {
+    onOperationsChange(ops, ignored, false, readyForCreate)
+  }, [ops, ignored, readyForCreate])
 
   const statusColor = isPosted
     ? 'bg-green-50 border-l-4 border-l-green-400'
@@ -465,7 +602,18 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
         {/* Контрагент */}
         <div className="flex-1 min-w-0">
           <div className="text-xs font-medium text-gray-700 truncate">{row.counterparty_raw || '—'}</div>
-          <div className="text-[10px] text-gray-400 truncate">{row.purpose_raw || ''}</div>
+          {row.counterparty_inn && (
+            <button
+              type="button"
+              onClick={copyInn}
+              title="Скопировать ИНН"
+              className="inline-flex items-center gap-1 text-[10px] font-mono text-gray-400 hover:text-blue-600"
+            >
+              ИНН {row.counterparty_inn}
+              <span className="text-gray-300">{innCopied ? '✓' : '⧉'}</span>
+            </button>
+          )}
+          <div className="text-[10px] text-gray-400 leading-snug line-clamp-2 break-words">{row.purpose_raw || ''}</div>
         </div>
 
         {/* Статус */}
@@ -524,6 +672,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
               direction={row.direction}
               counterpartyInn={row.counterparty_inn}
               counterpartyAccount={row.counterparty_account}
+              suggestedExpenseId={row.suggested_expense_id}
               onChange={v => setOps(ops.map((o, i) => i === idx ? v : o))}
               onRemove={() => setOps(ops.filter((_, i) => i !== idx))}
             />
@@ -532,7 +681,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
           {/* Счётчик распределения */}
           {ops.length > 1 && (
             <div className={`text-xs px-2 py-1 rounded ${Math.abs(remainder) < 0.01 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'}`}>
-              Распределено: {fmt(distributed)} из {fmt(row.amount)}
+              Распределено: {fmt(distributed)} из {fmt(targetAmount)}
               {Math.abs(remainder) > 0.01 && ` · Остаток: ${fmt(remainder)}`}
             </div>
           )}
@@ -583,12 +732,14 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, onO
                         out_info_1_id: op.out_info_1_id || null,
                         out_info_2_id: op.out_info_2_id || null,
                       }
-                      if (row.direction === 'in') {
-                        base.in_bi_id     = a100?.id
-                        base.in_info_1_id = parseInt(cashInfoId) || null
-                      } else {
-                        base.out_bi_id    = a100?.id
-                        base.out_info_1_id = parseInt(cashInfoId) || null
+                      if (op._kind !== 'fee') {
+                        if (row.direction === 'in') {
+                          base.in_bi_id     = a100?.id
+                          base.in_info_1_id = parseInt(cashInfoId) || null
+                        } else {
+                          base.out_bi_id    = a100?.id
+                          base.out_info_1_id = parseInt(cashInfoId) || null
+                        }
                       }
                       return base
                     }
@@ -658,6 +809,13 @@ export default function BankStatementPage() {
   // Карта операций для каждой строки: rowIdx -> [{amount, ...}]
   const [rowOpsMap, setRowOpsMap] = useState({})
   const [rowIgnoredMap, setRowIgnoredMap] = useState({})
+  const [rowReadyMap, setRowReadyMap] = useState({})
+  const [forcedIgnored, setForcedIgnored] = useState(null) // { value, nonce }
+
+  // Массовое переключение выбора всех строк.
+  const setAllIgnored = (value) => {
+    setForcedIgnored({ value, nonce: Date.now() })
+  }
 
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
@@ -724,12 +882,14 @@ export default function BankStatementPage() {
         out_info_1_id: op.out_info_1_id || null,
         out_info_2_id: op.out_info_2_id || null,
       }
-      if (row.direction === 'in') {
-        payload.in_bi_id     = a100?.id
-        payload.in_info_1_id = parseInt(cashInfoId) || null
-      } else {
-        payload.out_bi_id    = a100?.id
-        payload.out_info_1_id = parseInt(cashInfoId) || null
+      if (op._kind !== 'fee') {
+        if (row.direction === 'in') {
+          payload.in_bi_id     = a100?.id
+          payload.in_info_1_id = parseInt(cashInfoId) || null
+        } else {
+          payload.out_bi_id    = a100?.id
+          payload.out_info_1_id = parseInt(cashInfoId) || null
+        }
       }
       await createOperation(payload)
     }
@@ -738,19 +898,9 @@ export default function BankStatementPage() {
   // ── Подсчёт готовых строк ───────────────────────────────────────────────────
   const a100 = balanceItems.find(b => b.code === 'А100')
 
-  const readyRows = rows.filter((row, idx) => {
-    if (rowIgnoredMap[idx]) return false
-    if (row.existing_operation_ids?.length > 0) return false
-    const ops = rowOpsMap[idx] || []
-    if (!ops.length) return false
-    const distributed = ops.reduce((s, o) => s + (parseFloat(o.amount) || 0), 0)
-    const remainder = Math.abs(row.amount - distributed)
-    return remainder < 0.01 && ops.every(op => {
-      const hasFlow    = row.direction === 'in' ? op.in_info_2_id : op.out_info_2_id
-      const hasCounter = row.direction === 'in' ? op.out_bi_id : op.in_bi_id
-      return hasFlow && hasCounter
-    })
-  })
+  // Готовность строки определяет сама StatementRow (учитывает свод, ноги комиссии
+  // и т.д.) и сообщает через rowReadyMap — здесь логику не дублируем.
+  const readyRows = rows.filter((row, idx) => rowReadyMap[idx])
 
   // ── Создать операции ────────────────────────────────────────────────────────
   const handleCreate = async () => {
@@ -770,18 +920,20 @@ export default function BankStatementPage() {
     try {
       for (let idx = 0; idx < rows.length; idx++) {
         const row = rows[idx]
-        if (rowIgnoredMap[idx]) continue
+        if (!rowReadyMap[idx]) continue          // создаём только готовые и выбранные
         if (row.existing_operation_ids?.length > 0) continue
 
         const ops = rowOpsMap[idx] || []
-        const distributed = ops.reduce((s, o) => s + (parseFloat(o.amount) || 0), 0)
-        const remainder = Math.abs(row.amount - distributed)
-        if (remainder >= 0.01) continue
 
         for (const op of ops) {
-          const hasFlow    = row.direction === 'in' ? op.in_info_2_id : op.out_info_2_id
-          const hasCounter = row.direction === 'in' ? op.out_bi_id : op.in_bi_id
-          if (!hasFlow || !hasCounter) continue
+          if (op._kind === 'fee') {
+            // Нога комиссии: обе стороны заданы, А100 не навязываем.
+            if (!op.in_bi_id || !op.out_bi_id) continue
+          } else {
+            const hasFlow    = row.direction === 'in' ? op.in_info_2_id : op.out_info_2_id
+            const hasCounter = row.direction === 'in' ? op.out_bi_id : op.in_bi_id
+            if (!hasFlow || !hasCounter) continue
+          }
 
           // Устанавливаем А100 и cash_info_id в нужные слоты
           const payload = {
@@ -801,13 +953,15 @@ export default function BankStatementPage() {
             out_info_2_id: op.out_info_2_id || null,
           }
 
-          // Проставляем cash_info_id на сторону А100
-          if (row.direction === 'in') {
-            payload.in_bi_id    = a100?.id
-            payload.in_info_1_id = parseInt(cashInfoId) || null
-          } else {
-            payload.out_bi_id    = a100?.id
-            payload.out_info_1_id = parseInt(cashInfoId) || null
+          // Проставляем cash_info_id на сторону А100 (кроме ноги комиссии)
+          if (op._kind !== 'fee') {
+            if (row.direction === 'in') {
+              payload.in_bi_id    = a100?.id
+              payload.in_info_1_id = parseInt(cashInfoId) || null
+            } else {
+              payload.out_bi_id    = a100?.id
+              payload.out_info_1_id = parseInt(cashInfoId) || null
+            }
           }
 
           await createOperation(payload)
@@ -832,14 +986,32 @@ export default function BankStatementPage() {
           <h1 className="text-2xl font-bold text-gray-800">Банковская выписка</h1>
           <p className="text-sm text-gray-500 mt-0.5">Загрузите TXT-файл формата 1C ClientBankExchange</p>
         </div>
-        {readyRows.length > 0 && (
-          <button
-            onClick={handleCreate}
-            disabled={saving || !projectId || !cashInfoId}
-            className="bg-blue-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors flex items-center gap-2"
-          >
-            {saving ? 'Создаём...' : `Создать операции (${readyRows.length})`}
-          </button>
+        {rows.length > 0 && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAllIgnored(true)}
+              className="px-3 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+              title="Пропустить все строки"
+            >
+              Снять все
+            </button>
+            <button
+              onClick={() => setAllIgnored(false)}
+              className="px-3 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
+              title="Выбрать все строки"
+            >
+              Выбрать все
+            </button>
+            {readyRows.length > 0 && (
+              <button
+                onClick={handleCreate}
+                disabled={saving || !projectId || !cashInfoId}
+                className="bg-blue-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {saving ? 'Создаём...' : `Создать операции (${readyRows.length})`}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -960,9 +1132,11 @@ export default function BankStatementPage() {
               balanceItems={balanceItems}
               infoCache={infoCache}
               direction={row.direction}
-              onOperationsChange={async (ops, ignored, shouldCreate) => {
+              forcedIgnored={forcedIgnored}
+              onOperationsChange={async (ops, ignored, shouldCreate, readyForCreate) => {
                 setRowOpsMap(m => ({ ...m, [idx]: ops }))
                 setRowIgnoredMap(m => ({ ...m, [idx]: ignored }))
+                setRowReadyMap(m => ({ ...m, [idx]: !!readyForCreate }))
                 if (shouldCreate) {
                   try {
                     await createOperationsForRow(row, ops)
