@@ -24,6 +24,8 @@ findir/
 │   │   ├── BalanceItemsController.php
 │   │   ├── BalanceSheetController.php    # ОСВ с мульти-аналитикой и иерархией
 │   │   ├── BankStatementController.php
+│   │   ├── PaymentClassificationRuleController.php  # CRUD правил классификации
+│   │   ├── CategoryPostingController.php            # CRUD карты разноски
 │   │   ├── ProjectsController.php        # GET /projects
 │   │   ├── DocumentsController.php
 │   │   └── CostController.php            # POST /documents/calculate-cost
@@ -32,7 +34,9 @@ findir/
 │   │   ├── Info.php
 │   │   ├── BalanceItem.php
 │   │   ├── Document.php
-│   │   └── DocumentItem.php
+│   │   ├── DocumentItem.php
+│   │   ├── PaymentClassificationRule.php  # правила классификации (движок автозаполнения)
+│   │   └── CategoryPosting.php            # карта разноски (движок автозаполнения)
 │   ├── app/Services/
 │   │   ├── TenantService.php
 │   │   ├── ClientBankExchangeParser.php
@@ -52,6 +56,8 @@ findir/
 │   │   ├── operations.js
 │   │   ├── info.js
 │   │   ├── bankStatements.js
+│   │   ├── classificationRules.js  # правила классификации
+│   │   ├── categoryPostings.js     # карта разноски
 │   │   └── documents.js
 │   ├── pages/
 │   │   ├── LoginPage.jsx
@@ -59,6 +65,7 @@ findir/
 │   │   ├── InfoPage.jsx
 │   │   ├── BalanceSheetPage.jsx    # ОСВ с мульти-аналитикой, иерархией, drill-down
 │   │   ├── BankStatementPage.jsx
+│   │   ├── ClassificationRulesPage.jsx  # UI правил + разноски (движок автозаполнения)
 │   │   └── DocumentsPage.jsx       # документы: приходные/расходные накладные
 │   ├── components/
 │   │   ├── Layout.jsx
@@ -93,7 +100,9 @@ findir/
 ```sql
 id, parent_id, code VARCHAR(35), name,
 type ENUM(partner, employee, department, cash, flow, expenses, product, revenue),
-description TEXT, inn VARCHAR(12), sort_order INT, is_active, timestamps, soft_deletes
+description TEXT, inn VARCHAR(12), sort_order INT, is_active, timestamps, soft_deletes,
+default_expense_id BIGINT NULL   -- для type=flow: статья расхода по умолчанию
+                                 -- (self-ref на info.id типа expenses, без FK; движок автозаполнения)
 ```
 
 ### `balance_items` — план счетов
@@ -155,6 +164,23 @@ key VARCHAR(100) PK, value TEXT, timestamps
 ```
 
 Используется для хранения `balance_actual_date` — даты до которой таблица `balance` содержит агрегированные остатки (пока не заполняется).
+
+### `category_postings` / `payment_classification_rules` — движок автозаполнения
+
+Две таблицы движка авторазметки выписки (подробно — в `AUTOFILL_ENGINE.md`).
+
+`category_postings` — карта разноски «категория → счёт + статья ДДС + контрагент»:
+```sql
+category VARCHAR(40) UNIQUE, counter_account_code VARCHAR(35) NULL (счёт ПО КОДУ),
+flow_info_id BIGINT NULL (статья ДДС), partner_mode VARCHAR(16) (from_inn|none), is_active
+```
+
+`payment_classification_rules` — правила «сигнал → категория» (рождается пустой):
+```sql
+direction (in|out|any), inn, purpose_keywords TEXT (подстроки через '|'),
+has_kbk, amount_min/max, category VARCHAR(32), priority INT, source (manual|learned),
+hit_count, last_applied_at, created_by, is_active
+```
 
 ### `projects`
 
@@ -247,6 +273,8 @@ docker exec -it findir_php php artisan tenants:migrate --tenant=ooo-lbrmts --fre
 | PUT | `/info/{id}` | Обновить |
 | DELETE | `/info/{id}` | Удалить |
 | POST | `/bank-statements/parse` | Парсинг выписки |
+| GET/POST/PUT/DELETE | `/classification-rules[/{id}]` | CRUD правил классификации |
+| GET/POST/PUT/DELETE | `/category-postings[/{id}]` | CRUD карты разноски |
 | GET | `/documents` | Список документов |
 | POST | `/documents` | Создать документ |
 | GET | `/documents/{id}` | Документ со строками |
@@ -363,11 +391,22 @@ hierarchy_types[] — для каких типов строить иерархи
 
 ## 9. Импорт банковской выписки
 
-**Формат:** Win-1251, 1C ClientBankExchange.
+**Формат:** Win-1251, 1C ClientBankExchange v1.03.
 
-**Парсер** (`ClientBankExchangeParser`): `ДатаДок`, `НомерДок` → `external_id`, `external_date`; ИНН → `counterparty_inn`; назначение → `purpose_raw`.
+**Парсер** (`ClientBankExchangeParser`): `external_id/date`, `counterparty_inn`,
+`counterparty_account`, `purpose_raw`, `direction`, `is_self_transfer`; для
+эквайринг-свода Т-Банка извлекает комиссию из назначения (`is_acquiring_split`,
+`acquiring_fee`).
 
-**Матчер** (`BankStatementMatcher`): автоподбор партнёра по ИНН, статьи ДДС по ключевым словам, поиск дублей.
+**Матчер** (`BankStatementMatcher`): двухступенчатая авторазметка (категория →
+разноска), статья ДДС, статья расхода, партнёр по ИНН, подсказки ноги комиссии для
+свода, поиск дублей.
+
+**Фронт** (`BankStatementPage`): подсказки в форму, ИНН с копированием, разворот
+эквайринг-свода в 2 операции, выборочное создание (Снять/Выбрать все).
+
+> Полное описание движка автозаполнения — в отдельном документе
+> **`AUTOFILL_ENGINE.md`** (двухступенчатая модель, таблицы, конвейер, дорожная карта).
 
 ---
 
