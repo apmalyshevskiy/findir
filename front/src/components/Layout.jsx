@@ -40,6 +40,7 @@ export default function Layout({ children }) {
       children: [
         { path: '/info',                 label: 'Справочники' },
         { path: '/classification-rules', label: 'Настройка правил' },
+        { path: '/acquiring-fee-rules', label: 'Эквайринг' },
       ],
     },
   ]

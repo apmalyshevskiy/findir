@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Services\ClientBankExchangeParser;
 use App\Services\BankStatementMatcher;
+use App\Services\Acquiring\AcquiringFeeRules;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -25,7 +26,9 @@ class BankStatementController extends TenantController
         ]);
 
         // ── Парсинг ────────────────────────────────────────────────────────
-        $parser  = new ClientBankExchangeParser();
+        
+        $rules   = AcquiringFeeRules::load($this->dbName);
+        $parser  = new ClientBankExchangeParser($rules);   
         $content = file_get_contents($request->file('file')->getRealPath());
         $parsed  = $parser->parseFile($content);
 

@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\CostController;
 use App\Http\Controllers\Api\V1\BudgetController;
 use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
 use App\Http\Controllers\Api\V1\CategoryPostingController;
+use App\Http\Controllers\Api\V1\SettingsController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -77,4 +78,8 @@ Route::prefix('v1')->group(function () {
     Route::put('/budget-items/{id}',          [BudgetController::class, 'updateItem']);
     Route::delete('/budget-items/{id}',       [BudgetController::class, 'destroyItem']);
     Route::put('/budget-opening-balances/upsert', [BudgetController::class, 'upsertOpeningBalance']);
+
+    Route::get('/settings/acquiring-fee-rules',  [SettingsController::class, 'acquiringFeeRules']);
+    Route::put('/settings/acquiring-fee-rules',  [SettingsController::class, 'updateAcquiringFeeRules']);
+
 });

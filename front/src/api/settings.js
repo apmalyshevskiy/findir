@@ -1,0 +1,10 @@
+import api from './client'
+
+// Правила эквайринг-свода (settings.acquiring_fee_rules).
+// GET возвращает { data: rules[], formats: string[], defaults: rules[] }
+export const getAcquiringFeeRules = () =>
+  api.get('/settings/acquiring-fee-rules')
+
+// PUT принимает весь набор правил целиком (замена).
+export const updateAcquiringFeeRules = (rules) =>
+  api.put('/settings/acquiring-fee-rules', { rules })

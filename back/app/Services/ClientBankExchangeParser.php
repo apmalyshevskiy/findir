@@ -9,24 +9,38 @@ namespace App\Services;
 class ClientBankExchangeParser
 {
     /**
-     * Паттерны извлечения суммы комиссии из назначения для «свёрнутого»
+     * Правила извлечения суммы комиссии из назначения для «свёрнутого»
      * эквайринга (банк удержал комиссию ДО зачисления, отдельной строки в
-     * выписке нет — только текст). Срабатывание паттерна = признак свода:
+     * выписке нет — только текст). Срабатывание правила = признак свода:
      * такую строку нужно развернуть в 2 операции (приход нетто + комиссия).
      *
-     * Сейчас только Тбанк. Формат: "Сумма комиссии 2534 руб. 77 коп.".
-     * Альфа сюда НЕ входит: у неё комиссия идёт отдельным документом, ей
-     * разворот не нужен (закрывается обычным правилом классификации).
-     * Новый банк со свёрнутой комиссией → добавить паттерн сюда; позже
-     * этот список можно вынести в конфиг/таблицу без изменения логики.
+     * Правила приходят извне (из settings.acquiring_fee_rules), а не зашиты
+     * в код — добавление банка не требует деплоя. Источник правды и дефолты —
+     * App\Services\Acquiring\AcquiringFeeRules.
+     *
+     * Каждое правило: ['bank' => 'tbank|alfa|sber', 'marker' => '...',
+     *                  'amount_format' => 'rub_kop'|'dot', 'is_active' => bool].
+     * Сырой regex здесь НЕ хранится и НЕ принимается — он собирается из
+     * marker + amount_format (matchFeeByRule), поэтому всегда валиден.
+     *
+     * @var array<int, array>
      */
-    private const ACQUIRING_FEE_PATTERNS = [
-        [
-            'bank'  => 'tbank',
-            // рубли и копейки раздельно: "... 2534 руб. 77 коп."
-            'regex' => '/Сумма\s+комиссии\s+(\d+)\s*руб\.?\s*(\d+)\s*коп/iu',
-        ],
-    ];
+    private array $feeRules = [];
+
+    /**
+     * Банк, определённый по заголовку (Отправитель), для скоупа правил
+     * комиссии. Null = банк не опознан → пробуем все активные правила.
+     */
+    private ?string $bank = null;
+
+    /**
+     * @param array $feeRules Правила свода из settings (через AcquiringFeeRules::load()).
+     *                        Пустой массив = свод не выполняется (безопасная деградация).
+     */
+    public function __construct(array $feeRules = [])
+    {
+        $this->feeRules = $feeRules;
+    }
 
     /**
      * Распарсить содержимое файла (строка в UTF-8 после декодирования).
@@ -35,6 +49,8 @@ class ClientBankExchangeParser
      */
     public function parse(string $content): array
     {
+        $this->bank = null; // сбрасываем на каждый файл
+
         // Нормализуем переносы строк
         $content = str_replace("\r\n", "\n", $content);
         $content = str_replace("\r", "\n", $content);
@@ -98,6 +114,11 @@ class ClientBankExchangeParser
 
             if ($section === 'header' || $section === 'account') {
                 $header[$key] = $value;
+                // Отправитель идёт в шапке до документов → к моменту разбора
+                // строк банк уже определён и доступен в extractAcquiringFee().
+                if ($key === 'Отправитель') {
+                    $this->bank = $this->detectBank($value);
+                }
             } elseif ($section === 'document') {
                 $current[$key] = $value;
             }
@@ -141,15 +162,23 @@ class ClientBankExchangeParser
         $docDate   = $this->parseDate($d['Дата'] ?? null);
         $docNumber = $d['Номер'] ?? null;
 
-        // Контрагент: при приходе — плательщик, при расходе — получатель
+        // Контрагент: при приходе — плательщик, при расходе — получатель.
+        // Имя: сначала поле с цифрой (Т-Банк: Плательщик1/Получатель1), затем
+        // без цифры (Альфа: Плательщик/Получатель). Так покрываем оба формата.
         if ($direction === 'in') {
-            $counterpartyName = $d['Плательщик1']    ?? null;
+            $counterpartyName = $d['Плательщик1']    ?? $d['Плательщик'] ?? null;
             $counterpartyInn  = $d['ПлательщикИНН']  ?? null;
             $counterpartyAcc  = $d['ПлательщикСчет'] ?? null;
         } else {
-            $counterpartyName = $d['Получатель1']    ?? null;
+            $counterpartyName = $d['Получатель1']    ?? $d['Получатель'] ?? null;
             $counterpartyInn  = $d['ПолучательИНН']  ?? null;
             $counterpartyAcc  = $d['ПолучательСчет'] ?? null;
+        }
+
+        // Альфа дописывает в имя хвост " Р/С <счёт>" — срезаем (ИНН берём из
+        // отдельного поля, в имени он не нужен).
+        if ($counterpartyName !== null) {
+            $counterpartyName = preg_replace('/\s+Р\/С\s+\d.*$/u', '', $counterpartyName);
         }
 
         // Перевод между своими счетами: ИНН плательщика == ИНН получателя в самом документе.
@@ -162,7 +191,8 @@ class ClientBankExchangeParser
 
         // Эквайринг-свод: пытаемся извлечь удержанную комиссию из назначения.
         // Срабатывание = признак свода (строку развернём в 2 операции на фронте).
-        $acquiring = $this->extractAcquiringFee($purpose);
+        // Только приход: банк зачисляет нетто, комиссия в тексте.
+        $acquiring = $this->extractAcquiringFee($purpose, $direction);
 
         return [
             'doc_type'         => $d['_doc_type']     ?? null,
@@ -192,25 +222,103 @@ class ClientBankExchangeParser
      * Возвращает ['fee' => float, 'bank' => string] или null, если ни один
      * паттерн не совпал (значит это не свод).
      */
-    private function extractAcquiringFee(?string $purpose): ?array
+    private function extractAcquiringFee(?string $purpose, string $direction = 'in'): ?array
     {
+        // Свод бывает только в приходе (банк зачислил нетто, комиссию удержал).
+        // Расходные строки («Комиссия к возм», банк-услуги) сюда не попадают.
+        if ($direction !== 'in') {
+            return null;
+        }
+
         if ($purpose === null || trim($purpose) === '') {
             return null;
         }
 
-        foreach (self::ACQUIRING_FEE_PATTERNS as $pattern) {
-            if (preg_match($pattern['regex'], $purpose, $m)) {
-                // m[1] — рубли, m[2] — копейки
-                $rub = (int) $m[1];
-                $kop = (int) $m[2];
-                $fee = $rub + $kop / 100;
-                if ($fee <= 0) {
-                    continue;
-                }
-                return ['fee' => round($fee, 2), 'bank' => $pattern['bank']];
+        foreach ($this->feeRules as $rule) {
+            // Выключенные правила пропускаем.
+            if (array_key_exists('is_active', $rule) && !$rule['is_active']) {
+                continue;
+            }
+            $bank = $rule['bank'] ?? null;
+            // Банк опознан по Отправителю → применяем только его правила.
+            // Не опознан ($this->bank === null) → пробуем все активные.
+            if ($this->bank !== null && $bank !== $this->bank) {
+                continue;
+            }
+            $fee = $this->matchFeeByRule($rule, $purpose);
+            if ($fee !== null && $fee > 0) {
+                return ['fee' => round($fee, 2), 'bank' => $bank];
             }
         }
 
+        return null;
+    }
+
+    /**
+     * Извлечь сумму комиссии по одному правилу. Regex собирается из marker +
+     * amount_format (сырой regex наружу не выставляется), поэтому всегда валиден.
+     *
+     * Форматы:
+     *   rub_kop — "<маркер> 2534 руб. 77 коп."  (Тбанк)
+     *   dot     — "<маркер> 1 511.16"           (Альфа: "К.", Сбер: "Комиссия")
+     *             допускает пробелы-тысячи внутри числа; сумму берём СРАЗУ
+     *             после маркера, чтобы не перехватить НДС из хвоста строки.
+     */
+    private function matchFeeByRule(array $rule, string $purpose): ?float
+    {
+        $marker = trim((string) ($rule['marker'] ?? ''));
+        $format = (string) ($rule['amount_format'] ?? '');
+        if ($marker === '') {
+            return null;
+        }
+
+        $m = preg_quote($marker, '/');
+
+        if ($format === 'rub_kop') {
+            $regex = '/' . $m . '\s*(\d+)\s*руб\.?\s*(\d+)\s*коп/iu';
+            if (@preg_match($regex, $purpose, $x) === 1) {
+                return (int) $x[1] + (int) $x[2] / 100;
+            }
+            return null;
+        }
+
+        if ($format === 'dot') {
+            // ([\d \x{00A0}]+) — рубли с возможными пробелами-тысячами;
+            // (?!\d) — копейки не «прилипают» к более длинному числу.
+            $regex = '/' . $m . '\s*([\d \x{00A0}]+)\.(\d{2})(?!\d)/u';
+            if (@preg_match($regex, $purpose, $x) === 1) {
+                $rub = (int) preg_replace('/\D/', '', $x[1]); // вычищаем пробелы
+                return $rub + (int) $x[2] / 100;
+            }
+            return null;
+        }
+
+        // Неизвестный формат — игнорируем (валидация на записи это не пропустит).
+        return null;
+    }
+
+    /**
+     * Опознать банк по полю Отправитель из шапки файла. Используется для скоупа
+     * паттернов комиссии. Возвращает метку банка или null (не опознан).
+     */
+    private function detectBank(?string $sender): ?string
+    {
+        $s = mb_strtolower(trim((string) $sender));
+        if ($s === '') {
+            return null;
+        }
+        // Схлопываем разделители: "т-банк"/"альфа-бизнес онлайн" → "тбанк"/"альфабизнесонлайн"
+        $c = str_replace([' ', '-', '"', '«', '»'], '', $s);
+        if (mb_strpos($c, 'альфа') !== false || mb_strpos($c, 'alfa') !== false) {
+            return 'alfa';
+        }
+        if (mb_strpos($c, 'тбанк')  !== false || mb_strpos($c, 'тинько') !== false
+            || mb_strpos($c, 'tbank') !== false) {
+            return 'tbank';
+        }
+        if (mb_strpos($c, 'сбер') !== false || mb_strpos($c, 'sber') !== false) {
+            return 'sber';
+        }
         return null;
     }
 

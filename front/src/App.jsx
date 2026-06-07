@@ -10,6 +10,7 @@ import DocumentsPage from './pages/DocumentsPage'
 import BudgetPage from './pages/BudgetPage'
 import PaymentCalendarPage from './pages/PaymentCalendarPage'
 import ClassificationRulesPage from './pages/ClassificationRulesPage'
+import AcquiringFeeRulesPage from './pages/AcquiringFeeRulesPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/classification-rules" element={<PrivateRoute><ClassificationRulesPage /></PrivateRoute>} />
         <Route path="/health"               element={<HealthPage />} />
         <Route path="/"                     element={<Navigate to="/dashboard" />} />
+        <Route path="/acquiring-fee-rules"  element={<PrivateRoute><AcquiringFeeRulesPage /></PrivateRoute>} />
       </Routes>
     </BrowserRouter>
   )

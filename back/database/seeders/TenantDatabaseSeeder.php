@@ -15,6 +15,7 @@ class TenantDatabaseSeeder extends Seeder
             // Карта разноски автозаполнения выписок (ступень 2 движка правил).
             // Обязательно ПОСЛЕ InfoSeeder: ищет статью ДДС по подстроке имени.
             CategoryPostingSeeder::class,
+            AcquiringFeeRulesSeeder::class,   
         ]);
     }
 }
