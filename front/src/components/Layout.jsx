@@ -29,7 +29,8 @@ export default function Layout({ children }) {
   }
 
   const nav = [
-    { path: '/dashboard',        label: 'Операции' },
+    { path: '/dashboard',        label: 'Дашборд' },
+    { path: '/operations',       label: 'Операции' },
     { path: '/documents',        label: 'Документы' },
     { path: '/balance-sheet',    label: 'Оборотка' },
     { path: '/bank-statement',   label: 'Выписка' },
@@ -38,6 +39,7 @@ export default function Layout({ children }) {
     {
       label: 'Настройки',
       children: [
+        { path: '/projects',             label: 'Проекты' },
         { path: '/info',                 label: 'Справочники' },
         { path: '/classification-rules', label: 'Настройка правил' },
         { path: '/acquiring-fee-rules', label: 'Эквайринг' },

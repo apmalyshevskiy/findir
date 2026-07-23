@@ -969,7 +969,7 @@ export default function BankStatementPage() {
       }
 
       alert('Операции успешно созданы!')
-      navigate('/dashboard')
+      navigate('/operations')
     } catch (e) {
       setError(e.response?.data?.message || 'Ошибка при создании операций')
     } finally {

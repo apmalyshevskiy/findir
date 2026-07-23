@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
+import OperationsPage from './pages/OperationsPage'
 import InfoPage from './pages/InfoPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
 import HealthPage from './pages/HealthPage'
@@ -11,6 +12,7 @@ import BudgetPage from './pages/BudgetPage'
 import PaymentCalendarPage from './pages/PaymentCalendarPage'
 import ClassificationRulesPage from './pages/ClassificationRulesPage'
 import AcquiringFeeRulesPage from './pages/AcquiringFeeRulesPage'
+import ProjectsPage from './pages/ProjectsPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -24,6 +26,7 @@ export default function App() {
         <Route path="/login"                element={<LoginPage />} />
         <Route path="/register"             element={<RegisterPage />} />
         <Route path="/dashboard"            element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+        <Route path="/operations"           element={<PrivateRoute><OperationsPage /></PrivateRoute>} />
         <Route path="/info"                 element={<PrivateRoute><InfoPage /></PrivateRoute>} />
         <Route path="/balance-sheet"        element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
         <Route path="/bank-statement"       element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
@@ -34,6 +37,7 @@ export default function App() {
         <Route path="/health"               element={<HealthPage />} />
         <Route path="/"                     element={<Navigate to="/dashboard" />} />
         <Route path="/acquiring-fee-rules"  element={<PrivateRoute><AcquiringFeeRulesPage /></PrivateRoute>} />
+        <Route path="/projects"             element={<PrivateRoute><ProjectsPage /></PrivateRoute>} />
       </Routes>
     </BrowserRouter>
   )

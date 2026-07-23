@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\BudgetController;
 use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
 use App\Http\Controllers\Api\V1\CategoryPostingController;
 use App\Http\Controllers\Api\V1\SettingsController;
+use App\Http\Controllers\Api\V1\DashboardController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -27,6 +28,9 @@ Route::prefix('v1')->group(function () {
     Route::get('/check-domain',   [AuthController::class, 'checkDomain']);
     Route::get('/suggest-domain', [AuthController::class, 'suggestDomain']);
 
+    // Дашборд
+    Route::get('/dashboard/summary',  [DashboardController::class, 'summary']);
+
     // Операции
     Route::get('/operations',         [OperationsController::class, 'index']);
     Route::post('/operations',        [OperationsController::class, 'store']);
@@ -38,6 +42,9 @@ Route::prefix('v1')->group(function () {
 
     // Справочники
     Route::get('/projects',           [ProjectsController::class, 'index']);
+    Route::post('/projects',          [ProjectsController::class, 'store']);
+    Route::put('/projects/{id}',      [ProjectsController::class, 'update']);
+    Route::delete('/projects/{id}',   [ProjectsController::class, 'destroy']);
     Route::get('/balance-items',      [BalanceItemsController::class, 'index']);
     Route::get('/balance-sheet',      [BalanceSheetController::class, 'index']);
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getBalanceItems, createOperation, updateOperation } from '../api/operations'
 import { getInfo, createInfo, updateInfo } from '../api/info'
+import { getProjects } from '../api/projects'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -280,6 +281,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
 export default function OperationForm({ operation, onSuccess, onCancel }) {
   const isEdit = !!operation
   const [balanceItems, setBalanceItems] = useState([])
+  const [projects, setProjects] = useState([])
   const [infoCache, setInfoCache] = useState({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -294,7 +296,7 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     date:          operation
       ? String(operation.date).replace(' ', 'T').slice(0, 16)
       : localNow(),
-    project_id:    operation?.project_id ?? 1,
+    project_id:    operation?.project_id ?? '',
     amount:        operation?.amount ?? '',
     in_bi_id:      operation?.in_bi_id ?? '',
     out_bi_id:     operation?.out_bi_id ?? '',
@@ -308,6 +310,15 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     }) 
 
   useEffect(() => {
+    getProjects().then(res => {
+      const list = res.data.data || []
+      setProjects(list)
+      // При создании операции — подставляем первый проект, если ещё не выбран.
+      if (!isEdit && list.length > 0) {
+        setForm(f => (f.project_id ? f : { ...f, project_id: list[0].id }))
+      }
+    })
+
     getBalanceItems().then(res => {
       const items = res.data.data
       setBalanceItems(items)
@@ -393,6 +404,18 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
+
+          {projects.length > 1 && (
+            <div>
+              <label className={lc}>Проект</label>
+              <select value={form.project_id}
+                onChange={e => setForm({...form, project_id: e.target.value})}
+                className={ic} required>
+                <option value="">Выберите проект...</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>
