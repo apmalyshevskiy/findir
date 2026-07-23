@@ -142,8 +142,12 @@ export default function OperationsPage() {
 
   const handleDelete = async (id) => {
     if (!confirm('Удалить операцию?')) return
-    await deleteOperation(id)
-    loadOperations()
+    try {
+      await deleteOperation(id)
+      loadOperations()
+    } catch (err) {
+      alert(err.response?.data?.message || 'Не удалось удалить операцию')
+    }
   }
 
   const handleEdit = (op) => { setEditOperation(op); setShowForm(true) }
@@ -265,7 +269,7 @@ export default function OperationsPage() {
       setSelected(new Set())
       loadOperations()
     } catch (err) {
-      alert('Произошла ошибка при копировании')
+      alert(err.response?.data?.message || 'Произошла ошибка при копировании')
       console.error(err)
     } finally {
       setLoading(false)

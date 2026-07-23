@@ -87,6 +87,8 @@ class OperationsController extends TenantController
             'external_date' => 'nullable|date',
         ]);
 
+        if ($resp = $this->lockError($data['date'])) return $resp;
+
         $op = $this->model()->newQuery()->create(array_merge($data, [
             'quantity' => $data['quantity'] ?? 0,
             'source'   => $data['source'] ?? 'manual',
@@ -102,6 +104,9 @@ class OperationsController extends TenantController
         $this->initTenant($request);
 
         $op = $this->model()->newQuery()->findOrFail($id);
+
+        // Нельзя трогать операцию в закрытом периоде
+        if ($resp = $this->lockError($op->date)) return $resp;
 
         // Запрет редактирования операций созданных из документов
         if ($op->table_name === 'documents' && $op->table_id) {
@@ -131,6 +136,9 @@ class OperationsController extends TenantController
             'external_date' => 'nullable|date',
         ]);
 
+        // Нельзя переносить операцию в закрытый период
+        if ($resp = $this->lockError($data['date'])) return $resp;
+
         $op->update(array_merge($data, ['quantity' => $data['quantity'] ?? 0]));
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
 
@@ -142,6 +150,9 @@ class OperationsController extends TenantController
         $this->initTenant($request);
 
         $op = $this->model()->newQuery()->findOrFail($id);
+
+        // Нельзя удалять операцию в закрытом периоде
+        if ($resp = $this->lockError($op->date)) return $resp;
 
         // Запрет удаления операций созданных из документов
         if ($op->table_name === 'documents' && $op->table_id) {

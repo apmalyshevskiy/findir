@@ -29,7 +29,11 @@ Route::prefix('v1')->group(function () {
     Route::get('/suggest-domain', [AuthController::class, 'suggestDomain']);
 
     // Дашборд
-    Route::get('/dashboard/summary',  [DashboardController::class, 'summary']);
+    Route::get('/dashboard/summary',        [DashboardController::class, 'summary']);
+    Route::get('/dashboard/metrics',        [DashboardController::class, 'metrics']);
+    Route::get('/dashboard/revenue-series', [DashboardController::class, 'revenueSeries']);
+    Route::get('/dashboard/layout',         [DashboardController::class, 'getLayout']);
+    Route::put('/dashboard/layout',         [DashboardController::class, 'saveLayout']);
 
     // Операции
     Route::get('/operations',         [OperationsController::class, 'index']);
@@ -88,5 +92,8 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings/acquiring-fee-rules',  [SettingsController::class, 'acquiringFeeRules']);
     Route::put('/settings/acquiring-fee-rules',  [SettingsController::class, 'updateAcquiringFeeRules']);
+
+    Route::get('/settings/edit-lock-date',       [SettingsController::class, 'showLockDate']);
+    Route::put('/settings/edit-lock-date',       [SettingsController::class, 'updateLockDate']);
 
 });

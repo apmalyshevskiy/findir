@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(docker exec findir_php php artisan tinker _range_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan tinker _cal_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan tinker _series2_check.php 2>&1)"
+    ]
+  }
+}

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Services\Acquiring\AcquiringFeeRules;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -57,5 +58,40 @@ class SettingsController extends TenantController
         );
 
         return response()->json(['data' => $clean]);
+    }
+
+    // GET /settings/edit-lock-date
+    public function showLockDate(Request $request)
+    {
+        $this->initTenant($request);
+
+        return response()->json(['date' => $this->editLockDate()]);
+    }
+
+    // PUT /settings/edit-lock-date  — пустая/null дата снимает запрет
+    public function updateLockDate(Request $request)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'date' => 'nullable|date',
+        ]);
+
+        $value = !empty($data['date'])
+            ? Carbon::parse($data['date'])->toDateString()
+            : null;
+
+        $table = DB::connection($this->dbName)->table('settings');
+
+        if ($value === null) {
+            $table->where('key', self::EDIT_LOCK_KEY)->delete();
+        } else {
+            $table->updateOrInsert(
+                ['key' => self::EDIT_LOCK_KEY],
+                ['value' => $value, 'updated_at' => now(), 'created_at' => now()]
+            );
+        }
+
+        return response()->json(['date' => $value]);
     }
 }

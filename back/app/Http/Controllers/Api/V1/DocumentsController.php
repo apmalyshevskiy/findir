@@ -75,6 +75,8 @@ class DocumentsController extends TenantController
 
         $data = $request->validate($this->rules());
 
+        if ($resp = $this->lockError($data['date'])) return $resp;
+
         $doc = $this->model()->newQuery()->make();
         $doc->fill($this->docData($data));
         $doc->status     = 'draft';
@@ -107,6 +109,9 @@ class DocumentsController extends TenantController
 
         $doc = $this->model()->newQuery()->findOrFail($id);
 
+        // Нельзя трогать документ в закрытом периоде
+        if ($resp = $this->lockError($doc->date)) return $resp;
+
         if ($doc->isPosted()) {
             return response()->json([
                 'message' => 'Нельзя редактировать проведённый документ. Сначала отмените проведение.',
@@ -114,6 +119,9 @@ class DocumentsController extends TenantController
         }
 
         $data = $request->validate($this->rules());
+
+        // Нельзя переносить документ в закрытый период
+        if ($resp = $this->lockError($data['date'])) return $resp;
 
         $doc->fill($this->docData($data));
         $doc->save();
@@ -142,6 +150,9 @@ class DocumentsController extends TenantController
             ->with('items')
             ->findOrFail($id);
 
+        // Проведение создаёт операции в периоде документа — запрещаем в закрытом периоде
+        if ($resp = $this->lockError($doc->date)) return $resp;
+
         if ($doc->items->isEmpty()) {
             return response()->json(['message' => 'Нельзя провести документ без строк.'], 422);
         }
@@ -165,6 +176,9 @@ class DocumentsController extends TenantController
 
         $doc = $this->model()->newQuery()->findOrFail($id);
 
+        // Отмена проведения удаляет операции в периоде документа — запрещаем в закрытом периоде
+        if ($resp = $this->lockError($doc->date)) return $resp;
+
         if (!$doc->isPosted()) {
             return response()->json(['message' => 'Документ не проведён.'], 422);
         }
@@ -181,6 +195,9 @@ class DocumentsController extends TenantController
         $this->initTenant($request);
 
         $doc = $this->model()->newQuery()->findOrFail($id);
+
+        // Нельзя удалять документ в закрытом периоде
+        if ($resp = $this->lockError($doc->date)) return $resp;
 
         DocumentService::delete($doc);
 
