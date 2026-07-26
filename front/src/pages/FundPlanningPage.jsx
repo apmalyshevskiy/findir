@@ -196,7 +196,7 @@ export default function FundPlanningPage() {
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto py-2 space-y-4">
+      <div className="py-1 space-y-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Акт финансового планирования</h1>
@@ -268,7 +268,7 @@ export default function FundPlanningPage() {
               return (
                 <div key={f.id} className="bg-white rounded-xl border border-gray-100 shadow-sm">
                   <div className="flex items-center gap-4 px-5 py-3 border-b border-gray-100 flex-wrap">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 sm:min-w-[240px]">
                       <span className="font-semibold text-gray-800">{f.name}</span>
                       <span className="flex items-center gap-1 text-sm text-gray-500">
                         <input type="number" step="1" min="0" max="100" value={d.pct}
@@ -277,19 +277,19 @@ export default function FundPlanningPage() {
                         %
                       </span>
                     </div>
-                    <div className="ml-auto flex items-stretch gap-3 flex-wrap">
-                      <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-1.5">
+                    <div className="flex items-stretch gap-5 flex-wrap">
+                      <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-2">
                         <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1 text-center">Факт · остатки</div>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-5 sm:gap-8">
                           <Stat label="Ост. начало" value={d.carriedIn} />
                           <Stat label="Пред. план" value={f.planned_prev || 0} cls="text-gray-400" />
                           <Stat label="Факт" value={d.spent} cls="text-red-600" />
                           <Stat label="Ост. конец" value={d.factAfter} cls={d.factAfter < 0 ? 'text-gray-500' : 'text-gray-700'} />
                         </div>
                       </div>
-                      <div className="rounded-lg bg-blue-50/50 border border-blue-100 px-3 py-1.5">
+                      <div className="rounded-lg bg-blue-50/50 border border-blue-100 px-4 py-2">
                         <div className="text-[9px] text-blue-400 uppercase tracking-wider mb-1 text-center">Текущее планирование</div>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-5 sm:gap-8">
                           <Stat label="Распред." value={d.distributed} />
                           <Stat label="Разрешено" value={d.allowed} cls={d.allowed < 0 ? 'text-red-600' : 'text-green-700'} />
                           <Stat label="Заплан." value={d.planned} cls="text-blue-700" />
@@ -305,19 +305,19 @@ export default function FundPlanningPage() {
                       <>
                         {fLines.length === 0 && <p className="text-sm text-gray-400 pb-2">Нет запланированных расходов</p>}
                         {fLines.map(l => (
-                          <div key={l._id} className={`flex items-center gap-2 mb-2 rounded-lg px-1.5 py-1 ${l.accepted ? 'bg-green-50 ring-1 ring-green-200' : ''}`}>
+                          <div key={l._id} className={`flex flex-wrap items-center gap-2 mb-2 rounded-lg px-1.5 py-1 ${l.accepted ? 'bg-green-50 ring-1 ring-green-200' : ''}`}>
                             <button onClick={() => toggleAccept(l._id)} title={l.accepted ? 'Принято — нажмите, чтобы снять' : 'Принять'}
                               className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center border transition-colors ${l.accepted ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300 text-gray-300 hover:border-green-500 hover:text-green-600'}`}>
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                             </button>
-                            <select className={`${ic} w-80`} value={l.flow_info_id || ''} onChange={e => editLine(l._id, { flow_info_id: e.target.value ? Number(e.target.value) : null })}>
+                            <select className={`${ic} flex-1 min-w-[180px] sm:flex-none sm:w-80`} value={l.flow_info_id || ''} onChange={e => editLine(l._id, { flow_info_id: e.target.value ? Number(e.target.value) : null })}>
                               <option value="">— статья ДДС</option>
                               {articles.map(id => <option key={id} value={id}>{flowName[id] || `#${id}`}</option>)}
                             </select>
                             <AmountInput placeholder="Сумма"
-                              className={`${ic} w-32 text-right ${l.accepted ? 'font-semibold text-green-700' : ''}`}
+                              className={`${ic} w-28 sm:w-32 text-right ${l.accepted ? 'font-semibold text-green-700' : ''}`}
                               value={l.amount} onChange={v => editLine(l._id, { amount: v })} />
-                            <input type="text" placeholder="Комментарий" className={`${ic} flex-1`} value={l.comment || ''} onChange={e => editLine(l._id, { comment: e.target.value })} />
+                            <input type="text" placeholder="Комментарий" className={`${ic} flex-1 min-w-[140px]`} value={l.comment || ''} onChange={e => editLine(l._id, { comment: e.target.value })} />
                             <button onClick={() => removeLine(l._id)} className="text-gray-400 hover:text-red-600 px-1">✕</button>
                           </div>
                         ))}

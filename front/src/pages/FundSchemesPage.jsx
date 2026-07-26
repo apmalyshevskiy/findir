@@ -119,9 +119,9 @@ export default function FundSchemesPage() {
         {error && <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>}
         {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3">{notice}</div>}
 
-        <div className="flex gap-5 items-start">
+        <div className="flex flex-col lg:flex-row gap-5 items-stretch lg:items-start">
           {/* Список моделей */}
-          <div className="w-60 flex-shrink-0 bg-white rounded-xl border border-gray-100 shadow-sm">
+          <div className="w-full lg:w-60 flex-shrink-0 bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
               <h2 className="font-semibold text-gray-800 text-sm">Модели</h2>
               <button onClick={startNew} className="text-blue-600 text-sm hover:text-blue-700">+ Модель</button>
@@ -175,7 +175,8 @@ export default function FundSchemesPage() {
                 </div>
 
                 {/* Фонды */}
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[620px]">
                   <thead>
                     <tr className="text-xs text-gray-500 border-b border-gray-100">
                       <th className="text-left px-4 py-2 font-medium">Фонд</th>
@@ -208,6 +209,7 @@ export default function FundSchemesPage() {
                     </tr>
                   </tfoot>
                 </table>
+                </div>
                 <div className="px-4 py-3 flex items-center justify-between">
                   <button onClick={addFund} className="text-blue-600 text-sm hover:text-blue-700">+ Фонд</button>
                   {Math.abs(percentSum - 100) >= 0.01 && <span className="text-xs text-red-600">Для сохранения сумма процентов должна быть 100%</span>}

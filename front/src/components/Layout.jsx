@@ -61,13 +61,13 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center">
-        <div className="flex items-center gap-4">
+      <header className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 flex flex-wrap justify-between items-center gap-x-3 gap-y-2">
+        <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <h1 className="text-xl font-bold text-blue-900">FINDIR</h1>
-          <span className="text-gray-300">|</span>
+          <span className="text-gray-300 hidden sm:inline">|</span>
           <span className="text-gray-600 text-sm font-medium">{tenant.name}</span>
           <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">{tenant.plan}</span>
-          <nav ref={navRef} className="flex gap-1 ml-2">
+          <nav ref={navRef} className="flex flex-wrap gap-1 md:ml-2">
             {nav.map(n => (
               n.children ? (
                 <div key={n.label} className="relative">
@@ -123,7 +123,7 @@ export default function Layout({ children }) {
           </button>
         </div>
       </header>
-      <main className="p-6 max-w-6xl mx-auto">{children}</main>
+      <main className="p-4 md:p-6">{children}</main>
     </div>
   )
 }
