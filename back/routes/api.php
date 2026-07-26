@@ -16,6 +16,9 @@ use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
 use App\Http\Controllers\Api\V1\CategoryPostingController;
 use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\FundsController;
+use App\Http\Controllers\Api\V1\FundSchemeController;
+use App\Http\Controllers\Api\V1\FundPlanDocController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -95,5 +98,19 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings/edit-lock-date',       [SettingsController::class, 'showLockDate']);
     Route::put('/settings/edit-lock-date',       [SettingsController::class, 'updateLockDate']);
+
+    // Модели распределения (система фондов) и фонды
+    Route::get   ('/fund-schemes',      [FundSchemeController::class, 'index']);
+    Route::post  ('/fund-schemes',      [FundSchemeController::class, 'store']);
+    Route::get   ('/fund-schemes/{id}', [FundSchemeController::class, 'show']);
+    Route::put   ('/fund-schemes/{id}', [FundSchemeController::class, 'update']);
+    Route::delete('/fund-schemes/{id}', [FundSchemeController::class, 'destroy']);
+
+    // Калькулятор план/факт по выбранной модели
+    Route::get('/funds/calc', [FundsController::class, 'calc']);
+
+    // Акт финансового планирования (документ)
+    Route::get('/fund-plan-docs', [FundPlanDocController::class, 'show']);
+    Route::put('/fund-plan-docs', [FundPlanDocController::class, 'save']);
 
 });

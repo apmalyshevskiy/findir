@@ -3,7 +3,18 @@
     "allow": [
       "PowerShell(docker exec findir_php php artisan tinker _range_check.php 2>&1)",
       "PowerShell(docker exec findir_php php artisan tinker _cal_check.php 2>&1)",
-      "PowerShell(docker exec findir_php php artisan tinker _series2_check.php 2>&1)"
+      "PowerShell(docker exec findir_php php artisan tinker _series2_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php -l app/Http/Controllers/Api/V1/FundsController.php)",
+      "PowerShell(docker exec findir_php php artisan tinker _funds_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan route:list --path=funds 2>$null)",
+      "PowerShell(docker exec findir_php php artisan tinker _fundscalc_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php -l app/Http/Controllers/Api/V1/FundSchemeController.php)",
+      "PowerShell(docker exec findir_php php artisan tinker _schemes_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan route:list --path=fund-schemes 2>$null)",
+      "PowerShell(docker exec findir_php php artisan tinker _calc_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php -l app/Http/Controllers/Api/V1/FundPlanDocController.php)",
+      "PowerShell(docker exec findir_php php artisan tinker _doc_check.php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan route:list --path=fund-plan 2>$null)"
     ]
   }
 }

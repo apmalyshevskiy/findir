@@ -37,6 +37,13 @@ export default function Layout({ children }) {
     { path: '/budget',           label: 'Бюджет' },
     { path: '/payment-calendar', label: 'Календарь' },
     {
+      label: 'Фонды',
+      children: [
+        { path: '/fund-planning', label: 'Планирование' },
+        { path: '/fund-schemes',  label: 'Модели распределения' },
+      ],
+    },
+    {
       label: 'Настройки',
       children: [
         { path: '/projects',             label: 'Проекты' },

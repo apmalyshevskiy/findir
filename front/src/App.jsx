@@ -14,6 +14,8 @@ import ClassificationRulesPage from './pages/ClassificationRulesPage'
 import AcquiringFeeRulesPage from './pages/AcquiringFeeRulesPage'
 import ProjectsPage from './pages/ProjectsPage'
 import EditLockDatePage from './pages/EditLockDatePage'
+import FundPlanningPage from './pages/FundPlanningPage'
+import FundSchemesPage from './pages/FundSchemesPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -40,6 +42,8 @@ export default function App() {
         <Route path="/acquiring-fee-rules"  element={<PrivateRoute><AcquiringFeeRulesPage /></PrivateRoute>} />
         <Route path="/projects"             element={<PrivateRoute><ProjectsPage /></PrivateRoute>} />
         <Route path="/edit-lock-date"       element={<PrivateRoute><EditLockDatePage /></PrivateRoute>} />
+        <Route path="/fund-planning"        element={<PrivateRoute><FundPlanningPage /></PrivateRoute>} />
+        <Route path="/fund-schemes"         element={<PrivateRoute><FundSchemesPage /></PrivateRoute>} />
       </Routes>
     </BrowserRouter>
   )

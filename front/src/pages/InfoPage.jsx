@@ -95,11 +95,16 @@ const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
         <input
           type="text"
           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder={selectedOption ? selectedOption.name : "— Без родителя"}
+          placeholder={selectedOption ? '' : "— Без родителя"}
           value={search}
           onFocus={() => setIsOpen(true)}
           onChange={e => { setSearch(e.target.value); setIsOpen(true); setCreating(false) }}
         />
+        {selectedOption && !search && (
+          <div className="absolute inset-y-0 left-0 right-0 flex items-center px-3 text-sm text-gray-900 pointer-events-none truncate">
+            {selectedOption.name}
+          </div>
+        )}
         {isOpen && (
           <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
             <div
