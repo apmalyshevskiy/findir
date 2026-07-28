@@ -15,9 +15,12 @@ FINDIR встроен рядом с уже работающим сайтом д�
    FINDIR compose (/opt/findir/docker-compose.prod.yml):
      nginx(127.0.0.1:8090) + php-fpm + redis + horizon + scheduler
                                           │
-   сеть fp_site_default → БД = существующий контейнер fp_site-db-1 (MariaDB 11.8)
+   docker0-шлюз 172.17.0.1:3306 → хостовая MariaDB 10.11 (systemd, НЕ docker)
      пользователь findir, базы findir_central + findir_<tenant> (создаются при регистрации)
+     bind 0.0.0.0, 3306 закрыт iptables (кроме 127.x и 172.16.0.0/12)
 ```
+> Сайт доставки использует свою отдельную БД — контейнер `fp_site-db-1`. FINDIR с ним больше не связан.
+> Внешний доступ к БД FINDIR: `ssh -L 3307:127.0.0.1:3306 findir-server`, затем клиент на `127.0.0.1:3307`.
 
 - **TLS:** host-certbot, сертификат `/etc/letsencrypt/live/findir.161-104-34-180.sslip.io/`, автопродление настроено. Сайт-файл: `/etc/nginx/sites-available/findir.conf` (+symlink). Конфиг доставки `fp_site.conf` не тронут.
 - **Секреты:** `back/.env` на сервере (APP_KEY, пароль БД `findir` — сгенерированы на сервере, в репозиторий не попадают).

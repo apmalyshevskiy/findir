@@ -1,12 +1,11 @@
 # ══════════════════════════════════════════════════════════════════════
 #  FINDIR — Production Docker Compose
 #  Хост:  findir.161-104-34-180.sslip.io  (за host-nginx, TLS на хосте)
-#  БД:    переиспользуем существующий контейнер fp_site-db-1
-#         (внешняя docker-сеть fp_site_default)
+#  БД:    хостовая MariaDB (systemd), доступ через docker0-шлюз 172.17.0.1
 #
 #  Топология:
 #    host-nginx  →  127.0.0.1:8090  →  этот nginx (HTTP)  →  php-fpm
-#    php/horizon/scheduler  →  сеть fp_site_default  →  fp_site-db-1 (MariaDB)
+#    php/horizon/scheduler  →  172.17.0.1:3306  →  MariaDB на хосте
 #
 #  Конфиг Laravel — в back/.env (см. deploy/env.prod.example).
 #  Запуск:  docker compose -f docker-compose.prod.yml up -d
@@ -46,8 +45,7 @@ services:
     volumes:
       - ./back:/var/www/html          # включая back/.env
     networks:
-      - findir_net
-      - fp_site_default               # доступ к MariaDB fp_site-db-1
+      - findir_net                    # БД — хостовая MariaDB через 172.17.0.1
     depends_on:
       - redis
 
@@ -88,7 +86,6 @@ services:
       - ./back:/var/www/html
     networks:
       - findir_net
-      - fp_site_default
     depends_on:
       - redis
       - php
@@ -103,7 +100,6 @@ services:
       - ./back:/var/www/html
     networks:
       - findir_net
-      - fp_site_default
     depends_on:
       - redis
       - php
@@ -115,5 +111,3 @@ volumes:
 networks:
   findir_net:
     driver: bridge
-  fp_site_default:
-    external: true                    # уже создана compose-проектом fp_site
