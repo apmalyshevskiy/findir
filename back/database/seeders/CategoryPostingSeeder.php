@@ -40,7 +40,8 @@ class CategoryPostingSeeder extends Seeder
             // Комиссия банка/эквайринга. Дефолт — П589 + «Административные расходы»
             // (пока нет отдельной статьи «Комиссия банка»; тенант сменит в настройках).
             // Распознавание (ИНН банка + «плата за/комисси») тенант заводит правилом.
-            PaymentCategory::ACQUIRING_FEE => [
+            // Бизнес-категория (не системная) — строкой, как в BankStatementMatcher.
+            'ACQUIRING_FEE' => [
                 'counter_account_code' => 'П589',
                 'flow_name_like'       => 'административные расходы',
                 'partner_mode'         => 'none',
