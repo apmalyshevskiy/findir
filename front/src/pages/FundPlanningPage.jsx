@@ -27,7 +27,7 @@ const fmtTyping = (v) => {
   const dot = s.indexOf('.')
   return dot === -1 ? neg + groupInt(s) : neg + groupInt(s.slice(0, dot)) + ',' + s.slice(dot + 1)
 }
-const AmountInput = ({ value, onChange, className, placeholder }) => {
+const AmountInput = ({ value, onChange, className, placeholder, disabled }) => {
   const ref = useRef(null)
   const onInput = (e) => {
     const el = e.target
@@ -44,7 +44,7 @@ const AmountInput = ({ value, onChange, className, placeholder }) => {
     })
   }
   return (
-    <input ref={ref} type="text" inputMode="decimal" className={className} placeholder={placeholder}
+    <input ref={ref} type="text" inputMode="decimal" className={className} placeholder={placeholder} disabled={disabled}
       value={fmtTyping(value)} onChange={onInput} />
   )
 }
@@ -79,6 +79,7 @@ export default function FundPlanningPage() {
   const scheme = schemes.find(s => s.id === schemeId)
   const dow = scheme?.week_start_dow ?? 5
   const weekEnd = addDays(weekStart, 6)
+  const locked = status === 'approved'   // утверждённый акт — только чтение
 
   const loadDoc = () => {
     if (!schemeId || !weekStart) return
@@ -129,12 +130,14 @@ export default function FundPlanningPage() {
 
   // Ручной ввод % (без авто-перераспределения). Контроль 100% — подсветкой.
   const setPercent = (fundId, raw) => {
+    if (locked) return
     let v = parseFloat(raw); if (isNaN(v)) v = 0
     v = Math.max(0, Math.min(100, v))
     setPercents(p => ({ ...p, [fundId]: round2(v) }))
   }
   const percentOk = Math.abs(percentSum - 100) < 0.01
   const resetPercents = () => {
+    if (locked) return
     const init = {}; (data?.funds || []).forEach(f => { init[f.id] = f.percent }); setPercents(init)
   }
 
@@ -153,6 +156,7 @@ export default function FundPlanningPage() {
 
   // «Запланировать»: строка со следующей статьёй и остатком к планированию (Разрешено − все строки). Строка непринятая.
   const planNext = (f) => {
+    if (locked) return
     const articles = f.flow_info_ids || []
     if (articles.length === 0) return
     const remaining = Math.max(0, round2(derive(f).allowed - plannedAll(f.id)))
@@ -167,6 +171,7 @@ export default function FundPlanningPage() {
   }))
   const removeLine = (id) => { const next = lines.filter(l => l._id !== id); setLines(next); persistLines(next) }
   const toggleAccept = (id) => {
+    if (locked) return
     const next = lines.map(l => l._id === id ? { ...l, accepted: !l.accepted } : l)
     setLines(next)
     persistLines(next)
@@ -179,7 +184,7 @@ export default function FundPlanningPage() {
       setData(r.data)
       setLines((r.data.doc?.lines || []).map(l => ({ ...l, _id: lid() })))
       setStatus(r.data.doc?.status || 'draft')
-      setNotice('Акт сохранён')
+      setNotice(r.data.doc?.id ? `Акт № ${r.data.doc.id} сохранён` : 'Акт сохранён')
     } finally { setSaving(false) }
   }
 
@@ -235,18 +240,28 @@ export default function FundPlanningPage() {
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
                 </button>
               </div>
+              {data?.doc?.id && <span className="text-sm font-semibold text-gray-700">Акт № {data.doc.id}</span>}
               <span className={`text-xs px-2 py-1 rounded-full ${status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                 {status === 'approved' ? 'Утверждён' : 'Черновик'}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <button onClick={() => save('draft')} disabled={saving} className="px-4 py-1.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40">
-                  {saving ? '…' : 'Сохранить'}
-                </button>
-                {status === 'approved'
+                {!locked && (
+                  <button onClick={() => save('draft')} disabled={saving} className="px-4 py-1.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40">
+                    {saving ? '…' : 'Сохранить'}
+                  </button>
+                )}
+                {locked
                   ? <button onClick={() => save('draft')} disabled={saving} className="px-4 py-1.5 text-amber-600 text-sm hover:text-amber-700">Снять утверждение</button>
                   : <button onClick={() => save('approved')} disabled={saving} className="px-4 py-1.5 bg-blue-900 text-white rounded-lg text-sm hover:bg-blue-800 disabled:opacity-40">Утвердить</button>}
               </div>
             </div>
+
+            {locked && (
+              <div className="bg-amber-50 text-amber-700 text-sm rounded-lg px-4 py-3 flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>
+                Акт утверждён — редактирование заблокировано. Нажмите «Снять утверждение», чтобы изменить.
+              </div>
+            )}
 
             {/* Поступление */}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
@@ -255,7 +270,7 @@ export default function FundPlanningPage() {
                 <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${percentOk ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                   {percentOk ? `Распределение: ${percentSum}%` : `⚠ Распределение: ${percentSum}% — должно быть 100%`}
                 </span>
-                <button onClick={resetPercents} className="text-xs text-gray-400 hover:text-gray-700">Сбросить %</button>
+                {!locked && <button onClick={resetPercents} className="text-xs text-gray-400 hover:text-gray-700">Сбросить %</button>}
               </div>
               <span className="text-2xl font-bold text-blue-600">{money(incomeWeek)}</span>
             </div>
@@ -271,9 +286,9 @@ export default function FundPlanningPage() {
                     <div className="flex items-center gap-2 sm:min-w-[240px]">
                       <span className="font-semibold text-gray-800">{f.name}</span>
                       <span className="flex items-center gap-1 text-sm text-gray-500">
-                        <input type="number" step="1" min="0" max="100" value={d.pct}
+                        <input type="number" step="1" min="0" max="100" value={d.pct} disabled={locked}
                           onChange={e => setPercent(f.id, e.target.value)} title="Процент распределения"
-                          className={`w-14 px-1.5 py-0.5 border rounded text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${percentOk ? 'border-gray-200' : 'border-red-300 bg-red-50'}`} />
+                          className={`w-14 px-1.5 py-0.5 border rounded text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:bg-gray-50 ${percentOk ? 'border-gray-200' : 'border-red-300 bg-red-50'}`} />
                         %
                       </span>
                     </div>
@@ -306,22 +321,27 @@ export default function FundPlanningPage() {
                         {fLines.length === 0 && <p className="text-sm text-gray-400 pb-2">Нет запланированных расходов</p>}
                         {fLines.map(l => (
                           <div key={l._id} className={`flex flex-wrap items-center gap-2 mb-2 rounded-lg px-1.5 py-1 ${l.accepted ? 'bg-green-50 ring-1 ring-green-200' : ''}`}>
-                            <button onClick={() => toggleAccept(l._id)} title={l.accepted ? 'Принято — нажмите, чтобы снять' : 'Принять'}
-                              className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center border transition-colors ${l.accepted ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300 text-gray-300 hover:border-green-500 hover:text-green-600'}`}>
+                            <button onClick={() => toggleAccept(l._id)} disabled={locked} title={l.accepted ? 'Принято — нажмите, чтобы снять' : 'Принять'}
+                              className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center border transition-colors disabled:cursor-not-allowed ${l.accepted ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300 text-gray-300 hover:border-green-500 hover:text-green-600'}`}>
                               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                             </button>
-                            <select className={`${ic} flex-1 min-w-[180px] sm:flex-none sm:w-80`} value={l.flow_info_id || ''} onChange={e => editLine(l._id, { flow_info_id: e.target.value ? Number(e.target.value) : null })}>
+                            {!locked && (
+                              <button onClick={() => removeLine(l._id)} title="Удалить строку"
+                                className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                              </button>
+                            )}
+                            <select disabled={locked} className={`${ic} flex-1 min-w-[180px] sm:flex-none sm:w-80 disabled:bg-gray-50 disabled:text-gray-500`} value={l.flow_info_id || ''} onChange={e => editLine(l._id, { flow_info_id: e.target.value ? Number(e.target.value) : null })}>
                               <option value="">— статья ДДС</option>
                               {articles.map(id => <option key={id} value={id}>{flowName[id] || `#${id}`}</option>)}
                             </select>
-                            <AmountInput placeholder="Сумма"
-                              className={`${ic} w-28 sm:w-32 text-right ${l.accepted ? 'font-semibold text-green-700' : ''}`}
+                            <AmountInput placeholder="Сумма" disabled={locked}
+                              className={`${ic} w-28 sm:w-32 text-right disabled:bg-gray-50 ${l.accepted ? 'font-semibold text-green-700' : ''}`}
                               value={l.amount} onChange={v => editLine(l._id, { amount: v })} />
-                            <input type="text" placeholder="Комментарий" className={`${ic} flex-1 min-w-[140px]`} value={l.comment || ''} onChange={e => editLine(l._id, { comment: e.target.value })} />
-                            <button onClick={() => removeLine(l._id)} className="text-gray-400 hover:text-red-600 px-1">✕</button>
+                            <input type="text" placeholder="Комментарий" disabled={locked} className={`${ic} flex-1 min-w-[140px] disabled:bg-gray-50 disabled:text-gray-500`} value={l.comment || ''} onChange={e => editLine(l._id, { comment: e.target.value })} />
                           </div>
                         ))}
-                        <button onClick={() => planNext(f)} className="text-blue-600 text-sm hover:text-blue-700">Запланировать</button>
+                        {!locked && <button onClick={() => planNext(f)} className="text-blue-600 text-sm hover:text-blue-700">Запланировать</button>}
                       </>
                     )}
                   </div>
@@ -331,7 +351,7 @@ export default function FundPlanningPage() {
 
             {/* Итоги */}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between flex-wrap gap-3">
-              <input className={`${ic} flex-1 min-w-[220px]`} placeholder="Примечание к акту" value={note} onChange={e => setNote(e.target.value)} />
+              <input disabled={locked} className={`${ic} flex-1 min-w-[220px] disabled:bg-gray-50 disabled:text-gray-500`} placeholder="Примечание к акту" value={note} onChange={e => setNote(e.target.value)} />
               <div className="flex items-center gap-6 flex-wrap">
                 <div className="text-right"><div className="text-[10px] text-gray-400 uppercase">Запланировано</div><div className="text-lg font-bold text-blue-700 tabular-nums">{money(totalPlanned)}</div></div>
                 <div className="text-right"><div className="text-[10px] text-gray-400 uppercase">Разрешено (на фондах)</div><div className={`text-lg font-bold tabular-nums ${totalAllowed < 0 ? 'text-red-600' : 'text-gray-900'}`}>{money(totalAllowed)}</div></div>

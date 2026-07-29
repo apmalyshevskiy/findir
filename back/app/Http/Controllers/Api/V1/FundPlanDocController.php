@@ -152,6 +152,11 @@ class FundPlanDocController extends TenantController
             ->where('scheme_id', $data['scheme_id'])->where('week_start', $weekStart)
             ->whereNull('deleted_at')->first();
 
+        // Утверждённый акт редактировать нельзя — разрешено только снять утверждение (status=draft).
+        if ($doc && $doc->status === 'approved' && ($data['status'] ?? $doc->status) === 'approved') {
+            return response()->json(['message' => 'Утверждённый акт нельзя редактировать. Сначала снимите утверждение.'], 422);
+        }
+
         if ($doc) {
             $docId = $doc->id;
             $this->db()->table('fund_plan_docs')->where('id', $docId)->update([

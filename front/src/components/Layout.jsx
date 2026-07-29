@@ -123,7 +123,7 @@ export default function Layout({ children }) {
           </button>
         </div>
       </header>
-      <main className="p-4 md:p-6">{children}</main>
+      <main className="max-w-[1400px] mx-auto p-4 md:p-6">{children}</main>
     </div>
   )
 }
