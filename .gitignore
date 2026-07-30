@@ -16,6 +16,7 @@ redis_data/
 Thumbs.db
 .idea/
 .vscode/
+.claude/
 *.swp
 
 # === ФРОНТЕНД (front/) ===
@@ -42,4 +43,3 @@ back/storage/framework/views/*
 back/bootstrap/cache/*
 back/.phpunit.result.cache
 back/auth.json
-front/package-lock.json
