@@ -67,6 +67,9 @@ const SearchableSelect = ({ label, value, onChange, options, placeholder }) => {
 
 
 
+// Единая сетка колонок для шапки и карточек операций (выравнивание между карточками)
+const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(170px,1.3fr)_7.5rem_minmax(130px,1fr)_4rem] gap-x-3'
+
 const localDate = (date) => {
   const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
   return d.toISOString().slice(0, 10)
@@ -435,83 +438,72 @@ export default function OperationsPage() {
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100">
-                  <th className="px-4 py-3 w-8">
-                    <input type="checkbox" checked={allChecked}
-                      ref={el => { if (el) el.indeterminate = someChecked }}
-                      onChange={toggleAll} className="rounded" />
-                  </th>
-                  <th className="text-left px-3 py-3 w-10">#</th>
-                  <th className="text-left px-3 py-3">Дата</th>
-                  <th className="text-left px-3 py-3">Дебет</th>
-                  <th className="text-left px-3 py-3">Кредит</th>
-                  <th className="text-right px-3 py-3">Сумма</th>
-                  <th className="text-left px-3 py-3">Содержание / Комментарий</th>
-                  <th className="px-3 py-3 w-14"></th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-x-auto px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
+            <div className="min-w-[960px]">
+              {/* Шапка колонок */}
+              <div className={`${OP_GRID} items-center px-4 pb-2 text-xs text-gray-500 uppercase tracking-wide`}>
+                <div>
+                  <input type="checkbox" checked={allChecked}
+                    ref={el => { if (el) el.indeterminate = someChecked }}
+                    onChange={toggleAll} className="rounded" />
+                </div>
+                <div>#</div>
+                <div>Дата</div>
+                <div>Дебет</div>
+                <div>Кредит</div>
+                <div className="text-right">Сумма</div>
+                <div>Содержание</div>
+                <div></div>
+              </div>
+
+              {/* Карточки операций */}
+              <div className="space-y-2">
                 {operations.map(op => (
-                  <tr key={op.id}
-                    className={`border-b border-gray-50 transition-colors group cursor-pointer ${selected.has(op.id) ? 'bg-orange-50' : 'hover:bg-gray-50'}`}
+                  <div key={op.id}
                     onClick={() => toggleSelect(op.id)}
+                    onDoubleClick={() => (op.table_name === 'documents' && op.table_id)
+                      ? navigate(`/documents?open=${op.table_id}`)
+                      : handleEdit(op)}
+                    title="Двойной клик — редактировать"
+                    className={`${OP_GRID} items-start px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
+                      selected.has(op.id)
+                        ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
+                        : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
+                    }`}
                   >
-                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <div onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(op.id)}
                         onChange={() => toggleSelect(op.id)} className="rounded" />
-                    </td>
-                    <td className="px-3 py-3 text-xs text-gray-400 font-mono">{op.id}</td>
-                    <td className="px-3 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(op.date)}</td>
-                    <td className="px-3 py-3">
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono pt-0.5">{op.id}</div>
+                    <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
+                    <div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
                         <span className="text-xs text-gray-600">{op.in_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
                       </div>
                       {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_1_name}</span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
                       {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_2_name}</span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
-                    </td>
-                    <td className="px-3 py-3">
+                    </div>
+                    <div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
                         <span className="text-xs text-gray-600">{op.out_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
                       </div>
                       {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_1_name}</span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
                       {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_2_name}</span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
-                    </td>
-                    <td className="px-3 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatAmount(op.amount)}</td>
-                    
-                    <td className="px-3 py-3 max-w-xs">
-                      {op.content && (
-                      <div className="text-xs text-gray-700 truncate" title={op.content}>
-                       {op.content}
-                      </div>
-                          )}
-                        {op.note && (
-                     <div className="text-xs text-gray-400 italic truncate" title={op.note}>
-                         💬 {op.note}
-                      </div>
-                         )}
-                      {!op.content && !op.note && (
-                      <span className="text-gray-300">—</span>
-                         )}
-                      </td>
-                    
-
-
-                    
-                    <td className="px-3 py-3 text-right" onClick={e => e.stopPropagation()}>
+                    </div>
+                    <div className="text-right font-semibold text-gray-800 whitespace-nowrap pt-0.5">{formatAmount(op.amount)}</div>
+                    <div className="min-w-0">
+                      {op.content && <div className="text-xs text-gray-700 truncate" title={op.content}>{op.content}</div>}
+                      {op.note && <div className="text-xs text-gray-400 italic truncate" title={op.note}>💬 {op.note}</div>}
+                      {!op.content && !op.note && <span className="text-gray-300">—</span>}
+                    </div>
+                    <div className="text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {op.table_name === 'documents' && op.table_id ? (
-                          <button
-                            onClick={() => navigate(`/documents?open=${op.table_id}`)}
-                            title="Открыть документ-источник"
-                            className="text-blue-400 hover:text-blue-600 text-xs px-2 py-1 rounded hover:bg-blue-50 flex items-center gap-1"
-                          >
-                            📄 <span className="text-xs">→ документ</span>
-                          </button>
+                          <button onClick={() => navigate(`/documents?open=${op.table_id}`)} title="Открыть документ-источник"
+                            className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
                         ) : (
                           <>
                             <button onClick={() => handleEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
@@ -519,11 +511,11 @@ export default function OperationsPage() {
                           </>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
         )}
       </div>

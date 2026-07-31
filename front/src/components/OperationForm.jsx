@@ -290,6 +290,9 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
   const [infoCache, setInfoCache] = useState({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Режим формы: 'classic' (в столбик) | 'wide' (дебет/кредит рядом). Запоминаем выбор.
+  const [layout, setLayout] = useState(() => localStorage.getItem('op_form_layout') || 'wide')
+  const changeLayout = (v) => { setLayout(v); localStorage.setItem('op_form_layout', v) }
   // Локальное время для datetime-local input без UTC-конвертации
   const localNow = () => {
     const d = new Date()
@@ -398,13 +401,93 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
   const lc = "block text-sm font-medium text-gray-700 mb-1"
 
+  const debitFields = (
+    <>
+      <div>
+        <label className={lc}>Дебет (куда)</label>
+        <select value={form.in_bi_id}
+          onChange={e => {
+            setForm({...form, in_bi_id: e.target.value, in_info_1_id: '', in_info_2_id: ''})
+            loadInfoForBi(e.target.value, infoCache)
+          }}
+          className={ic} required>
+          <option value="">Выберите счёт...</option>
+          {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+        </select>
+      </div>
+      {inBi?.info_1_type && (
+        <SearchableInfoSelect items={infoCache[inBi.info_1_type]} value={form.in_info_1_id}
+          onChange={(val) => setForm({...form, in_info_1_id: val})}
+          label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`} infoType={inBi.info_1_type} onItemCreated={handleItemCreated} />
+      )}
+      {inBi?.info_2_type && (
+        <SearchableInfoSelect items={infoCache[inBi.info_2_type]} value={form.in_info_2_id}
+          onChange={(val) => setForm({...form, in_info_2_id: val})}
+          label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`} infoType={inBi.info_2_type} onItemCreated={handleItemCreated} />
+      )}
+    </>
+  )
+
+  const creditFields = (
+    <>
+      <div>
+        <label className={lc}>Кредит (откуда)</label>
+        <select value={form.out_bi_id}
+          onChange={e => {
+            setForm({...form, out_bi_id: e.target.value, out_info_1_id: '', out_info_2_id: ''})
+            loadInfoForBi(e.target.value, infoCache)
+          }}
+          className={ic} required>
+          <option value="">Выберите счёт...</option>
+          {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
+        </select>
+      </div>
+      {outBi?.info_1_type && (
+        <SearchableInfoSelect items={infoCache[outBi.info_1_type]} value={form.out_info_1_id}
+          onChange={(val) => setForm({...form, out_info_1_id: val})}
+          label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`} infoType={outBi.info_1_type} onItemCreated={handleItemCreated} />
+      )}
+      {outBi?.info_2_type && (
+        <SearchableInfoSelect items={infoCache[outBi.info_2_type]} value={form.out_info_2_id}
+          onChange={(val) => setForm({...form, out_info_2_id: val})}
+          label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`} infoType={outBi.info_2_type} onItemCreated={handleItemCreated} />
+      )}
+    </>
+  )
+
+  const contentField = (
+    <div>
+      <label className={lc}>Содержание</label>
+      <input type="text" value={form.content ?? ''} onChange={e => setForm({...form, content: e.target.value})}
+        placeholder="Назначение платежа, описание проводки" className={ic} />
+    </div>
+  )
+
+  const commentField = (
+    <div>
+      <label className={lc}>Комментарий</label>
+      <input type="text" value={form.note} onChange={e => setForm({...form, note: e.target.value})}
+        placeholder="Необязательно" className={ic} />
+    </div>
+  )
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-4">
-        <div className="p-6 border-b border-gray-100">
+      <div className={`bg-white rounded-2xl shadow-xl w-full my-4 ${layout === 'wide' ? 'max-w-3xl' : 'max-w-lg'}`}>
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-gray-800">
             {isEdit ? 'Редактировать операцию' : 'Новая операция'}
           </h3>
+          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0">
+            <button type="button" onClick={() => changeLayout('classic')}
+              className={`px-2.5 py-1 rounded-md transition-colors ${layout === 'classic' ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}>
+              В столбик
+            </button>
+            <button type="button" onClick={() => changeLayout('wide')}
+              className={`px-2.5 py-1 rounded-md transition-colors ${layout === 'wide' ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}>
+              Рядом
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -437,94 +520,23 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
             </div>
           </div>
 
-          {/* Дебет */}
-          <div>
-            <label className={lc}>Дебет (куда)</label>
-            <select value={form.in_bi_id}
-              onChange={e => {
-                setForm({...form, in_bi_id: e.target.value, in_info_1_id: '', in_info_2_id: ''})
-                loadInfoForBi(e.target.value, infoCache)
-              }}
-              className={ic} required>
-              <option value="">Выберите счёт...</option>
-              {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
-            </select>
-          </div>
+          {/* Содержание — вверху на всю ширину (только в режиме «рядом») */}
+          {layout === 'wide' && contentField}
 
-          {inBi?.info_1_type && (
-            <SearchableInfoSelect
-              items={infoCache[inBi.info_1_type]}
-              value={form.in_info_1_id}
-              onChange={(val) => setForm({...form, in_info_1_id: val})}
-              label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`}
-              infoType={inBi.info_1_type}
-              onItemCreated={handleItemCreated}
-            />
-          )}
-          {inBi?.info_2_type && (
-            <SearchableInfoSelect
-              items={infoCache[inBi.info_2_type]}
-              value={form.in_info_2_id}
-              onChange={(val) => setForm({...form, in_info_2_id: val})}
-              label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`}
-              infoType={inBi.info_2_type}
-              onItemCreated={handleItemCreated}
-            />
+          {/* Дебет / Кредит — рядом (wide) или в столбик (classic) */}
+          {layout === 'wide' ? (
+            <div className="grid grid-cols-2 border border-gray-200 rounded-xl">
+              <div className="p-4 space-y-3 border-r border-gray-200 bg-green-50/40 rounded-l-xl">{debitFields}</div>
+              <div className="p-4 space-y-3 bg-red-50/30 rounded-r-xl">{creditFields}</div>
+            </div>
+          ) : (
+            <div className="space-y-4">{debitFields}{creditFields}</div>
           )}
 
-          {/* Кредит */}
-          <div>
-            <label className={lc}>Кредит (откуда)</label>
-            <select value={form.out_bi_id}
-              onChange={e => {
-                setForm({...form, out_bi_id: e.target.value, out_info_1_id: '', out_info_2_id: ''})
-                loadInfoForBi(e.target.value, infoCache)
-              }}
-              className={ic} required>
-              <option value="">Выберите счёт...</option>
-              {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
-            </select>
-          </div>
-
-          {outBi?.info_1_type && (
-            <SearchableInfoSelect
-              items={infoCache[outBi.info_1_type]}
-              value={form.out_info_1_id}
-              onChange={(val) => setForm({...form, out_info_1_id: val})}
-              label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`}
-              infoType={outBi.info_1_type}
-              onItemCreated={handleItemCreated}
-            />
+          {/* Комментарий (рядом) / Содержание+Комментарий (в столбик) */}
+          {layout === 'wide' ? commentField : (
+            <div className="space-y-4">{contentField}{commentField}</div>
           )}
-          {outBi?.info_2_type && (
-            <SearchableInfoSelect
-              items={infoCache[outBi.info_2_type]}
-              value={form.out_info_2_id}
-              onChange={(val) => setForm({...form, out_info_2_id: val})}
-              label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`}
-              infoType={outBi.info_2_type}
-              onItemCreated={handleItemCreated}
-            />
-          )}
-           
-          {/* Содержание */}
-          <div>
-           <label className={lc}>Содержание</label>
-            <input
-            type="text"
-              value={form.content ?? ''}
-              onChange={e => setForm({...form, content: e.target.value})}
-              placeholder="Назначение платежа, описание проводки"
-              className={ic}
-          />
-          </div>
-
-          <div>
-            <label className={lc}>Комментарий</label>
-            <input type="text" value={form.note}
-              onChange={e => setForm({...form, note: e.target.value})}
-              placeholder="Необязательно" className={ic} />
-          </div>
 
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onCancel}
