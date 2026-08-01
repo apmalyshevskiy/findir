@@ -6,6 +6,7 @@ import {
 import { getDocument, postDocument, cancelDocument } from '../../api/documents'
 import { getInfo } from '../../api/info'
 import OperationForm from '../OperationForm'
+import AmountInput from '../AmountInput'
 import { DocumentForm } from '../../pages/DocumentsPage'
 
 // ── Утилиты форматирования ─────────────────────────────────────────────────
@@ -368,8 +369,8 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
           <div className="flex gap-2">
             <input className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
               placeholder="Содержание" value={newContent} onChange={e => setNewContent(e.target.value)} />
-            <input ref={amountRef} className="w-28 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white text-right"
-              placeholder="Сумма" value={newAmount} onChange={e => setNewAmount(e.target.value)}
+            <AmountInput ref={amountRef} className="w-28 px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white text-right"
+              placeholder="Сумма" value={newAmount} onChange={setNewAmount}
               onKeyDown={e => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') setAdding(false) }} />
           </div>
           <div className="flex gap-2">
@@ -517,8 +518,8 @@ function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
         )}
         <div className="flex items-center gap-1">
           {editField === 'amount' ? (
-            <input ref={ref} className="w-24 px-2 py-1 border border-blue-300 rounded text-sm text-right"
-              value={text} onChange={e => setText(e.target.value)}
+            <AmountInput ref={ref} className="w-24 px-2 py-1 border border-blue-300 rounded text-sm text-right"
+              value={text} onChange={setText}
               onBlur={() => commit('amount', text)} onKeyDown={e => { if (e.key === 'Enter') commit('amount', text); if (e.key === 'Escape') setEditField(null) }} />
           ) : (
             <div className="text-sm font-medium text-blue-600 tabular-nums cursor-pointer hover:text-blue-800"

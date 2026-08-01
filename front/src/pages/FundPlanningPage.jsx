@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getFundSchemes } from '../api/fundSchemes'
 import { getFundPlanDoc, saveFundPlanDoc } from '../api/funds'
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
+import AmountInput from '../components/AmountInput'
 
 const DOW_SHORT = { 0: 'Вс', 1: 'Пн', 2: 'Вт', 3: 'Ср', 4: 'Чт', 5: 'Пт', 6: 'Сб' }
 const localDate = (d) => { const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return x.toISOString().slice(0, 10) }
@@ -16,38 +17,6 @@ const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d
 const fmtShort = (iso) => { const [, m, d] = iso.split('-'); return `${d}.${m}` }
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(v || 0)
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-
-// Поле суммы с триадами прямо во время ввода (курсор сохраняется по числу цифр)
-const groupInt = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
-const fmtTyping = (v) => {
-  let s = v == null ? '' : String(v)
-  if (s === '') return ''
-  const neg = s[0] === '-' ? '-' : ''
-  s = s.replace('-', '')
-  const dot = s.indexOf('.')
-  return dot === -1 ? neg + groupInt(s) : neg + groupInt(s.slice(0, dot)) + ',' + s.slice(dot + 1)
-}
-const AmountInput = ({ value, onChange, className, placeholder, disabled }) => {
-  const ref = useRef(null)
-  const onInput = (e) => {
-    const el = e.target
-    const digitsBefore = el.value.slice(0, el.selectionStart).replace(/\D/g, '').length
-    const clean = el.value.replace(/\s/g, '').replace(',', '.')
-    if (clean !== '' && clean !== '-' && !/^-?\d*\.?\d*$/.test(clean)) return
-    onChange(clean)
-    const formatted = fmtTyping(clean)
-    requestAnimationFrame(() => {
-      if (!ref.current) return
-      let seen = 0, pos = 0
-      while (pos < formatted.length && seen < digitsBefore) { if (/\d/.test(formatted[pos])) seen++; pos++ }
-      ref.current.setSelectionRange(pos, pos)
-    })
-  }
-  return (
-    <input ref={ref} type="text" inputMode="decimal" className={className} placeholder={placeholder} disabled={disabled}
-      value={fmtTyping(value)} onChange={onInput} />
-  )
-}
 
 let seq = 0
 const lid = () => `l${Date.now().toString(36)}${(seq++).toString(36)}`

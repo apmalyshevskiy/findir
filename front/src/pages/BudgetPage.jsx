@@ -172,8 +172,8 @@ export default function BudgetPage() {
       if (!keepState) {
         const rootIds = new Set()
         const arts = r.data.articles
-        if (Array.isArray(arts) && arts[0]?.id != null) arts.forEach(a => rootIds.add(a.id))
-        else if (arts) arts.forEach(g => g.items?.forEach(a => rootIds.add(a.id)))
+        if (Array.isArray(arts) && arts[0]?.id != null) arts.forEach(a => rootIds.add(String(a.id)))
+        else if (arts) arts.forEach(g => g.items?.forEach(a => rootIds.add(`${g.group}:${a.id}`)))
         setExpanded(rootIds)
       }
     } finally { if (!keepState) setLoading(false) }
@@ -276,7 +276,7 @@ export default function BudgetPage() {
 
   const openEditArticle = (article) => {
     const type = infoTypeFromSection(article.section || article.groupKey)
-    setEditArticle({ id: article.id, name: article.name, parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0, type, section: article.section || article.groupKey })
+    setEditArticle({ id: article.id, rowKey: article.rowKey, name: article.name, parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0, type, section: article.section || article.groupKey })
     setAddArticle(null)
   }
 
@@ -352,9 +352,13 @@ export default function BudgetPage() {
   const { flatArticles, descendantLeafMap, descendantAllMap } = useMemo(() => {
     if (!report?.articles) return { flatArticles: [], descendantLeafMap: {}, descendantAllMap: {} }
     const arts = report.articles
-    if (Array.isArray(arts) && arts[0]?.id != null) return { flatArticles: flattenArticles(arts), descendantLeafMap: buildDescendantLeafMap(arts), descendantAllMap: buildDescendantAllMap(arts) }
+    // rowKey — идентификатор СТРОКИ (уникален в пределах отчёта).
+    // В БДР одни и те же статьи revenue выводятся и в «Доходах», и в «Себестоимости»
+    // (на П588 аналитика info_1 = revenue), поэтому ключ раскрытия/React-key
+    // обязан включать группу — иначе строки дублируются и раскрываются вместе.
+    if (Array.isArray(arts) && arts[0]?.id != null) return { flatArticles: flattenArticles(arts).map(a => ({ ...a, rowKey: String(a.id) })), descendantLeafMap: buildDescendantLeafMap(arts), descendantAllMap: buildDescendantAllMap(arts) }
     const allItems = [], allFlat = []
-    for (const g of arts) { allFlat.push({ id: `group_${g.group}`, name: g.label, depth: 0, isGroup: true, groupKey: g.group }); allFlat.push(...flattenArticles(g.items || [], 1).map(a => ({ ...a, section: g.group }))); allItems.push(...(g.items || [])) }
+    for (const g of arts) { allFlat.push({ id: `group_${g.group}`, rowKey: `group_${g.group}`, name: g.label, depth: 0, isGroup: true, groupKey: g.group }); allFlat.push(...flattenArticles(g.items || [], 1).map(a => ({ ...a, section: g.group, rowKey: `${g.group}:${a.id}` }))); allItems.push(...(g.items || [])) }
     return { flatArticles: allFlat, descendantLeafMap: buildDescendantLeafMap(allItems), descendantAllMap: buildDescendantAllMap(allItems) }
   }, [report])
 
@@ -431,7 +435,7 @@ export default function BudgetPage() {
   const cashOpenings = useMemo(() => { if (!byCash) return {}; const r = {}; for (const [c, ob] of Object.entries(openBal)) r[c] = ob?.auto ?? 0; return r }, [openBal, byCash])
   const cashBalances = useMemo(() => { if (!byCash || !cashItems.length) return {}; const r = {}; for (const ci of cashItems) { const a = []; let p = cashOpenings[ci.id] ?? cashOpenings[String(ci.id)] ?? 0; for (const pd of periodDates) { const o = p; let m = 0; for (const [k, v] of Object.entries(fact)) if (k.split(':')[1] === String(ci.id) && k.endsWith(':' + pd)) m += v; a.push({ opening: o, move: m, closing: o + m }); p = o + m }; r[ci.id] = a }; return r }, [byCash, cashItems, cashOpenings, periodDates, fact])
 
-  const visibleArticles = useMemo(() => { const r = []; let skip = null; for (const a of flatArticles) { if (skip !== null && a.depth > skip) continue; skip = null; r.push(a); if (a.hasChildren && !expanded.has(a.id)) skip = a.depth }; return r }, [flatArticles, expanded])
+  const visibleArticles = useMemo(() => { const r = []; let skip = null; for (const a of flatArticles) { if (skip !== null && a.depth > skip) continue; skip = null; r.push(a); if (a.hasChildren && !expanded.has(a.rowKey)) skip = a.depth }; return r }, [flatArticles, expanded])
 
   const renderHeaderSub = (pd) => {
     const fm = isFactMonth(pd)
@@ -711,7 +715,7 @@ export default function BudgetPage() {
                   if (article.isGroup) {
                     const totals = bdrGroupTotals[article.groupKey]
                     return (
-                      <Fragment key={article.id}>
+                      <Fragment key={article.rowKey}>
                         {/* Валовая прибыль перед группой расходов */}
                         {selectedDoc?.type === 'bdr' && article.groupKey === 'expenses' && bdrGroupTotals.revenue && bdrGroupTotals.cost && (
                           renderProfitRow('Валовая прибыль', (pd) => ({
@@ -780,15 +784,15 @@ export default function BudgetPage() {
                     )
                   }
                   const isParent = article.hasChildren
-                  const isEditing = editArticle?.id === article.id
+                  const isEditing = editArticle?.rowKey ? editArticle.rowKey === article.rowKey : editArticle?.id === article.id
                   return (
-                    <Fragment key={article.id}>
+                    <Fragment key={article.rowKey}>
                     <tr className={`border-b border-gray-50 hover:bg-gray-50/50 ${isParent ? 'bg-gray-50/50 font-medium' : ''} group/row`}>
                       <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap" style={{ paddingLeft: 12 + article.depth * 20 }}>
                         <div className="flex items-center gap-1">
                           {isParent && (
-                            <button onClick={() => toggleExpand(article.id)} className="text-gray-400 hover:text-gray-600 transition-colors w-4 flex items-center justify-center">
-                              <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${expanded.has(article.id) ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="currentColor">
+                            <button onClick={() => toggleExpand(article.rowKey)} className="text-gray-400 hover:text-gray-600 transition-colors w-4 flex items-center justify-center">
+                              <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${expanded.has(article.rowKey) ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M8 5v14l11-7z" />
                               </svg>
                             </button>
