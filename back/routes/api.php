@@ -54,7 +54,10 @@ Route::prefix('v1')->group(function () {
     Route::post('/projects',          [ProjectsController::class, 'store']);
     Route::put('/projects/{id}',      [ProjectsController::class, 'update']);
     Route::delete('/projects/{id}',   [ProjectsController::class, 'destroy']);
-    Route::get('/balance-items',      [BalanceItemsController::class, 'index']);
+    Route::get('/balance-items',         [BalanceItemsController::class, 'index']);
+    Route::post('/balance-items',        [BalanceItemsController::class, 'store']);
+    Route::put('/balance-items/{id}',    [BalanceItemsController::class, 'update']);
+    Route::delete('/balance-items/{id}', [BalanceItemsController::class, 'destroy']);
     Route::get('/balance-sheet',      [BalanceSheetController::class, 'index']);
 
     Route::get('/info',               [InfoController::class, 'index']);
@@ -126,6 +129,12 @@ Route::prefix('v1')->group(function () {
     Route::post('/ai/parse-operation', [AiController::class, 'parseOperation']);
     Route::post('/ai/parse-file',      [AiController::class, 'parseFile']);
     Route::post('/ai/apply-links',     [AiController::class, 'applyLinks']);
+    Route::post('/ai/apply-bulk',            [AiController::class, 'applyBulk']);
+    Route::get('/ai/bulk-log',               [AiController::class, 'bulkLog']);
+    Route::post('/ai/bulk-log/{id}/revert',  [AiController::class, 'revertBulk']);
+    // Выписка: ИИ добивает нераспознанные строки и предлагает правила
+    Route::post('/ai/classify-statement', [AiController::class, 'classifyStatement']);
+    Route::post('/ai/apply-rules',        [AiController::class, 'applyRules']);
     Route::post('/ai/transcribe',      [AiController::class, 'transcribe']);
 
 });

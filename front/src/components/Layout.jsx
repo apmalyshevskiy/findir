@@ -47,6 +47,7 @@ export default function Layout({ children }) {
       label: 'Настройки',
       children: [
         { path: '/projects',             label: 'Проекты' },
+        { path: '/balance-items',        label: 'План счетов' },
         { path: '/info',                 label: 'Справочники' },
         { path: '/classification-rules', label: 'Настройка правил' },
         { path: '/acquiring-fee-rules', label: 'Эквайринг' },

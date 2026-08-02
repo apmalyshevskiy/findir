@@ -12,7 +12,18 @@ class BalanceItem extends Model
     protected $table = 'balance_items';
 
     protected $fillable = [
-        'code', 'name', 'type', 'info_1_type', 'info_2_type', 'info_3_type',
-        'description',
+        'parent_id', 'code', 'name',
+        'info_1_type', 'info_1_turnover_only',
+        'info_2_type', 'info_2_turnover_only',
+        'info_3_type', 'info_3_turnover_only',
+        'has_quantity', 'is_system',
+    ];
+
+    protected $casts = [
+        'info_1_turnover_only' => 'boolean',
+        'info_2_turnover_only' => 'boolean',
+        'info_3_turnover_only' => 'boolean',
+        'has_quantity'         => 'boolean',
+        'is_system'            => 'boolean',
     ];
 }

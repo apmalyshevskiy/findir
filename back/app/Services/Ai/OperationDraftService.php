@@ -164,9 +164,207 @@ class OperationDraftService
             'drafts'    => $drafts,
             'new_items' => $this->newItems($result['dictionary_items'] ?? [], $dicts),
             'links'     => $this->links($result['links'] ?? [], $dicts, $flowExpense),
+            'bulk'      => $this->bulkPreview($db, $result['bulk_updates'] ?? [], $dicts, $accounts),
             'assistant' => json_encode($raw, JSON_UNESCAPED_UNICODE),
             'usage'     => $usage,
         ];
+    }
+
+    /**
+     * Массовая правка: разбираем условия, считаем попадание, показываем примеры.
+     * Ничего не меняет — только предпросмотр для подтверждения пользователем.
+     */
+    private function bulkPreview(string $db, array $updates, array $dicts, $accounts): array
+    {
+        $out = [];
+        foreach ($updates as $u) {
+            $spec = $this->normalizeBulk($u, $dicts, $accounts);
+            if (!$spec) continue;
+
+            $q = $this->bulkQuery($db, $spec['filter']);
+            $spec['count']  = (clone $q)->count();
+            $spec['sample'] = (clone $q)->orderBy('date')->limit(3)
+                ->get(['id', 'date', 'amount', 'content'])
+                ->map(fn($o) => [
+                    'id' => $o->id, 'date' => substr((string) $o->date, 0, 10),
+                    'amount' => (float) $o->amount, 'content' => mb_substr((string) $o->content, 0, 60),
+                ])->all();
+
+            if ($spec['count'] > 0) $out[] = $spec;
+        }
+        return $out;
+    }
+
+    /** Условия и значения из ответа модели → проверенная спецификация с id. */
+    private function normalizeBulk(array $u, array $dicts, $accounts): ?array
+    {
+        $f = $u['filter'] ?? [];
+        $code = trim((string) ($f['account_code'] ?? ''));
+        $acc  = $code !== '' ? $this->findAccount($accounts, $code) : null;
+        if ($code !== '' && !$acc) return null;                 // счёт не опознан — не гадаем
+
+        $side = in_array($f['side'] ?? null, ['debit', 'credit', 'any'], true) ? $f['side'] : 'any';
+
+        $set = [];
+        foreach (($u['set'] ?? []) as $type => $name) {
+            if (!$name || !in_array($type, self::ANALYTIC_TYPES, true) || !isset($dicts[$type])) continue;
+            $id = $this->matchByName($dicts[$type], (string) $name);
+            if ($id) $set[$type] = ['id' => $id, 'name' => $dicts[$type][$id]];
+        }
+        if (!$set) return null;                                  // нечего проставлять
+
+        $filter = [
+            'date_from'    => $this->dateOrNull($f['date_from'] ?? null),
+            'date_to'      => $this->dateOrNull($f['date_to'] ?? null),
+            'account_id'   => $acc->id ?? null,
+            'account_code' => $acc->code ?? null,
+            'side'         => $side,
+            'content_like' => trim((string) ($f['content_like'] ?? '')) ?: null,
+        ];
+        // Фильтр без единого условия затронул бы всю базу — отклоняем
+        if (!array_filter([$filter['date_from'], $filter['date_to'], $filter['account_id'], $filter['content_like']])) {
+            return null;
+        }
+
+        return ['filter' => $filter, 'set' => $set, 'reason' => (string) ($u['reason'] ?? '')];
+    }
+
+    /** Запрос по операциям согласно фильтру. */
+    private function bulkQuery(string $db, array $f)
+    {
+        $q = DB::connection($db)->table('operations')->whereNull('deleted_at');
+
+        if ($f['date_from']) $q->where('date', '>=', $f['date_from'] . ' 00:00:00');
+        if ($f['date_to'])   $q->where('date', '<=', $f['date_to'] . ' 23:59:59');
+        if ($f['content_like']) $q->where('content', 'like', '%' . $f['content_like'] . '%');
+
+        if ($f['account_id']) {
+            $id = $f['account_id'];
+            if ($f['side'] === 'debit')       $q->where('in_bi_id', $id);
+            elseif ($f['side'] === 'credit')  $q->where('out_bi_id', $id);
+            else $q->where(fn($w) => $w->where('in_bi_id', $id)->orWhere('out_bi_id', $id));
+        }
+
+        return $q;
+    }
+
+    /**
+     * Применить массовую правку. Возвращает [обновлено, пропущено].
+     * Аналитика пишется в тот слот счёта, который объявлен под этот тип —
+     * поэтому «выручка» ляжет именно в revenue-слот, а не куда попало.
+     */
+    public function applyBulk(string $db, array $filter, array $set): array
+    {
+        $accounts = DB::connection($db)->table('balance_items')
+            ->get(['id', 'code', 'info_1_type', 'info_2_type', 'info_3_type'])->keyBy('id');
+
+        // Тянем и текущие значения слотов — они понадобятся для отката
+        $ops = $this->bulkQuery($db, $filter)->get([
+            'id', 'in_bi_id', 'out_bi_id',
+            'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
+            'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
+        ]);
+
+        $updated = 0; $skipped = 0; $undo = [];
+        foreach ($ops as $op) {
+            $patch = [];
+            foreach ($set as $type => $v) {
+                $id = is_array($v) ? ($v['id'] ?? null) : $v;
+                if (!$id) continue;
+
+                foreach ([['in', $op->in_bi_id], ['out', $op->out_bi_id]] as [$prefix, $biId]) {
+                    // Если сторона в фильтре задана — пишем только в неё
+                    if ($filter['side'] === 'debit'  && $prefix !== 'in')  continue;
+                    if ($filter['side'] === 'credit' && $prefix !== 'out') continue;
+
+                    $bi = $accounts[$biId] ?? null;
+                    if (!$bi) continue;
+                    foreach ([1, 2, 3] as $n) {
+                        if (($bi->{"info_{$n}_type"} ?? null) === $type) {
+                            $patch["{$prefix}_info_{$n}_id"] = $id;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (!$patch) { $skipped++; continue; }
+
+            // Прежние значения именно тех полей, которые меняем
+            $before = [];
+            foreach (array_keys($patch) as $field) $before[$field] = $op->{$field} ?? null;
+            if ($before == array_map(fn($v) => $v, $patch)) { $skipped++; continue; }   // и так уже так
+
+            $undo[] = ['id' => $op->id, 'before' => $before];
+
+            $patch['updated_at'] = now();
+            DB::connection($db)->table('operations')->where('id', $op->id)->update($patch);
+            $updated++;
+        }
+
+        $logId = null;
+        if ($updated > 0) {
+            $logId = DB::connection($db)->table('bulk_update_log')->insertGetId([
+                'filter'      => json_encode($filter, JSON_UNESCAPED_UNICODE),
+                'changes_set' => json_encode($set, JSON_UNESCAPED_UNICODE),
+                'undo'        => json_encode($undo, JSON_UNESCAPED_UNICODE),
+                'affected'    => $updated,
+                'description' => $this->bulkDescription($filter, $set),
+                'created_at'  => now(),
+                'updated_at'  => now(),
+            ]);
+        }
+
+        return ['updated' => $updated, 'skipped' => $skipped, 'log_id' => $logId];
+    }
+
+    /** Откат массовой правки по журналу. */
+    public function revertBulk(string $db, int $logId, ?string $lockDate = null): array
+    {
+        $log = DB::connection($db)->table('bulk_update_log')->where('id', $logId)->first();
+        if (!$log)               return ['ok' => false, 'message' => 'Запись журнала не найдена'];
+        if ($log->reverted_at)   return ['ok' => false, 'message' => 'Эта правка уже откачена'];
+
+        $undo = json_decode($log->undo, true) ?: [];
+        $restored = 0; $skipped = 0;
+
+        foreach ($undo as $u) {
+            $id = $u['id'] ?? null;
+            $before = $u['before'] ?? [];
+            if (!$id || !$before) continue;
+
+            $op = DB::connection($db)->table('operations')->where('id', $id)->whereNull('deleted_at')
+                ->first(['id', 'date']);
+            if (!$op) { $skipped++; continue; }                       // операция удалена
+            if ($lockDate && substr((string) $op->date, 0, 10) <= $lockDate) { $skipped++; continue; }
+
+            DB::connection($db)->table('operations')->where('id', $id)
+                ->update($before + ['updated_at' => now()]);
+            $restored++;
+        }
+
+        DB::connection($db)->table('bulk_update_log')->where('id', $logId)
+            ->update(['reverted_at' => now(), 'updated_at' => now()]);
+
+        return ['ok' => true, 'restored' => $restored, 'skipped' => $skipped];
+    }
+
+    private function bulkDescription(array $f, array $set): string
+    {
+        $parts = [];
+        if ($f['date_from'] ?? null) $parts[] = "с {$f['date_from']}";
+        if ($f['date_to'] ?? null)   $parts[] = "по {$f['date_to']}";
+        if ($f['account_code'] ?? null) $parts[] = "счёт {$f['account_code']}";
+        if ($f['content_like'] ?? null) $parts[] = "текст «{$f['content_like']}»";
+        $what = [];
+        foreach ($set as $t => $v) $what[] = $t . ' → ' . (is_array($v) ? ($v['name'] ?? '') : $v);
+        return mb_substr(implode(', ', $parts) . ': ' . implode('; ', $what), 0, 500);
+    }
+
+    private function dateOrNull(?string $d): ?string
+    {
+        if (!$d) return null;
+        try { return Carbon::parse($d)->toDateString(); } catch (\Throwable) { return null; }
     }
 
     /**
@@ -325,6 +523,14 @@ L;
 ПРОЕКТЫ: {$this->joinInline($prj)}
 {$links}
 
+ЧЕСТНОСТЬ О СВОИХ ВОЗМОЖНОСТЯХ (важнее всего):
+- Ты НЕ видишь уже созданные операции и НЕ можешь менять их напрямую.
+- НИКОГДА не пиши «я проставил», «я изменил», «готово» — ты ничего не меняешь сам.
+  Всё, что ты возвращаешь, — это ПРЕДЛОЖЕНИЯ, которые применит пользователь кнопкой.
+- Если просят массово поправить существующие операции («проставь статью дохода всем
+  операциям за июнь») — не отказывайся и не проси перечислить их вручную:
+  верни описание массовой правки в bulk_updates, система сама найдёт операции.
+
 ГЛАВНОЕ — ВСЕГДА ОТВЕЧАЙ:
 0. Поле reply заполняй ВСЕГДА: краткий ответ по-русски на то, что просил пользователь.
    Это может быть список из справочников выше, пояснение, что ты предлагаешь или сделал.
@@ -379,6 +585,19 @@ L;
    (например, нет типа partner) — ОБЯЗАТЕЛЬНО впиши его название в content,
    например «Аренда помещения, ООО Сириус», чтобы информация не потерялась.
 
+МАССОВАЯ ПРАВКА СУЩЕСТВУЮЩИХ ОПЕРАЦИЙ (bulk_updates):
+14a. Используй, когда просят изменить уже введённые операции по признаку
+   («всем доходам за июнь проставить статью выручки», «замени статью ДДС у платежей аренды»).
+   filter — как отобрать операции:
+     date_from / date_to — период (YYYY-MM-DD);
+     account_code — код счёта из плана счетов (например П587);
+     side — на какой стороне этот счёт: debit (дебет), credit (кредит) или any;
+     content_like — подстрока в содержании, если признак в тексте.
+   set — что проставить: тип аналитики → ТОЧНОЕ название из справочников
+     (revenue, expenses, flow, partner, product, employee, department, cash).
+   Заполняй только те условия, которые реально названы; остальные — null.
+14b. В reply опиши, ЧТО БУДЕТ изменено, а не «изменено». Решение применяет пользователь.
+
 ДИАЛОГ:
 12. Это диалог. Пользователь может уточнять и исправлять предыдущий вариант
    («статья должна быть другой», «это за июль», «сумма 5000, а не 50000»).
@@ -402,10 +621,40 @@ TXT;
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['reply', 'operations', 'dictionary_items', 'links'],
+            'required' => ['reply', 'operations', 'dictionary_items', 'links', 'bulk_updates'],
             'properties' => [
                 // Свободный ответ пользователю: списки, пояснения, что предлагается
                 'reply' => ['type' => 'string'],
+                // Массовая правка уже существующих операций (применяет пользователь)
+                'bulk_updates' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['filter', 'set', 'reason'],
+                        'properties' => [
+                            'reason' => ['type' => 'string'],
+                            'filter' => [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => ['date_from', 'date_to', 'account_code', 'side', 'content_like'],
+                                'properties' => [
+                                    'date_from'    => ['type' => ['string', 'null']],
+                                    'date_to'      => ['type' => ['string', 'null']],
+                                    'account_code' => ['type' => ['string', 'null']],
+                                    'side'         => ['type' => ['string', 'null'], 'enum' => ['debit', 'credit', 'any', null]],
+                                    'content_like' => ['type' => ['string', 'null']],
+                                ],
+                            ],
+                            'set' => [
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => self::ANALYTIC_TYPES,
+                                'properties' => array_fill_keys(self::ANALYTIC_TYPES, ['type' => ['string', 'null']]),
+                            ],
+                        ],
+                    ],
+                ],
                 // Связи «статья ДДС → статья расхода» для простановки default_expense_id
                 'links' => [
                     'type' => 'array',

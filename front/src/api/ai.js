@@ -18,6 +18,16 @@ export const parseFile = (file, text, history) => {
   return api.post('/ai/parse-file', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 
+// Массовая правка существующих операций (спецификацию готовит ИИ)
+export const applyBulk = (filter, set) => api.post('/ai/apply-bulk', { filter, set })
+export const revertBulk = (logId) => api.post(`/ai/bulk-log/${logId}/revert`)
+
+// Выписка: доразбор строк, которые не покрылись правилами (пачками до 20)
+export const classifyStatement = (rows) => api.post('/ai/classify-statement', { rows })
+
+// Создать правила классификации, подтверждённые пользователем
+export const applyRules = (rules) => api.post('/ai/apply-rules', { rules })
+
 // links: [{ flow_id, expense_id }] — проставить статьям ДДС статью расхода
 export const applyLinks = (links) => api.post('/ai/apply-links', { links })
 

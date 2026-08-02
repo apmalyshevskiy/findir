@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getAiStatus, parseOperation, parseFile, transcribeAudio } from '../api/ai'
+import { getAiStatus, parseOperation, parseFile, transcribeAudio, applyBulk, revertBulk } from '../api/ai'
 import AiNewItems from './AiNewItems'
 import AiLinks from './AiLinks'
 
@@ -21,7 +21,7 @@ const loadSaved = () => {
  * Операцию не создаёт — готовит черновик, который пользователь
  * подтверждает в обычной форме (onUseDraft).
  */
-export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 }) {
+export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, resetKey = 0 }) {
   const [enabled, setEnabled] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState('')          // '' | 'parse' | 'stt' | 'save'
@@ -71,12 +71,50 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
     const drafts = r.data.drafts || []
     const newItems = r.data.new_items || []
     const links = r.data.links || []
+    const bulk = r.data.bulk || []
     const reply = r.data.reply || ''
-    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links }])
+    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links, bulk }])
     setHistory(prev => [...prev, { role: 'user', content: userContent }, { role: 'assistant', content: r.data.assistant || '' }])
-    if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0) {
+    if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0 && bulk.length === 0) {
       setError('Не удалось распознать — опишите подробнее.')
     }
+  }
+
+  // Массовая правка существующих операций — применяется только по кнопке
+  const runBulk = async (turnIdx, b) => {
+    if (!confirm(`Изменить ${b.count} ${b.count === 1 ? 'операцию' : 'операций'}? Действие затронет уже проведённые данные.`)) return
+    setBusy('save'); setError('')
+    try {
+      const r = await applyBulk(b.filter, b.set)
+      setTurns(prev => prev.map((t, i) => i !== turnIdx ? t : {
+        ...t,
+        bulk: (t.bulk || []).filter(x => x !== b),
+        bulkDone: [...(t.bulkDone || []), {
+          updated: r.data.updated, skipped: r.data.skipped,
+          lock: r.data.lock_applied, logId: r.data.log_id, reverted: false,
+        }],
+      }))
+      if (onChanged) onChanged()
+    } catch (e) {
+      setError(e?.response?.data?.message || 'Не удалось применить правку')
+    } finally { setBusy('') }
+  }
+
+  // Откат массовой правки по журналу
+  const undoBulk = async (turnIdx, k, logId) => {
+    if (!confirm('Вернуть прежние значения по этой правке?')) return
+    setBusy('save'); setError('')
+    try {
+      const r = await revertBulk(logId)
+      setTurns(prev => prev.map((t, i) => i !== turnIdx ? t : {
+        ...t,
+        bulkDone: (t.bulkDone || []).map((d, j) => j === k
+          ? { ...d, reverted: true, restored: r.data.restored, revSkipped: r.data.skipped } : d),
+      }))
+      if (onChanged) onChanged()
+    } catch (e) {
+      setError(e?.response?.data?.message || 'Не удалось откатить правку')
+    } finally { setBusy('') }
   }
 
   // Прикреплённый файл: фото чека, счёт, выписка xlsx/csv
@@ -238,6 +276,58 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
                     onAllDone={finishItems}
                   />
                 )}
+                {isLast && (t.bulk || []).map((b, k) => (
+                  <div key={`b${k}`} className="rounded-lg border border-amber-300 bg-amber-50/60 p-3">
+                    <p className="text-xs font-medium text-amber-900 mb-1">
+                      Массовая правка уже проведённых операций
+                    </p>
+                    <p className="text-sm text-gray-800">
+                      Затронет <b>{b.count}</b> {b.count === 1 ? 'операцию' : 'операций'}
+                      {b.filter?.date_from && <> · период {b.filter.date_from} — {b.filter.date_to || '…'}</>}
+                      {b.filter?.account_code && <> · счёт {b.filter.account_code}
+                        {b.filter.side !== 'any' && <> ({b.filter.side === 'debit' ? 'дебет' : 'кредит'})</>}</>}
+                    </p>
+                    <p className="text-sm text-gray-700 mt-0.5">
+                      Проставить: {Object.entries(b.set).map(([t2, v]) => `${t2} → «${v.name}»`).join(', ')}
+                    </p>
+                    {(b.sample || []).length > 0 && (
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        например: {b.sample.map(s => `#${s.id} ${s.date}`).join(', ')}…
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={() => runBulk(i, b)} disabled={!!busy}
+                        className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-40">
+                        {busy === 'save' ? 'Применяю…' : `Применить к ${b.count}`}
+                      </button>
+                      <span className="text-[11px] text-gray-500">действие необратимо — проверьте условие</span>
+                    </div>
+                  </div>
+                ))}
+                {isLast && (t.bulkDone || []).map((d, k) => (
+                  <div key={`bd${k}`} className="flex items-center justify-between gap-3 flex-wrap">
+                    {d.reverted ? (
+                      <p className="text-xs text-gray-500">
+                        ↩ Правка откачена: восстановлено {d.restored}
+                        {d.revSkipped > 0 && <> · пропущено {d.revSkipped}</>}
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-xs text-green-700">
+                          ✓ Изменено операций: {d.updated}
+                          {d.skipped > 0 && <> · пропущено {d.skipped} (нет подходящего разреза)</>}
+                          {d.lock && <> · ограничено датой запрета {d.lock}</>}
+                        </p>
+                        {d.logId && (
+                          <button onClick={() => undoBulk(i, k, d.logId)} disabled={!!busy}
+                            className="px-2.5 py-1 border border-gray-200 bg-white rounded-lg text-xs text-gray-600 hover:text-amber-700 hover:border-amber-300 disabled:opacity-40">
+                            ↩ Откатить
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
                 {isLast && (t.links || []).length > 0 && (
                   <AiLinks
                     links={t.links}

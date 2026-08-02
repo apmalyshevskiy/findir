@@ -333,7 +333,8 @@ export default function OperationsPage() {
       <OperationTemplates onUse={handleUseDraft} refreshKey={tplKey} />
 
       {/* Быстрый ввод через ИИ (скрыт, если ключ не настроен) */}
-      <AiQuickEntry onUseDraft={handleUseDraft} onSaveTemplate={saveTemplate} resetKey={aiResetKey} />
+      <AiQuickEntry onUseDraft={handleUseDraft} onSaveTemplate={saveTemplate}
+        onChanged={loadOperations} resetKey={aiResetKey} />
 
       {/* Таблица операций */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">

@@ -51,7 +51,35 @@ class BankStatementMatcher
      */
     public function matchRows(array $rows, string $ourAccountNumber): array
     {
-        return array_map(fn($row) => $this->matchRow($row), $rows);
+        $this->matchedRuleIds = [];
+        $out = array_map(fn($row) => $this->matchRow($row), $rows);
+        $this->flushRuleStats();
+        return $out;
+    }
+
+    /** id правил, сработавших в текущем разборе (для телеметрии). */
+    private array $matchedRuleIds = [];
+
+    /**
+     * Записать статистику срабатываний одним запросом.
+     * Считаем именно разбор выписки: видно, какие правила реально работают,
+     * а какие мертвы. Ошибку глушим — телеметрия не должна ронять импорт.
+     */
+    private function flushRuleStats(): void
+    {
+        if (!$this->matchedRuleIds) return;
+        $counts = array_count_values($this->matchedRuleIds);
+        try {
+            foreach ($counts as $id => $n) {
+                DB::connection($this->dbName)->table('payment_classification_rules')
+                    ->where('id', $id)
+                    ->update([
+                        'hit_count'       => DB::raw('hit_count + ' . (int) $n),
+                        'last_applied_at' => now(),
+                    ]);
+            }
+        } catch (\Throwable) { /* телеметрия не критична */ }
+        $this->matchedRuleIds = [];
     }
 
     /**
@@ -215,6 +243,7 @@ class BankStatementMatcher
         // 2. Правила тенанта (из таблицы, по приоритету)
         foreach ($this->rules as $rule) {
             if ($this->ruleMatches($rule, $row)) {
+                $this->matchedRuleIds[] = $rule->id;
                 return $rule->category;
             }
         }

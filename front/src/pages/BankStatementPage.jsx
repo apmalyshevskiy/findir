@@ -6,6 +6,7 @@ import { parseBankStatement } from '../api/bankStatements'
 import { createOperation, updateOperation, deleteOperation, getOperations } from '../api/operations'
 import { getInfo } from '../api/info'
 import { getBalanceItems } from '../api/operations'
+import { classifyStatement, applyRules } from '../api/ai'
 import Layout from '../components/Layout'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -817,6 +818,74 @@ export default function BankStatementPage() {
     setForcedIgnored({ value, nonce: Date.now() })
   }
 
+  // ── ИИ-доразбор строк, которые не покрылись правилами ──────────────────────
+  const [aiBusy, setAiBusy]       = useState(false)
+  const [aiProgress, setAiProgress] = useState(null)   // { done, total }
+  const [aiRules, setAiRules]     = useState([])       // предложенные правила
+  const [aiDone, setAiDone]       = useState(0)        // сколько строк размечено
+  const [aiError, setAiError]     = useState('')
+
+  // Нераспознанное: категории нет или OTHER
+  const unmatchedIdx = rows
+    .map((r, i) => (!r.suggested_category || r.suggested_category === 'OTHER') ? i : -1)
+    .filter(i => i >= 0)
+
+  const runAi = async () => {
+    if (!unmatchedIdx.length || aiBusy) return
+    setAiBusy(true); setAiError(''); setAiRules([]); setAiDone(0)
+    const CHUNK = 20
+    let filled = 0
+    const proposals = []
+    try {
+      for (let from = 0; from < unmatchedIdx.length; from += CHUNK) {
+        const part = unmatchedIdx.slice(from, from + CHUNK)
+        setAiProgress({ done: from, total: unmatchedIdx.length })
+        const payload = part.map(i => ({
+          direction:        rows[i].direction || null,
+          amount:           rows[i].amount ?? null,
+          counterparty_raw: rows[i].counterparty_raw || null,
+          counterparty_inn: rows[i].counterparty_inn || null,
+          purpose_raw:      rows[i].purpose_raw || null,
+        }))
+        const r = await classifyStatement(payload)
+        const got = r.data.rows || {}
+        // Ключ ответа — позиция внутри пачки, переводим в индекс строки выписки
+        setRows(prev => prev.map((row, i) => {
+          const pos = part.indexOf(i)
+          if (pos < 0 || !got[pos]) return row
+          filled++
+          return { ...row, ...got[pos], _aiV: (row._aiV || 0) + 1 }
+        }))
+        ;(r.data.rules || []).forEach(x => proposals.push(x))
+      }
+      setAiDone(filled)
+      // Дубли между пачками отсеиваем
+      const seen = new Set()
+      setAiRules(proposals.filter(x => {
+        const k = `${x.direction}|${x.inn}|${x.purpose_keywords}|${x.category}`
+        if (seen.has(k)) return false
+        seen.add(k); return true
+      }))
+    } catch (e) {
+      setAiError(e.response?.data?.message || 'Не удалось разобрать строки')
+    } finally {
+      setAiBusy(false); setAiProgress(null)
+    }
+  }
+
+  const saveAiRules = async () => {
+    if (!aiRules.length) return
+    setAiBusy(true); setAiError('')
+    try {
+      const r = await applyRules(aiRules)
+      setAiRules([])
+      setAiDone(d => d)   // счётчик строк не трогаем
+      alert(`Создано правил: ${r.data.created}. Дальше такие платежи распознаются автоматически.`)
+    } catch (e) {
+      setAiError(e.response?.data?.message || 'Не удалось создать правила')
+    } finally { setAiBusy(false) }
+  }
+
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
     // Загружаем счета и справочники
@@ -1123,9 +1192,64 @@ export default function BankStatementPage() {
             </div>
           </div>
 
+          {/* ── ИИ: доразбор нераспознанного + предложения правил ── */}
+          {(unmatchedIdx.length > 0 || aiRules.length > 0 || aiDone > 0) && (
+            <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-sm text-gray-700">
+                  {unmatchedIdx.length > 0 ? (
+                    <>Правила не распознали <b>{unmatchedIdx.length}</b> {unmatchedIdx.length === 1 ? 'строку' : 'строк'}</>
+                  ) : (
+                    <>Все строки распознаны</>
+                  )}
+                  {aiDone > 0 && <span className="text-green-700"> · ИИ разметил {aiDone}</span>}
+                </div>
+                {unmatchedIdx.length > 0 && (
+                  <button onClick={runAi} disabled={aiBusy}
+                    className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-medium hover:bg-blue-800 disabled:opacity-40">
+                    {aiBusy
+                      ? (aiProgress ? `Разбираю… ${aiProgress.done}/${aiProgress.total}` : 'Разбираю…')
+                      : `Разобрать ИИ (${unmatchedIdx.length})`}
+                  </button>
+                )}
+              </div>
+
+              {aiError && <p className="text-xs text-red-600 mt-2">{aiError}</p>}
+
+              {aiRules.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-blue-200">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <p className="text-xs font-medium text-blue-800">
+                      Закрепить правилами ({aiRules.length}) — дальше такие платежи распознаются бесплатно:
+                    </p>
+                    <button onClick={saveAiRules} disabled={aiBusy}
+                      className="px-3 py-1 bg-violet-600 text-white rounded-lg text-xs font-medium hover:bg-violet-700 disabled:opacity-40">
+                      Создать правила
+                    </button>
+                  </div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {aiRules.map((r, k) => (
+                      <div key={k} className="flex items-start justify-between gap-2 text-xs">
+                        <span className="text-gray-700">
+                          <span className="text-gray-400">[{r.direction}]</span>{' '}
+                          {r.inn && <span className="font-mono">ИНН {r.inn} </span>}
+                          {r.purpose_keywords && <>«{r.purpose_keywords}» </>}
+                          <span className="text-gray-400">→</span> <b>{r.category}</b>
+                          {r.reason && <span className="block text-gray-400">{r.reason}</span>}
+                        </span>
+                        <button onClick={() => setAiRules(list => list.filter((_, j) => j !== k))}
+                          className="text-gray-300 hover:text-red-500 px-1" title="Не создавать это правило">×</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {rows.map((row, idx) => (
             <StatementRow
-              key={idx}
+              key={`${idx}:${row._aiV || 0}`}
               row={row}
               projectId={projectId}
               cashInfoId={cashInfoId}
