@@ -21,7 +21,7 @@ const flatten = (items) => {
  * Родителя можно поменять перед созданием; «Создать все» соблюдает порядок
  * (сначала родители, потом дочерние).
  */
-export default function AiNewItems({ items, disabled, onDone }) {
+export default function AiNewItems({ items, created = [], disabled, onCreated, onAllDone }) {
   const [dicts, setDicts] = useState({})        // type => [элементы справочника]
   const [parents, setParents] = useState({})    // индекс элемента => выбранный parent_id ('' | id | 'new:Имя')
   const [busy, setBusy] = useState(false)
@@ -45,35 +45,57 @@ export default function AiNewItems({ items, disabled, onDone }) {
     return ''
   }
 
+  const refreshDict = (type) =>
+    getInfo({ type }).then(r => setDicts(d => ({ ...d, [type]: r.data.data || [] }))).catch(() => {})
+
   const createAll = async () => {
     setBusy(true); setError('')
-    const created = {}   // `${type}|${norm(name)}` => id
+    const madeIds = {}   // `${type}|${norm(name)}` => id
+    const made = []
     try {
       for (let i = 0; i < items.length; i++) {
         const it = items[i]
         const v = parentValue(i)
         let parent_id = null
-        if (v.startsWith('new:')) parent_id = created[`${it.type}|${norm(v.slice(4))}`] ?? null
+        if (v.startsWith('new:')) parent_id = madeIds[`${it.type}|${norm(v.slice(4))}`] ?? null
         else if (v) parent_id = Number(v)
 
         const r = await createInfo({ name: it.name, type: it.type, parent_id })
         const id = r?.data?.data?.id
-        if (id) created[`${it.type}|${norm(it.name)}`] = id
+        if (id) madeIds[`${it.type}|${norm(it.name)}`] = id
+        made.push(it)
       }
-      onDone(items)
+      onCreated(made)
+      onAllDone(made)
     } catch (e) {
       setError(e?.response?.data?.message || 'Не удалось создать элементы')
     } finally { setBusy(false) }
   }
 
+  // Создание по одному: элемент уходит из списка, остальные остаются доступны
   const createOne = async (idx) => {
     setBusy(true); setError('')
     const it = items[idx]
     try {
       const v = parentValue(idx)
-      const parent_id = v && !v.startsWith('new:') ? Number(v) : null
+      let parent_id = null
+      if (v && !v.startsWith('new:')) parent_id = Number(v)
+      else if (v.startsWith('new:')) {
+        // Родитель из этой же пачки: он мог быть уже создан — ищем в свежем справочнике
+        const pname = norm(v.slice(4))
+        const found = (dicts[it.type] || []).find(x => norm(x.name) === pname)
+        if (!found) {
+          setError(`Сначала создайте группу «${v.slice(4)}» — иначе «${it.name}» попадёт на верхний уровень.`)
+          setBusy(false)
+          return
+        }
+        parent_id = found.id
+      }
       await createInfo({ name: it.name, type: it.type, parent_id })
-      onDone([it])
+      await refreshDict(it.type)      // чтобы созданный элемент стал доступен как родитель
+      setParents({})                  // индексы сдвинутся — сбрасываем ручные правки
+      onCreated([it])
+      if (items.length === 1) onAllDone([it])
     } catch (e) {
       setError(e?.response?.data?.message || 'Не удалось создать элемент')
     } finally { setBusy(false) }
@@ -83,15 +105,29 @@ export default function AiNewItems({ items, disabled, onDone }) {
     <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-3">
       <div className="flex items-center justify-between gap-3 mb-2">
         <p className="text-xs font-medium text-blue-800">
-          Добавить в справочники{items.length > 1 ? ` (${items.length})` : ''}:
+          Добавить в справочники{items.length > 1 ? ` (осталось ${items.length})` : ''}:
         </p>
-        {items.length > 1 && (
-          <button onClick={createAll} disabled={busy || disabled}
-            className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-40">
-            {busy ? 'Создаю…' : 'Создать все'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {created.length > 0 && (
+            <button onClick={() => onAllDone(created)} disabled={busy || disabled}
+              className="px-2.5 py-1 border border-blue-200 bg-white text-blue-700 rounded-lg text-xs hover:bg-blue-50 disabled:opacity-40">
+              Готово
+            </button>
+          )}
+          {items.length > 1 && (
+            <button onClick={createAll} disabled={busy || disabled}
+              className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-40">
+              {busy ? 'Создаю…' : 'Создать все'}
+            </button>
+          )}
+        </div>
       </div>
+
+      {created.length > 0 && (
+        <p className="text-xs text-green-700 mb-2">
+          ✓ Создано ({created.length}): {created.map(c => c.name).join(', ')}
+        </p>
+      )}
 
       <div className="max-h-64 overflow-y-auto space-y-1">
         {items.map((it, idx) => {

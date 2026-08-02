@@ -15,7 +15,8 @@
       "PowerShell(docker exec findir_php php -l app/Http/Controllers/Api/V1/FundPlanDocController.php)",
       "PowerShell(docker exec findir_php php artisan tinker _doc_check.php 2>&1)",
       "PowerShell(docker exec findir_php php artisan route:list --path=fund-plan 2>$null)",
-      "PowerShell(docker restart findir_php 2>&1)"
+      "PowerShell(docker restart findir_php 2>&1)",
+      "PowerShell(docker exec findir_php php artisan tinker _ai_link.php 2>&1)"
     ]
   }
 }

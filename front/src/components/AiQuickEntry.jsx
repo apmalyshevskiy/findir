@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAiStatus, parseOperation, transcribeAudio } from '../api/ai'
 import AiNewItems from './AiNewItems'
+import AiLinks from './AiLinks'
 
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(v || 0)
 
@@ -61,18 +62,49 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
       const r = await parseOperation(t, undefined, history)
       const drafts = r.data.drafts || []
       const newItems = r.data.new_items || []
-      setTurns(prev => [...prev, { role: 'ai', drafts, newItems }])
+      const links = r.data.links || []
+      const reply = r.data.reply || ''
+      setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links }])
       setHistory(prev => [...prev, { role: 'user', content: t }, { role: 'assistant', content: r.data.assistant || '' }])
-      if (drafts.length === 0 && newItems.length === 0) setError('Не удалось распознать — опишите подробнее.')
+      if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0) {
+        setError('Не удалось распознать — опишите подробнее.')
+      }
     } catch (e) {
       setError(e?.response?.data?.message || 'Ошибка разбора')
     } finally { setBusy('') }
   }
 
-  // Элементы созданы — фиксируем в ленте и сообщаем модели, чтобы подставила их в черновик
-  const onItemsCreated = async (created) => {
-    setTurns(prev => [...prev, ...created.map(c => ({ role: 'ai', created: c }))])
-    const names = created.map(c => `«${c.name}»`).join(', ')
+  // Элемент(ы) созданы: убираем из списка предложений, остальные остаются доступны.
+  // Диалог НЕ трогаем — иначе панель перестанет быть последней и список пропадёт.
+  const markCreated = (turnIdx, made) => {
+    setTurns(prev => prev.map((t, i) => {
+      if (i !== turnIdx) return t
+      const isMade = (x) => made.some(m => m.type === x.type && m.name === x.name)
+      return {
+        ...t,
+        newItems: (t.newItems || []).filter(x => !isMade(x)),
+        createdItems: [...(t.createdItems || []), ...made],
+      }
+    }))
+  }
+
+  // Связи проставлены — убираем их из предложений, диалог не трогаем
+  const markLinked = (turnIdx, done) => {
+    setTurns(prev => prev.map((t, i) => {
+      if (i !== turnIdx) return t
+      const isDone = (x) => done.some(d => d.flow_id === x.flow_id)
+      return {
+        ...t,
+        links: (t.links || []).filter(x => !isDone(x)),
+        appliedLinks: [...(t.appliedLinks || []), ...done],
+      }
+    }))
+  }
+
+  // Работа со списком завершена — сообщаем модели, чтобы подставила элементы в черновик
+  const finishItems = async (made) => {
+    if (!made?.length) return
+    const names = made.map(c => `«${c.name}»`).join(', ')
     await send(`Создано в справочнике: ${names} — используй их.`)
   }
 
@@ -135,6 +167,11 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
             const isLast = i === lastIdx
             return (
               <div key={i} className="space-y-2">
+                {t.reply && (
+                  <div className="flex justify-start">
+                    <div className="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-bl-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap">{t.reply}</div>
+                  </div>
+                )}
                 {(t.drafts || []).map((d, k) => {
                   const p = d.payload || {}
                   const low = (d.confidence ?? 0) < 0.7
@@ -171,7 +208,29 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
                 })}
 
                 {isLast && (t.newItems || []).length > 0 && (
-                  <AiNewItems items={t.newItems} disabled={!!busy} onDone={onItemsCreated} />
+                  <AiNewItems
+                    items={t.newItems}
+                    created={t.createdItems || []}
+                    disabled={!!busy}
+                    onCreated={(made) => markCreated(i, made)}
+                    onAllDone={finishItems}
+                  />
+                )}
+                {isLast && (t.links || []).length > 0 && (
+                  <AiLinks
+                    links={t.links}
+                    applied={t.appliedLinks || []}
+                    disabled={!!busy}
+                    onApplied={(done) => markLinked(i, done)}
+                  />
+                )}
+                {isLast && (t.links || []).length === 0 && (t.appliedLinks || []).length > 0 && (
+                  <p className="text-xs text-green-700">✓ Проставлено связей: {t.appliedLinks.length}</p>
+                )}
+                {isLast && (t.newItems || []).length === 0 && (t.createdItems || []).length > 0 && (
+                  <p className="text-xs text-green-700">
+                    ✓ Создано в справочниках ({t.createdItems.length}): {t.createdItems.map(c => c.name).join(', ')}
+                  </p>
                 )}
               </div>
             )

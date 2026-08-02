@@ -124,6 +124,7 @@ Route::prefix('v1')->group(function () {
     // ИИ-ввод операций (текст/голос → черновик)
     Route::get('/ai/status',           [AiController::class, 'status']);
     Route::post('/ai/parse-operation', [AiController::class, 'parseOperation']);
+    Route::post('/ai/apply-links',     [AiController::class, 'applyLinks']);
     Route::post('/ai/transcribe',      [AiController::class, 'transcribe']);
 
 });

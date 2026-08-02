@@ -33,8 +33,9 @@ class OperationDraftService
             ->whereNull('deleted_at')->orderBy('id')->get(['id', 'name']);
 
         $dicts = $this->dictionaries($db);
+        $flowExpense = $this->flowExpenseMap($db);   // статья ДДС → статья расхода
 
-        $messages = [['role' => 'system', 'content' => $this->systemPrompt($accounts, $dicts, $projects)]];
+        $messages = [['role' => 'system', 'content' => $this->systemPrompt($accounts, $dicts, $projects, $flowExpense)]];
         foreach ($history as $h) {
             $role = ($h['role'] ?? '') === 'assistant' ? 'assistant' : 'user';
             $content = trim((string) ($h['content'] ?? ''));
@@ -47,7 +48,7 @@ class OperationDraftService
         $usage = $result['_usage'] ?? [];
         $drafts = [];
         foreach (($result['operations'] ?? []) as $op) {
-            $drafts[] = $this->toDraft($op, $accounts, $projects, $dicts);
+            $drafts[] = $this->toDraft($op, $accounts, $projects, $dicts, $flowExpense);
         }
 
         // Сырой ответ модели возвращаем, чтобы фронт добавил его в историю диалога
@@ -55,12 +56,43 @@ class OperationDraftService
         unset($raw['_usage']);
 
         return [
+            'reply'     => trim((string) ($result['reply'] ?? '')),
             'drafts'    => $drafts,
             'new_items' => $this->newItems($result['dictionary_items'] ?? [], $dicts),
+            'links'     => $this->links($result['links'] ?? [], $dicts, $flowExpense),
             'assistant' => json_encode($raw, JSON_UNESCAPED_UNICODE),
             'usage'     => $usage,
             'text'      => $text,
         ];
+    }
+
+    /**
+     * Предложенные связи «статья ДДС → статья расхода».
+     * Названия резолвим в id справочника тенанта; уже проставленные пропускаем.
+     */
+    private function links(array $links, array $dicts, array $flowExpense): array
+    {
+        $out = [];
+        foreach ($links as $l) {
+            $flowName = trim((string) ($l['flow'] ?? ''));
+            $expName  = trim((string) ($l['expense'] ?? ''));
+            if ($flowName === '' || $expName === '') continue;
+
+            $flowId = isset($dicts['flow']) ? $this->matchByName($dicts['flow'], $flowName) : null;
+            $expId  = isset($dicts['expenses']) ? $this->matchByName($dicts['expenses'], $expName) : null;
+            if (!$flowId || !$expId) continue;                  // нет в справочниках — пропускаем
+            if (($flowExpense[$flowId] ?? null) === $expId) continue;   // уже связано так же
+
+            $out[$flowId] = [
+                'flow_id'      => $flowId,
+                'flow_name'    => $dicts['flow'][$flowId],
+                'expense_id'   => $expId,
+                'expense_name' => $dicts['expenses'][$expId],
+                'replaces'     => isset($flowExpense[$flowId])
+                    ? ($dicts['expenses'][$flowExpense[$flowId]] ?? null) : null,
+            ];
+        }
+        return array_values($out);
     }
 
     /** Человеческие названия типов справочников (для UI). */
@@ -113,6 +145,23 @@ class OperationDraftService
         return $list;
     }
 
+    /**
+     * Связь «статья ДДС → статья расхода» (info.default_expense_id).
+     * Нужна, когда кассовый метод и метод начисления совпадают: выбрали статью
+     * движения денег — статья расхода подставляется сама.
+     *
+     * @return array [flow_id => expense_id]
+     */
+    private function flowExpenseMap(string $db): array
+    {
+        return DB::connection($db)->table('info')
+            ->where('type', 'flow')->whereNotNull('default_expense_id')
+            ->whereNull('deleted_at')->where('is_active', true)
+            ->pluck('default_expense_id', 'id')
+            ->map(fn($v) => (int) $v)
+            ->all();
+    }
+
     /** Справочники тенанта по типам: [type => [id => name]] */
     private function dictionaries(string $db): array
     {
@@ -126,8 +175,21 @@ class OperationDraftService
         return $out;
     }
 
-    private function systemPrompt($accounts, array $dicts, $projects): string
+    private function systemPrompt($accounts, array $dicts, $projects, array $flowExpense = []): string
     {
+        // Пары «статья ДДС → статья расхода», чтобы модель выбирала их согласованно
+        $links = '';
+        foreach ($flowExpense as $flowId => $expId) {
+            $f = $dicts['flow'][$flowId] ?? null;
+            $e = $dicts['expenses'][$expId] ?? null;
+            if ($f && $e) $links .= "\n- {$f} → {$e}";
+        }
+        $links = $links === '' ? '' : <<<L
+
+СВЯЗИ «СТАТЬЯ ДДС → СТАТЬЯ РАСХОДА» (кассовый метод совпадает с начислением —
+выбрав статью ДДС, указывай в expenses именно связанную статью):{$links}
+L;
+
         $acc = [];
         foreach ($accounts as $a) {
             $an = array_filter([$a->info_1_type, $a->info_2_type]);
@@ -158,6 +220,20 @@ class OperationDraftService
 СПРАВОЧНИКИ (подбирай точное название из списка; если подходящего нет — верни null):{$dictText}
 
 ПРОЕКТЫ: {$this->joinInline($prj)}
+{$links}
+
+ГЛАВНОЕ — ВСЕГДА ОТВЕЧАЙ:
+0. Поле reply заполняй ВСЕГДА: краткий ответ по-русски на то, что просил пользователь.
+   Это может быть список из справочников выше, пояснение, что ты предлагаешь или сделал.
+   На вопросы («покажи статьи ДДС», «какие есть статьи расходов», «посмотри и предложи»)
+   отвечай именно в reply, опираясь на справочники выше. Не оставляй reply пустым никогда.
+   Если операции создавать не нужно — operations оставь пустым, но reply заполни.
+
+СВЯЗИ СТАТЕЙ ДДС И РАСХОДОВ:
+0a. Если просят связать/привязать статьи ДДС со статьями расходов — верни пары в links:
+   flow — точное название статьи ДДС, expense — точное название статьи расхода
+   (оба ТОЧНО из справочников выше). В reply перечисли предлагаемые пары словами.
+   Связывай только осмысленные пары; если нужной статьи расхода нет — создай её в dictionary_items.
 
 ПРАВИЛА:
 1. Дебет (debit_code) — счёт, который получает/увеличивается. Кредит (credit_code) — источник.
@@ -223,8 +299,23 @@ TXT;
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['operations', 'dictionary_items'],
+            'required' => ['reply', 'operations', 'dictionary_items', 'links'],
             'properties' => [
+                // Свободный ответ пользователю: списки, пояснения, что предлагается
+                'reply' => ['type' => 'string'],
+                // Связи «статья ДДС → статья расхода» для простановки default_expense_id
+                'links' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['flow', 'expense'],
+                        'properties' => [
+                            'flow'    => ['type' => 'string'],
+                            'expense' => ['type' => 'string'],
+                        ],
+                    ],
+                ],
                 'dictionary_items' => [
                     'type' => 'array',
                     'items' => [
@@ -267,7 +358,7 @@ TXT;
     }
 
     /** Ответ модели → payload операции + пояснения для пользователя. */
-    private function toDraft(array $op, $accounts, $projects, array $dicts): array
+    private function toDraft(array $op, $accounts, $projects, array $dicts, array $flowExpense = []): array
     {
         $warnings = [];
 
@@ -283,6 +374,11 @@ TXT;
             $id = $this->matchByName($dicts[$type], $name);
             if ($id) $resolved[$type] = $id;
             else $warnings[] = "В справочнике «{$type}» не найдено: «{$name}»";
+        }
+
+        // Статья ДДС связана со статьёй расхода → подставляем её, если модель не выбрала свою
+        if (!empty($resolved['flow']) && empty($resolved['expenses']) && isset($flowExpense[$resolved['flow']])) {
+            $resolved['expenses'] = $flowExpense[$resolved['flow']];
         }
 
         $project = $this->matchProject($projects, $op['project'] ?? null);

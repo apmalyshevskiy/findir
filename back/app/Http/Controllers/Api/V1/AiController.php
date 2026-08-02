@@ -50,6 +50,30 @@ class AiController extends TenantController
         return response()->json($res);
     }
 
+    /**
+     * POST /ai/apply-links — проставить связь «статья ДДС → статья расхода»
+     * (info.default_expense_id). Применяется только по подтверждению пользователя.
+     */
+    public function applyLinks(Request $request)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'links'              => 'required|array|min:1',
+            'links.*.flow_id'    => 'required|integer',
+            'links.*.expense_id' => 'required|integer',
+        ]);
+
+        $n = 0;
+        foreach ($data['links'] as $l) {
+            $n += \Illuminate\Support\Facades\DB::connection($this->dbName)->table('info')
+                ->where('id', $l['flow_id'])->where('type', 'flow')
+                ->update(['default_expense_id' => $l['expense_id'], 'updated_at' => now()]);
+        }
+
+        return response()->json(['ok' => true, 'updated' => $n]);
+    }
+
     /** POST /ai/transcribe (multipart: audio) → { text } */
     public function transcribe(Request $request)
     {
