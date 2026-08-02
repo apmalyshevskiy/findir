@@ -35,4 +35,16 @@ return [
         ],
     ],
 
+    /*
+    | RouterAI — OpenAI-совместимый шлюз к моделям (routerai.ru).
+    | Модели вынесены в env, чтобы сравнивать качество/цену без правки кода.
+    */
+    'routerai' => [
+        'key'         => env('ROUTERAI_API_KEY'),
+        'base_url'    => env('ROUTERAI_BASE_URL', 'https://routerai.ru/api/v1'),
+        'model'       => env('ROUTERAI_MODEL', 'anthropic/claude-sonnet-5'),
+        'model_stt'   => env('ROUTERAI_MODEL_STT', 'fish-audio/transcribe-1'),
+        'timeout'     => (int) env('ROUTERAI_TIMEOUT', 60),
+    ],
+
 ];

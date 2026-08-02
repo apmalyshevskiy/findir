@@ -19,6 +19,8 @@ use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\FundsController;
 use App\Http\Controllers\Api\V1\FundSchemeController;
 use App\Http\Controllers\Api\V1\FundPlanDocController;
+use App\Http\Controllers\Api\V1\AiController;
+use App\Http\Controllers\Api\V1\OperationTemplatesController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -112,5 +114,16 @@ Route::prefix('v1')->group(function () {
     // Акт финансового планирования (документ)
     Route::get('/fund-plan-docs', [FundPlanDocController::class, 'show']);
     Route::put('/fund-plan-docs', [FundPlanDocController::class, 'save']);
+
+    // Шаблоны операций (повтор регулярных проводок)
+    Route::get('/operation-templates',            [OperationTemplatesController::class, 'index']);
+    Route::post('/operation-templates',           [OperationTemplatesController::class, 'store']);
+    Route::post('/operation-templates/{id}/use',  [OperationTemplatesController::class, 'use']);
+    Route::delete('/operation-templates/{id}',    [OperationTemplatesController::class, 'destroy']);
+
+    // ИИ-ввод операций (текст/голос → черновик)
+    Route::get('/ai/status',           [AiController::class, 'status']);
+    Route::post('/ai/parse-operation', [AiController::class, 'parseOperation']);
+    Route::post('/ai/transcribe',      [AiController::class, 'transcribe']);
 
 });

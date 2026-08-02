@@ -4,6 +4,9 @@ import api from '../api/client'
 import { getOperations, deleteOperation, getBalanceItems, createOperation} from '../api/operations'
 import { getProjects } from '../api/projects'
 import OperationForm from '../components/OperationForm'
+import AiQuickEntry from '../components/AiQuickEntry'
+import OperationTemplates from '../components/OperationTemplates'
+import { createTemplate } from '../api/operationTemplates'
 import Layout from '../components/Layout'
 
 const INFO_TYPES = [
@@ -89,6 +92,9 @@ export default function OperationsPage() {
   const [projects, setProjects] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [editOperation, setEditOperation] = useState(null)
+  const [draftOperation, setDraftOperation] = useState(null)   // черновик от ИИ
+  const [aiResetKey, setAiResetKey] = useState(0)              // сброс панели ИИ после сохранения
+  const [tplKey, setTplKey] = useState(0)                      // перезагрузка списка шаблонов
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState({ ...getMonthRange(), in_bi_id: '', out_bi_id: '', project_id: '' })
   const [selected, setSelected] = useState(new Set())
@@ -153,8 +159,29 @@ export default function OperationsPage() {
     }
   }
 
-  const handleEdit = (op) => { setEditOperation(op); setShowForm(true) }
-  const handleFormClose = () => { setShowForm(false); setEditOperation(null) }
+  const handleEdit = (op) => { setDraftOperation(null); setEditOperation(op); setShowForm(true) }
+  const handleUseDraft = (payload) => { setEditOperation(null); setDraftOperation(payload); setShowForm(true) }
+  const handleFormClose = () => { setShowForm(false); setEditOperation(null); setDraftOperation(null) }
+
+  // Сохранить операцию как шаблон для повторения в следующем периоде
+  const saveTemplate = async (payload, defaultName) => {
+    const name = prompt('Название шаблона (короткая фраза для кнопки):', defaultName || '')
+    if (!name || !name.trim()) return
+    try {
+      await createTemplate(name.trim(), payload)
+      setTplKey(k => k + 1)
+    } catch (err) {
+      alert(err.response?.data?.message || 'Не удалось сохранить шаблон')
+    }
+  }
+
+  const templateFromOp = (op) => saveTemplate({
+    project_id: op.project_id, amount: op.amount, quantity: op.quantity,
+    in_bi_id: op.in_bi_id, out_bi_id: op.out_bi_id,
+    in_info_1_id: op.in_info_1_id, in_info_2_id: op.in_info_2_id, in_info_3_id: op.in_info_3_id,
+    out_info_1_id: op.out_info_1_id, out_info_2_id: op.out_info_2_id, out_info_3_id: op.out_info_3_id,
+    content: op.content, note: op.note,
+  }, op.content || '')
 
   const toggleSelect = (id) => {
     setSelected(prev => {
@@ -301,6 +328,12 @@ export default function OperationsPage() {
           </p>
         </div>
       </div>
+
+      {/* Шаблоны регулярных операций */}
+      <OperationTemplates onUse={handleUseDraft} refreshKey={tplKey} />
+
+      {/* Быстрый ввод через ИИ (скрыт, если ключ не настроен) */}
+      <AiQuickEntry onUseDraft={handleUseDraft} onSaveTemplate={saveTemplate} resetKey={aiResetKey} />
 
       {/* Таблица операций */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
@@ -506,6 +539,9 @@ export default function OperationsPage() {
                             className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
                         ) : (
                           <>
+                            <button onClick={() => templateFromOp(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>
+                            </button>
                             <button onClick={() => handleEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
                             <button onClick={() => handleDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
                           </>
@@ -577,7 +613,8 @@ export default function OperationsPage() {
       {showForm && (
         <OperationForm
           operation={editOperation}
-          onSuccess={() => { handleFormClose(); loadOperations() }}
+          initial={draftOperation}
+          onSuccess={() => { if (draftOperation) setAiResetKey(k => k + 1); handleFormClose(); loadOperations() }}
           onCancel={handleFormClose}
         />
       )}

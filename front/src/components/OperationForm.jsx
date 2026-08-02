@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getBalanceItems, createOperation, updateOperation } from '../api/operations'
 import { getInfo, createInfo, updateInfo } from '../api/info'
 import { getProjects } from '../api/projects'
+import AmountInput from './AmountInput'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -283,8 +284,10 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
   )
 }
 
-export default function OperationForm({ operation, onSuccess, onCancel }) {
-  const isEdit = !!operation
+// `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
+export default function OperationForm({ operation, initial, onSuccess, onCancel }) {
+  const isEdit = !!(operation && operation.id)
+  const src = operation || initial || null
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects] = useState([])
   const [infoCache, setInfoCache] = useState({})
@@ -300,22 +303,27 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
 
+  // Черновик ИИ приходит с датой без времени (YYYY-MM-DD) — дополняем текущим временем
+  const toLocalInput = (d) => {
+    if (!d) return localNow()
+    const s = String(d).replace(' ', 'T')
+    return s.length <= 10 ? `${s}T${localNow().slice(11)}` : s.slice(0, 16)
+  }
+
   const [form, setForm] = useState({
-    date:          operation
-      ? String(operation.date).replace(' ', 'T').slice(0, 16)
-      : localNow(),
-    project_id:    operation?.project_id ?? '',
-    amount:        operation?.amount ?? '',
-    in_bi_id:      operation?.in_bi_id ?? '',
-    out_bi_id:     operation?.out_bi_id ?? '',
-    in_info_1_id:  operation?.in_info_1_id ?? '',
-    in_info_2_id:  operation?.in_info_2_id ?? '',
-    out_info_1_id: operation?.out_info_1_id ?? '',
-    out_info_2_id: operation?.out_info_2_id ?? '',
-    content:          operation?.content ?? '',
-    note:          operation?.note ?? '',
-    
-    }) 
+    date:          src ? toLocalInput(src.date) : localNow(),
+    project_id:    src?.project_id ?? '',
+    amount:        src?.amount ?? '',
+    in_bi_id:      src?.in_bi_id ?? '',
+    out_bi_id:     src?.out_bi_id ?? '',
+    in_info_1_id:  src?.in_info_1_id ?? '',
+    in_info_2_id:  src?.in_info_2_id ?? '',
+    out_info_1_id: src?.out_info_1_id ?? '',
+    out_info_2_id: src?.out_info_2_id ?? '',
+    content:       src?.content ?? '',
+    note:          src?.note ?? '',
+
+    })
 
   useEffect(() => {
     getProjects().then(res => {
@@ -331,9 +339,9 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
       const items = res.data.data
       setBalanceItems(items)
 
-      if (isEdit) {
-        const inBi  = items.find(b => b.id == operation.in_bi_id)
-        const outBi = items.find(b => b.id == operation.out_bi_id)
+      if (src) {
+        const inBi  = items.find(b => b.id == src.in_bi_id)
+        const outBi = items.find(b => b.id == src.out_bi_id)
         const types = [...new Set([
           inBi?.info_1_type, inBi?.info_2_type,
           outBi?.info_1_type, outBi?.info_2_type,
@@ -514,9 +522,9 @@ export default function OperationForm({ operation, onSuccess, onCancel }) {
             </div>
             <div>
               <label className={lc}>Сумма (₽)</label>
-              <input type="number" value={form.amount}
-                onChange={e => setForm({...form, amount: e.target.value})}
-                placeholder="0.00" step="0.01" className={ic} required />
+              <AmountInput value={form.amount}
+                onChange={v => setForm({...form, amount: v})}
+                placeholder="0,00" className={`${ic} text-right`} required />
             </div>
           </div>
 

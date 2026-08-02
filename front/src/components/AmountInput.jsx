@@ -17,7 +17,7 @@ export const fmtTyping = (v) => {
  * onChange получает строку без пробелов (десятичный разделитель — точка).
  */
 const AmountInput = forwardRef(function AmountInput(
-  { value, onChange, className, placeholder, disabled, onKeyDown, onBlur },
+  { value, onChange, className, placeholder, disabled, onKeyDown, onBlur, required },
   forwardedRef
 ) {
   const innerRef = useRef(null)
@@ -44,7 +44,8 @@ const AmountInput = forwardRef(function AmountInput(
 
   return (
     <input ref={setRefs} type="text" inputMode="decimal" className={className} placeholder={placeholder}
-      disabled={disabled} value={fmtTyping(value)} onChange={onInput} onKeyDown={onKeyDown} onBlur={onBlur} />
+      disabled={disabled} required={required} value={fmtTyping(value)} onChange={onInput}
+      onKeyDown={onKeyDown} onBlur={onBlur} />
   )
 })
 
