@@ -41,11 +41,14 @@ class RouterAiClient
      * Chat Completions. $schema — JSON Schema для строгого структурированного ответа.
      * Возвращает декодированный JSON-объект ответа модели.
      */
-    public function json(array $messages, array $schema, ?string $model = null): array
+    /**
+     * @param array $extra Доп. параметры запроса (например plugins для разбора PDF)
+     */
+    public function json(array $messages, array $schema, ?string $model = null, array $extra = []): array
     {
         $this->assertConfigured();
 
-        $payload = [
+        $payload = $extra + [
             'model'       => $model ?: config('services.routerai.model'),
             'messages'    => $messages,
             'temperature' => 0,

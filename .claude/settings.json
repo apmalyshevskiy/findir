@@ -16,7 +16,11 @@
       "PowerShell(docker exec findir_php php artisan tinker _doc_check.php 2>&1)",
       "PowerShell(docker exec findir_php php artisan route:list --path=fund-plan 2>$null)",
       "PowerShell(docker restart findir_php 2>&1)",
-      "PowerShell(docker exec findir_php php artisan tinker _ai_link.php 2>&1)"
+      "PowerShell(docker exec findir_php php artisan tinker _ai_link.php 2>&1)",
+      "PowerShell(docker version --format \"{{.Server.Version}}\" 2>&1)",
+      "PowerShell(docker start findir_php findir_front findir_mariadb findir_nginx findir_redis 2>&1)",
+      "PowerShell(docker exec findir_php php -l routes/api.php)",
+      "PowerShell(docker exec findir_php php -l config/services.php)"
     ]
   }
 }

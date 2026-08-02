@@ -51,6 +51,39 @@ class AiController extends TenantController
     }
 
     /**
+     * POST /ai/parse-file (multipart: file, text?, history?)
+     * Картинка → vision-модель, таблица/текст → обычная. Возвращает черновики.
+     */
+    public function parseFile(Request $request)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'file'              => 'required|file|max:10240',   // до 10 МБ
+            'text'              => 'nullable|string|max:2000',
+            'model'             => 'nullable|string|max:100',
+            'history'           => 'nullable|array|max:20',
+            'history.*.role'    => 'required|string|in:user,assistant',
+            'history.*.content' => 'required|string|max:8000',
+        ]);
+
+        try {
+            $res = $this->drafts->parseFile(
+                $this->dbName,
+                $request->file('file'),
+                $data['text'] ?? '',
+                $data['model'] ?? null,
+                $data['history'] ?? []
+            );
+        } catch (\Throwable $e) {
+            Log::warning('AI parse-file failed: ' . $e->getMessage());
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($res);
+    }
+
+    /**
      * POST /ai/apply-links — проставить связь «статья ДДС → статья расхода»
      * (info.default_expense_id). Применяется только по подтверждению пользователя.
      */

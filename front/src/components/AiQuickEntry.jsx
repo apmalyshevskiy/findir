@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getAiStatus, parseOperation, transcribeAudio } from '../api/ai'
+import { getAiStatus, parseOperation, parseFile, transcribeAudio } from '../api/ai'
 import AiNewItems from './AiNewItems'
 import AiLinks from './AiLinks'
 
@@ -32,6 +32,7 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
   const recRef = useRef(null)
   const chunksRef = useRef([])
   const endRef = useRef(null)
+  const fileRef = useRef(null)
 
   useEffect(() => {
     getAiStatus().then(r => setEnabled(!!r.data.enabled)).catch(() => setEnabled(false))
@@ -59,18 +60,38 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
     setTurns(prev => [...prev, { role: 'user', text: t }])
     setText('')
     try {
-      const r = await parseOperation(t, undefined, history)
-      const drafts = r.data.drafts || []
-      const newItems = r.data.new_items || []
-      const links = r.data.links || []
-      const reply = r.data.reply || ''
-      setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links }])
-      setHistory(prev => [...prev, { role: 'user', content: t }, { role: 'assistant', content: r.data.assistant || '' }])
-      if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0) {
-        setError('Не удалось распознать — опишите подробнее.')
-      }
+      applyResult(await parseOperation(t, undefined, history), t)
     } catch (e) {
       setError(e?.response?.data?.message || 'Ошибка разбора')
+    } finally { setBusy('') }
+  }
+
+  // Общая обработка ответа модели (для текста и для файлов)
+  const applyResult = (r, userContent) => {
+    const drafts = r.data.drafts || []
+    const newItems = r.data.new_items || []
+    const links = r.data.links || []
+    const reply = r.data.reply || ''
+    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links }])
+    setHistory(prev => [...prev, { role: 'user', content: userContent }, { role: 'assistant', content: r.data.assistant || '' }])
+    if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0) {
+      setError('Не удалось распознать — опишите подробнее.')
+    }
+  }
+
+  // Прикреплённый файл: фото чека, счёт, выписка xlsx/csv
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || busy) return
+    const note = text.trim()
+    setBusy('file'); setError('')
+    setTurns(prev => [...prev, { role: 'user', text: note ? `📎 ${file.name} — ${note}` : `📎 ${file.name}` }])
+    setText('')
+    try {
+      applyResult(await parseFile(file, note, history), note ? `${note} [файл ${file.name}]` : `[файл ${file.name}]`)
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Не удалось разобрать файл')
     } finally { setBusy('') }
   }
 
@@ -135,7 +156,8 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
 
   const stopRec = () => { recRef.current?.stop(); setRecording(false) }
 
-  const busyLabel = busy === 'stt' ? 'Распознаю речь…' : busy === 'parse' ? 'Думаю…' : busy === 'save' ? 'Создаю…' : ''
+  const busyLabel = busy === 'stt' ? 'Распознаю речь…' : busy === 'parse' ? 'Думаю…'
+    : busy === 'file' ? 'Читаю файл…' : busy === 'save' ? 'Создаю…' : ''
   const lastIdx = turns.length - 1
 
   return (
@@ -249,6 +271,15 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, resetKey = 0 
           onKeyDown={e => { if (e.key === 'Enter') send() }}
           disabled={!!busy}
         />
+        <input ref={fileRef} type="file" className="hidden" onChange={onFile}
+          accept="image/*,.pdf,.csv,.txt,.xml,.xlsx,.xls,.ods" />
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={!!busy}
+          title="Прикрепить фото чека, PDF-счёт или выписку (xlsx, csv, xml)"
+          className="w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 transition-colors disabled:opacity-40">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.4 11.05 12.25 20.2a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.65 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48" />
+          </svg>
+        </button>
         <button type="button" onClick={recording ? stopRec : startRec} disabled={!!busy}
           title={recording ? 'Остановить запись' : 'Записать голосом'}
           className={`w-9 h-9 flex-shrink-0 rounded-lg flex items-center justify-center border transition-colors ${

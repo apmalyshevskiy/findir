@@ -58,6 +58,16 @@ const flattenTree = (nodes, depth = 0) => {
   return result
 }
 
+// Стили полей карточки справочника
+const fc = 'w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const fl = 'block text-[11px] text-gray-500 mb-0.5'
+
+// Полный набор реквизитов элемента справочника
+const EMPTY_INFO = {
+  name: '', code: '', parent_id: '', inn: '', description: '',
+  sort_order: 0, is_active: true, default_expense_id: '',
+}
+
 // 2. Кастомный компонент селекта с поиском, иерархией, inline-созданием и редактированием
 const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemCreated }) => {
   const [search, setSearch] = useState('')
@@ -65,9 +75,17 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
   // mode: null | 'create' | 'edit'
   const [formMode, setFormMode] = useState(null)
   const [editId, setEditId] = useState(null)
-  const [newName, setNewName] = useState('')
-  const [newParentId, setNewParentId] = useState('')
+  const [fields, setFields] = useState({ ...EMPTY_INFO })
+  const [expenseOpts, setExpenseOpts] = useState([])   // для статей ДДС: статья расхода по умолчанию
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  // Статьи расхода нужны только при редактировании статьи ДДС
+  useEffect(() => {
+    if (formMode && infoType === 'flow' && expenseOpts.length === 0) {
+      getInfo({ type: 'expenses' }).then(r => setExpenseOpts(r.data.data || [])).catch(() => {})
+    }
+  }, [formMode, infoType])
 
   // Строим дерево и разворачиваем его для отображения
   const tree = buildTree(items || [])
@@ -84,15 +102,27 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
   const resetForm = () => {
     setFormMode(null)
     setEditId(null)
-    setNewName('')
-    setNewParentId('')
+    setFields({ ...EMPTY_INFO })
+    setError('')
   }
 
+  /** Реквизиты → payload API (пустые строки превращаем в null) */
+  const payload = () => ({
+    name:               fields.name.trim(),
+    type:               infoType,
+    code:               fields.code?.trim() || null,
+    description:        fields.description?.trim() || null,
+    inn:                fields.inn?.trim() || null,
+    parent_id:          fields.parent_id || null,
+    sort_order:         parseInt(fields.sort_order) || 0,
+    default_expense_id: fields.default_expense_id || null,
+  })
+
   const handleCreate = async () => {
-    if (!newName.trim() || !infoType) return
-    setSaving(true)
+    if (!fields.name.trim() || !infoType) return
+    setSaving(true); setError('')
     try {
-      const res = await createInfo({ name: newName.trim(), type: infoType, parent_id: newParentId || null })
+      const res = await createInfo(payload())
       const created = res.data.data
       if (onItemCreated) onItemCreated(infoType, created)
       onChange(created.id)
@@ -100,18 +130,17 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
       setSearch('')
       setIsOpen(false)
     } catch (err) {
-      console.error('Ошибка создания:', err)
+      setError(err?.response?.data?.message || 'Не удалось создать элемент')
     } finally {
       setSaving(false)
     }
   }
 
   const handleUpdate = async () => {
-    if (!newName.trim() || !editId) return
-    setSaving(true)
+    if (!fields.name.trim() || !editId) return
+    setSaving(true); setError('')
     try {
-      const original = items?.find(o => o.id == editId)
-      const res = await updateInfo(editId, { name: newName.trim(), type: infoType, parent_id: newParentId || null })
+      const res = await updateInfo(editId, { ...payload(), is_active: !!fields.is_active })
       const updated = res.data.data
       // Обновляем элемент в кеше
       if (onItemCreated) onItemCreated(infoType, updated, editId)
@@ -119,7 +148,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
       setSearch('')
       setIsOpen(false)
     } catch (err) {
-      console.error('Ошибка обновления:', err)
+      setError(err?.response?.data?.message || 'Не удалось сохранить изменения')
     } finally {
       setSaving(false)
     }
@@ -130,8 +159,17 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
     if (!selectedOption) return
     setFormMode('edit')
     setEditId(selectedOption.id)
-    setNewName(selectedOption.name || '')
-    setNewParentId(selectedOption.parent_id || '')
+    setFields({
+      name:               selectedOption.name || '',
+      code:               selectedOption.code || '',
+      parent_id:          selectedOption.parent_id || '',
+      inn:                selectedOption.inn || '',
+      description:        selectedOption.description || '',
+      sort_order:         selectedOption.sort_order ?? 0,
+      is_active:          selectedOption.is_active ?? true,
+      default_expense_id: selectedOption.default_expense_id || '',
+    })
+    setError('')
     setIsOpen(true)
   }
 
@@ -172,10 +210,10 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
             </svg>
           </button>
         )}
-        {/* Выпадающий список */}
-        {isOpen && (
-          <div className="absolute left-0 right-0 top-full z-[60] mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
-            {formMode !== 'edit' && (
+        {/* Выпадающий список (прячется, пока открыта карточка справочника) */}
+        {isOpen && !formMode && (
+          <div className="absolute left-0 right-0 top-full z-[60] mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-y-auto max-h-72">
+            {(
               <>
                 <div
                   className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
@@ -207,18 +245,18 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
                     </span>
                     {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
                   </div>
-                )) : formMode !== 'create' && <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
+                )) : <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>}
 
                 {/* Кнопка создания */}
-                {infoType && formMode !== 'create' && (
+                {infoType && (
                   <div
                     className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
                     onClick={(e) => {
                       e.stopPropagation()
                       setFormMode('create')
                       setEditId(null)
-                      setNewName(search)
-                      setNewParentId('')
+                      setFields({ ...EMPTY_INFO, name: search })
+                      setError('')
                     }}
                   >
                     <span className="text-blue-500">+</span> Создать «{search || INFO_LABELS[infoType] || infoType}»
@@ -227,59 +265,138 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
               </>
             )}
 
-            {/* Inline-форма создания / редактирования */}
-            {formMode && (
-              <div className="p-3 border-t border-gray-100 bg-gray-50 space-y-2" onClick={e => e.stopPropagation()}>
-                <div className="text-xs text-gray-500 font-medium">
-                  {formMode === 'edit' ? `Редактировать: ${selectedOption?.name || ''}` : `Новый: ${INFO_LABELS[infoType] || infoType}`}
+          </div>
+        )}
+      </div>
+
+      {/* Карточка справочника — отдельным окном по центру, чтобы не уезжала за экран */}
+      {formMode && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={resetForm}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[88vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+              <h4 className="text-sm font-semibold text-gray-800">
+                {formMode === 'edit'
+                  ? `${INFO_LABELS[infoType] || infoType}: ${selectedOption?.name || ''}`
+                  : `Новый элемент: ${INFO_LABELS[infoType] || infoType}`}
+              </h4>
+              <button type="button" onClick={resetForm}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1">&times;</button>
+            </div>
+
+            <div className="p-4 space-y-3">
+                {/* Наименование */}
+                <div>
+                  <span className={fl}>Наименование</span>
+                  <input
+                    type="text"
+                    className={fc}
+                    placeholder="Название элемента справочника"
+                    value={fields.name}
+                    onChange={e => setFields(f => ({ ...f, name: e.target.value }))}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); formMode === 'edit' ? handleUpdate() : handleCreate() }
+                      if (e.key === 'Escape') resetForm()
+                    }}
+                    autoFocus
+                  />
                 </div>
-                <input
-                  type="text"
-                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Название"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') { e.preventDefault(); formMode === 'edit' ? handleUpdate() : handleCreate() }
-                    if (e.key === 'Escape') resetForm()
-                  }}
-                  autoFocus
-                />
+                <div>
+                <span className={fl}>Родительская группа</span>
                 <select
-                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-600"
-                  value={newParentId}
-                  onChange={e => setNewParentId(e.target.value)}
+                  className={`${fc} text-gray-700`}
+                  value={fields.parent_id}
+                  onChange={e => setFields(f => ({ ...f, parent_id: e.target.value }))}
                 >
-                  <option value="">— Без родителя</option>
+                  <option value="">— Без родителя (верхний уровень)</option>
                   {flatItems.filter(o => o.id != editId).map(opt => (
                     <option key={opt.id} value={opt.id}>
                       {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
                     </option>
                   ))}
                 </select>
-                <div className="flex gap-2">
+                </div>
+
+                {/* ИНН — только для контрагентов */}
+                {infoType === 'partner' && (
+                  <div>
+                    <span className={fl}>ИНН</span>
+                    <input type="text" className={fc} placeholder="10 или 12 цифр" maxLength={12}
+                      value={fields.inn}
+                      onChange={e => setFields(f => ({ ...f, inn: e.target.value.replace(/\D/g, '') }))} />
+                  </div>
+                )}
+
+                {/* Статья расхода по умолчанию — только для статей ДДС */}
+                {infoType === 'flow' && (
+                  <div>
+                    <span className={fl}>Статья расхода по умолчанию</span>
+                    <select className={`${fc} text-gray-700`} value={fields.default_expense_id}
+                      onChange={e => setFields(f => ({ ...f, default_expense_id: e.target.value }))}>
+                      <option value="">— не задана</option>
+                      {expenseOpts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <span className="block text-[10px] text-gray-400 mt-0.5">
+                      Подставится в операцию при выборе этой статьи ДДС
+                    </span>
+                  </div>
+                )}
+
+                {/* Описание */}
+                <div>
+                  <span className={fl}>Описание</span>
+                  <textarea rows={2} className={fc} placeholder="Необязательно"
+                    value={fields.description}
+                    onChange={e => setFields(f => ({ ...f, description: e.target.value }))} />
+                </div>
+
+                {/* Код + порядок сортировки + активность */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-32">
+                    <span className={fl}>Код</span>
+                    <input type="text" className={fc} placeholder="—"
+                      value={fields.code} onChange={e => setFields(f => ({ ...f, code: e.target.value }))} />
+                  </div>
+                  <div className="w-24">
+                    <span className={fl}>Порядок</span>
+                    <input type="number" step="1" className={fc}
+                      value={fields.sort_order}
+                      onChange={e => setFields(f => ({ ...f, sort_order: e.target.value }))} />
+                  </div>
+                  {formMode === 'edit' && (
+                    <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-4">
+                      <input type="checkbox" className="rounded" checked={!!fields.is_active}
+                        onChange={e => setFields(f => ({ ...f, is_active: e.target.checked }))} />
+                      Активен
+                    </label>
+                  )}
+                </div>
+
+                {error && <div className="text-xs text-red-600">{error}</div>}
+
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={formMode === 'edit' ? handleUpdate : handleCreate}
-                    disabled={!newName.trim() || saving}
-                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    disabled={!fields.name.trim() || saving}
+                    className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
                     {saving ? '...' : formMode === 'edit' ? 'Сохранить' : 'Создать'}
                   </button>
                   <button
                     type="button"
                     onClick={resetForm}
-                    className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg"
+                    className="px-4 py-2 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg"
                   >
                     Отмена
                   </button>
                 </div>
-              </div>
-            )}
+            </div>
           </div>
-        )}
-      </div>
-      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); resetForm() }}></div>}
+        </div>
+      )}
+
+      {isOpen && !formMode && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); resetForm() }}></div>}
     </div>
   )
 }

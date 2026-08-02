@@ -21,10 +21,114 @@ class OperationDraftService
 
     public function __construct(private RouterAiClient $ai) {}
 
+    /** Что делать с приложенным файлом, если пользователь не написал ничего своего. */
+    private const FILE_INSTRUCTION = 'Распознай приложенный документ (чек, счёт, накладную, выписку) '
+        . 'и сформируй по нему операции. Если документов/строк несколько — верни несколько операций. '
+        . 'В reply коротко перечисли, что распознал.';
+
     /**
      * @param array $history Предыдущие реплики диалога: [['role'=>'user|assistant','content'=>...]]
      */
     public function parse(string $db, string $text, ?string $model = null, array $history = []): array
+    {
+        return $this->run($db, $text, $model, $history);
+    }
+
+    /**
+     * Разбор приложенного файла: картинка → vision-модель, таблица/текст → обычная.
+     */
+    public function parseFile(string $db, \Illuminate\Http\UploadedFile $file, string $text = '', ?string $model = null, array $history = []): array
+    {
+        $mime = (string) $file->getMimeType();
+        $name = $file->getClientOriginalName() ?: 'file';
+
+        if (str_starts_with($mime, 'image/')) {
+            [$mime, $binary] = $this->prepareImage($file);
+            $dataUrl = 'data:' . $mime . ';base64,' . base64_encode($binary);
+            $content = [
+                ['type' => 'text', 'text' => ($text !== '' ? $text . "\n\n" : '') . self::FILE_INSTRUCTION],
+                ['type' => 'image_url', 'image_url' => ['url' => $dataUrl]],
+            ];
+            return $this->run($db, $content, $model ?: config('services.routerai.model_vision'), $history);
+        }
+
+        // PDF разбирает сам RouterAI (плагин file-parser), поэтому подойдёт любая модель:
+        // cloudflare-ai — бесплатное извлечение текста, mistral-ocr — для сканов.
+        if ($mime === 'application/pdf' || mb_strtolower($file->getClientOriginalExtension()) === 'pdf') {
+            $dataUrl = 'data:application/pdf;base64,' . base64_encode((string) file_get_contents($file->getRealPath()));
+            $content = [
+                ['type' => 'text', 'text' => ($text !== '' ? $text . "\n\n" : '') . self::FILE_INSTRUCTION],
+                ['type' => 'file', 'file' => ['filename' => $name, 'file_data' => $dataUrl]],
+            ];
+            $plugins = [['id' => 'file-parser', 'pdf' => ['engine' => config('services.routerai.pdf_engine')]]];
+            return $this->run($db, $content, $model, $history, ['plugins' => $plugins]);
+        }
+
+        $extracted = $this->extractText($file);
+        $prompt = ($text !== '' ? $text . "\n\n" : self::FILE_INSTRUCTION . "\n\n")
+            . "Содержимое файла «{$name}»:\n" . $extracted;
+
+        return $this->run($db, $prompt, $model, $history);
+    }
+
+    /**
+     * Сжимаем изображение перед отправкой: фото с телефона на 8–12 Мп стоит
+     * в разы дороже по токенам, а для чтения чека хватает 1400 px по длинной стороне.
+     *
+     * @return array{0:string,1:string} [mime, бинарные данные]
+     */
+    private function prepareImage(\Illuminate\Http\UploadedFile $file): array
+    {
+        $data = (string) file_get_contents($file->getRealPath());
+        $img = @imagecreatefromstring($data);
+        if (!$img) return [(string) $file->getMimeType(), $data];   // GD не осилил — шлём как есть
+
+        $w = imagesx($img); $h = imagesy($img); $max = 1400;
+        if (max($w, $h) > $max) {
+            $k = $max / max($w, $h);
+            $nw = (int) round($w * $k); $nh = (int) round($h * $k);
+            $dst = imagecreatetruecolor($nw, $nh);
+            imagecopyresampled($dst, $img, 0, 0, 0, 0, $nw, $nh, $w, $h);
+            imagedestroy($img);
+            $img = $dst;
+        }
+
+        ob_start(); imagejpeg($img, null, 82); $out = (string) ob_get_clean();
+        imagedestroy($img);
+
+        return ['image/jpeg', $out];
+    }
+
+    /** Текст из табличных/текстовых файлов. Картинки сюда не попадают. */
+    private function extractText(\Illuminate\Http\UploadedFile $file): string
+    {
+        $ext = mb_strtolower($file->getClientOriginalExtension() ?: '');
+        $path = $file->getRealPath();
+
+        if (in_array($ext, ['xlsx', 'xls', 'ods'], true)) {
+            $sheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path)->getActiveSheet();
+            $lines = [];
+            foreach ($sheet->toArray(null, true, false, false) as $row) {
+                $row = array_map(fn($c) => trim((string) $c), $row);
+                if (implode('', $row) === '') continue;
+                $lines[] = implode(' | ', $row);
+                if (count($lines) >= 300) { $lines[] = '… (файл обрезан)'; break; }
+            }
+            return implode("\n", $lines);
+        }
+
+        $raw = (string) file_get_contents($path);
+        if (!mb_check_encoding($raw, 'UTF-8')) $raw = mb_convert_encoding($raw, 'UTF-8', 'Windows-1251');
+        return mb_substr($raw, 0, 40000);
+    }
+
+    /**
+     * Общее ядро: собирает промпт со справочниками тенанта, шлёт запрос,
+     * раскладывает ответ модели по id справочников.
+     *
+     * @param string|array $userContent Текст либо мультимодальный контент (текст + картинка)
+     */
+    private function run(string $db, string|array $userContent, ?string $model, array $history, array $extra = []): array
     {
         $accounts = DB::connection($db)->table('balance_items')
             ->orderBy('code')->get(['id', 'code', 'name', 'info_1_type', 'info_2_type']);
@@ -41,9 +145,9 @@ class OperationDraftService
             $content = trim((string) ($h['content'] ?? ''));
             if ($content !== '') $messages[] = ['role' => $role, 'content' => $content];
         }
-        $messages[] = ['role' => 'user', 'content' => $text];
+        $messages[] = ['role' => 'user', 'content' => $userContent];
 
-        $result = $this->ai->json($messages, $this->schema(), $model);
+        $result = $this->ai->json($messages, $this->schema(), $model, $extra);
 
         $usage = $result['_usage'] ?? [];
         $drafts = [];
@@ -62,7 +166,6 @@ class OperationDraftService
             'links'     => $this->links($result['links'] ?? [], $dicts, $flowExpense),
             'assistant' => json_encode($raw, JSON_UNESCAPED_UNICODE),
             'usage'     => $usage,
-            'text'      => $text,
         ];
     }
 
