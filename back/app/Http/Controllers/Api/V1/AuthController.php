@@ -76,8 +76,11 @@ class AuthController extends Controller
             return response()->json(['available' => false, 'error' => 'Домен не может быть пустым']);
         }
 
-        if (strlen($domain) < 3) {
-            return response()->json(['available' => false, 'error' => 'Минимум 3 символа']);
+        if (!preg_match('/^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$/', $domain)) {
+            return response()->json([
+                'available' => false,
+                'error' => 'Латиница, цифры и дефис; дефис не в начале и не в конце',
+            ]);
         }
 
         $exists = DB::table('tenants')->where('id', $domain)->exists();
@@ -108,7 +111,8 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'company_name' => 'required|string|max:255',
-            'domain'       => 'required|string|max:63|regex:/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/',
+            // Один символ допустим: «a» → findir_a. Дефис не в начале и не в конце.
+            'domain'       => 'required|string|max:63|regex:/^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$/',
             'name'         => 'required|string|max:255',
             'email'        => 'required|email|max:255',
             'password'     => 'required|string|min:8|confirmed',

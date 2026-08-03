@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\FundSchemeController;
 use App\Http\Controllers\Api\V1\FundPlanDocController;
 use App\Http\Controllers\Api\V1\AiController;
 use App\Http\Controllers\Api\V1\OperationTemplatesController;
+use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -59,6 +60,11 @@ Route::prefix('v1')->group(function () {
     Route::put('/balance-items/{id}',    [BalanceItemsController::class, 'update']);
     Route::delete('/balance-items/{id}', [BalanceItemsController::class, 'destroy']);
     Route::get('/balance-sheet',      [BalanceSheetController::class, 'index']);
+
+    // Шаблоны наполнения справочников (кнопка «Заполнить»)
+    Route::get('/dictionary-templates',              [DictionaryTemplatesController::class, 'index']);
+    Route::get('/dictionary-templates/{key}',        [DictionaryTemplatesController::class, 'show']);
+    Route::post('/dictionary-templates/{key}/apply', [DictionaryTemplatesController::class, 'apply']);
 
     Route::get('/info',               [InfoController::class, 'index']);
     Route::post('/info',              [InfoController::class, 'store']);

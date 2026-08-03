@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 
+// Допустим домен из одного символа: «a» → findir_a.
+// Дефис разрешён только внутри — не в начале и не в конце.
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
+
 export default function RegisterPage() {
   const navigate = useNavigate()
   const [form, setForm] = useState({
@@ -46,7 +50,7 @@ export default function RegisterPage() {
 
     if (checkTimer.current) clearTimeout(checkTimer.current)
     checkTimer.current = setTimeout(async () => {
-      if (slug.length < 3) return
+      if (!DOMAIN_RE.test(slug)) return
       try {
         const res = await api.get('/check-domain', { params: { domain: slug } })
         setDomainStatus(res.data.available ? 'ok' : 'taken')
@@ -64,7 +68,7 @@ export default function RegisterPage() {
     setDomainStatus('checking')
 
     if (checkTimer.current) clearTimeout(checkTimer.current)
-    if (!clean || clean.length < 3) { setDomainStatus(clean ? 'error' : null); return }
+    if (!clean || !DOMAIN_RE.test(clean)) { setDomainStatus(clean ? 'error' : null); return }
 
     checkTimer.current = setTimeout(async () => {
       try {
@@ -81,7 +85,7 @@ export default function RegisterPage() {
     setError('')
     if (form.password !== form.password_confirmation) { setError('Пароли не совпадают'); return }
     if (domainStatus === 'taken') { setError('Этот домен уже занят'); return }
-    if (!form.domain || form.domain.length < 3) { setError('Укажите корректный домен'); return }
+    if (!form.domain || !DOMAIN_RE.test(form.domain)) { setError('Укажите корректный домен'); return }
 
     setLoading(true)
     try {
@@ -154,7 +158,9 @@ export default function RegisterPage() {
                   placeholder="ooo-moya-kompaniya"
                   className="flex-1 px-4 py-2.5 text-sm focus:outline-none font-mono"
                   required
-                  minLength={3}
+                  minLength={1}
+                  pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+                  title="Латиница, цифры и дефис; дефис не в начале и не в конце"
                 />
                 <span className="px-3 py-2.5 bg-gray-50 border-l border-gray-200 text-xs text-gray-400 whitespace-nowrap">
                   .{BASE_DOMAIN}
@@ -175,7 +181,7 @@ export default function RegisterPage() {
                   <p className="text-xs text-red-600">✗ Этот домен уже занят</p>
                 )}
                 {domainStatus === 'error' && (
-                  <p className="text-xs text-amber-600">Минимум 3 символа (латиница, цифры, дефис)</p>
+                  <p className="text-xs text-amber-600">Латиница, цифры и дефис; дефис не в начале и не в конце</p>
                 )}
                 {!domainStatus && !form.domain && form.company_name && (
                   <p className="text-xs text-gray-400">Генерируем домен...</p>

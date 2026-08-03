@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getInfo, createInfo, updateInfo, deleteInfo } from '../api/info'
 import Layout from '../components/Layout'
+import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -200,6 +201,7 @@ export default function InfoPage() {
   const [error, setError] = useState('')
   const [expenseOptions, setExpenseOptions] = useState([])
   const [copiedId, setCopiedId] = useState(null)
+  const [showTemplates, setShowTemplates] = useState(false)
 
   useEffect(() => { loadItems() }, [filterType])
 
@@ -303,10 +305,16 @@ export default function InfoPage() {
     <Layout>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-gray-800">Справочники</h2>
-        <button onClick={openCreate}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors">
-          + Добавить
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowTemplates(true)}
+            className="border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
+            Заполнить из шаблона
+          </button>
+          <button onClick={openCreate}
+            className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors">
+            + Добавить
+          </button>
+        </div>
       </div>
 
       {/* Фильтр по типу */}
@@ -327,7 +335,17 @@ export default function InfoPage() {
       {loading ? (
         <div className="text-center py-12 text-gray-400">Загрузка...</div>
       ) : items.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">Нет записей</div>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 px-6 text-center">
+          <p className="text-gray-500 text-sm">Справочники пока пустые</p>
+          <p className="text-gray-400 text-xs mt-1.5 max-w-md mx-auto">
+            Набор статей зависит от бизнеса, поэтому при регистрации мы ничего не навязываем.
+            Возьмите готовый шаблон и правьте под себя — или заводите записи вручную.
+          </p>
+          <button onClick={() => setShowTemplates(true)}
+            className="mt-5 px-5 py-2.5 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
+            Заполнить из шаблона
+          </button>
+        </div>
       ) : (
         Object.entries(grouped).map(([type, typeItems]) => {
           const typeLabel = INFO_TYPES.find(t => t.value === type)?.label || type
@@ -397,6 +415,14 @@ export default function InfoPage() {
             </div>
           )
         })
+      )}
+
+      {/* Шаблоны наполнения */}
+      {showTemplates && (
+        <DictionaryTemplatePicker
+          onClose={() => setShowTemplates(false)}
+          onApplied={loadItems}
+        />
       )}
 
       {/* Форма */}

@@ -42,6 +42,9 @@ scp <файл> findir-server:/opt/findir/<путь>
 # 2. Если менялся PHP-код — перезапустить (opcache validate_timestamps=0!)
 ssh findir-server "cd /opt/findir && docker compose -f docker-compose.prod.yml restart php horizon"
 
+# 2a. Если добавлялись МАРШРУТЫ — иначе новый эндпоинт отдаёт 404: роуты на проде кэшированы
+ssh findir-server "cd /opt/findir && docker compose -f docker-compose.prod.yml run --rm php php artisan route:cache && docker compose -f docker-compose.prod.yml restart php"
+
 # 3. Если менялся фронт — пересобрать
 ssh findir-server "cd /opt/findir && docker compose -f docker-compose.prod.yml run --rm frontend-build && docker compose -f docker-compose.prod.yml restart nginx"
 
