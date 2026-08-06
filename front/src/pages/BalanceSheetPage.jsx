@@ -8,18 +8,13 @@ import { getDocument, postDocument, cancelDocument } from '../api/documents'
 import { DocumentForm } from './DocumentsPage'
 import { getInfo } from '../api/info'
 import OperationForm from '../components/OperationForm'
+import PeriodPicker from '../components/PeriodPicker'
+import usePersistedPeriod from '../hooks/usePersistedPeriod'
+import usePersistedState from '../hooks/usePersistedState'
+import { presetRange } from '../utils/period'
 
-const localDate = (date) => {
-  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  return d.toISOString().slice(0, 10)
-}
-
-const getMonthRange = () => {
-  const now = new Date()
-  const from = new Date(now.getFullYear(), now.getMonth(), 1)
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-  return { from: localDate(from), to: localDate(to) }
-}
+// Хранение Set в localStorage — через массив
+const SET_CODEC = { serialize: (s) => [...s], deserialize: (a) => new Set(a) }
 
 const INFO_TYPES = [
   { value: '',           label: 'Без аналитики' },
@@ -99,15 +94,17 @@ export default function BalanceSheetPage() {
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects]         = useState([])
   const [infoDictionaries, setInfoDictionaries] = useState({})
-  const [filter, setFilter]             = useState(getMonthRange())
-  const [projectFilter, setProjectFilter] = useState('')
-  const [infoTypes, setInfoTypes]       = useState([])
-  const [hierarchyTypes, setHierarchyTypes] = useState(new Set())
-  const [biFilter, setBiFilter]         = useState('')
+  // Настройки отчёта переживают уход на другую страницу и перезагрузку.
+  // null у проекта — «ещё не выбирали»: отличаем от осознанного «Все проекты».
+  const [filter, setFilter]             = usePersistedPeriod('balance-sheet')
+  const [projectFilter, setProjectFilter] = usePersistedState('osv:project', null)
+  const [infoTypes, setInfoTypes]       = usePersistedState('osv:info-types', [])
+  const [hierarchyTypes, setHierarchyTypes] = usePersistedState('osv:hierarchy-types', new Set(), SET_CODEC)
+  const [biFilter, setBiFilter]         = usePersistedState('osv:bi', '')
   const [showExtraFilters, setShowExtraFilters] = useState(false)
-  const [displayMode, setDisplayMode]           = useState('amount') // 'amount' | 'qty' | 'both'
-  const [balanceMode, setBalanceMode]           = useState('net')    // 'net' = ±остаток | 'debit_credit' = Дт/Кт
-  const [hierarchyAccounts, setHierarchyAccounts] = useState(false)
+  const [displayMode, setDisplayMode]           = usePersistedState('osv:display', 'amount') // 'amount' | 'qty' | 'both'
+  const [balanceMode, setBalanceMode]           = usePersistedState('osv:balance', 'net')    // 'net' = ±остаток | 'debit_credit' = Дт/Кт
+  const [hierarchyAccounts, setHierarchyAccounts] = usePersistedState('osv:hierarchy-accounts', false)
   const [expandedAccounts, setExpandedAccounts]  = useState(new Set())
   const [loading, setLoading]         = useState(false)
   const [expanded, setExpanded]       = useState(new Set())
@@ -129,7 +126,9 @@ export default function BalanceSheetPage() {
       .then(res => {
         const list = res.data.data || res.data || []
         setProjects(list)
-        if (list.length > 0) setProjectFilter(String(list[0].id))
+        // Подставляем проект по умолчанию только при первом заходе —
+        // сохранённый выбор (в том числе «Все проекты») не перебиваем
+        if (projectFilter === null && list.length > 0) setProjectFilter(String(list[0].id))
       })
       .catch(() => {
         // /projects недоступен — работаем без фильтра проектов
@@ -413,23 +412,28 @@ export default function BalanceSheetPage() {
     getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
   }
 
-  const setPeriod = (type) => {
-    const now = new Date()
-    if (type === 'month') setFilter(getMonthRange())
-    else if (type === 'quarter') {
-      const q = Math.floor(now.getMonth() / 3)
-      setFilter({ from: localDate(new Date(now.getFullYear(), q * 3, 1)), to: localDate(new Date(now.getFullYear(), q * 3 + 3, 0)) })
-    } else if (type === 'year') {
-      setFilter({ from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` })
-    }
-  }
+  // Исходное состояние отчёта: месяц, без аналитик и группировок, суммы, ±остаток
+  const defaultProject = projects[0]?.id ? String(projects[0].id) : ''
 
-  const activePeriod = () => {
-    const mr  = getMonthRange()
-    const now = new Date()
-    if (filter.from === mr.from && filter.to === mr.to) return 'month'
-    if (filter.from === `${now.getFullYear()}-01-01`) return 'year'
-    return ''
+  const isDirty =
+    infoTypes.length > 0 ||
+    hierarchyAccounts ||
+    !!biFilter ||
+    displayMode !== 'amount' ||
+    balanceMode !== 'net' ||
+    filter.preset !== 'month' ||
+    (projects.length > 1 && (projectFilter ?? '') !== defaultProject)
+
+  const resetSettings = () => {
+    setInfoTypes([])
+    setHierarchyTypes(new Set())
+    setHierarchyAccounts(false)
+    setDisplayMode('amount')
+    setBalanceMode('net')
+    setBiFilter('')
+    setProjectFilter(defaultProject)
+    setFilter({ ...presetRange('month'), preset: 'month' })
+    setShowExtraFilters(false)
   }
 
   const totals = data.reduce((acc, row) => ({
@@ -674,28 +678,10 @@ export default function BalanceSheetPage() {
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 space-y-2">
 
-        {/* ── Строка 1: период + дата + кнопка ⋯ + загрузка ── */}
+        {/* ── Строка 1: период + кнопка ⋯ + загрузка ── */}
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex gap-1.5">
-            {[{key:'month',label:'Месяц'},{key:'quarter',label:'Квартал'},{key:'year',label:'Год'}].map(p => (
-              <button key={p.key} onClick={() => setPeriod(p.key)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  activePeriod() === p.key ? 'bg-blue-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <span className="text-gray-300">|</span>
-          <div className="flex items-center gap-2">
-            <input type="date" value={filter.from}
-              onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
-              className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <span className="text-gray-400">—</span>
-            <input type="date" value={filter.to}
-              onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
-              className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
+          {/* Без «Всё время»: у ОСВ без даты начала не посчитать входящее сальдо */}
+          <PeriodPicker value={filter} onChange={setFilter} />
           <span className="text-gray-300">|</span>
           {/* Кнопка доп. фильтров */}
           <button
@@ -711,6 +697,17 @@ export default function BalanceSheetPage() {
               <span className="ml-1 text-blue-500">•</span>
             )}
           </button>
+
+          {/* Сброс — появляется, только когда есть что сбрасывать */}
+          {isDirty && (
+            <button
+              onClick={resetSettings}
+              title="Вернуть период, аналитики, группировки и фильтры к исходным"
+              className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-600 transition-colors">
+              ↺ Сбросить
+            </button>
+          )}
+
           {loading && <span className="text-xs text-gray-400">Загрузка...</span>}
         </div>
 
@@ -721,7 +718,7 @@ export default function BalanceSheetPage() {
             {projects.length > 1 && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 font-medium">Проект:</span>
-                <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)}
+                <select value={projectFilter ?? ''} onChange={e => setProjectFilter(e.target.value)}
                   className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-40">
                   <option value="">Все проекты</option>
                   {projects.map(p => (

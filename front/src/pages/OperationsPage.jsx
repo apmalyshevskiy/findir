@@ -8,6 +8,8 @@ import AiQuickEntry from '../components/AiQuickEntry'
 import OperationTemplates from '../components/OperationTemplates'
 import { createTemplate } from '../api/operationTemplates'
 import Layout from '../components/Layout'
+import PeriodPicker from '../components/PeriodPicker'
+import usePersistedPeriod from '../hooks/usePersistedPeriod'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -73,18 +75,6 @@ const SearchableSelect = ({ label, value, onChange, options, placeholder }) => {
 // Единая сетка колонок для шапки и карточек операций (выравнивание между карточками)
 const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(170px,1.3fr)_7.5rem_minmax(130px,1fr)_4rem] gap-x-3'
 
-const localDate = (date) => {
-  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  return d.toISOString().slice(0, 10)
-}
-
-const getMonthRange = () => {
-  const now = new Date()
-  const from = new Date(now.getFullYear(), now.getMonth(), 1)
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-  return { from: localDate(from), to: localDate(to) }
-}
-
 export default function OperationsPage() {
   const navigate = useNavigate()
   const [operations, setOperations] = useState([])
@@ -96,7 +86,9 @@ export default function OperationsPage() {
   const [aiResetKey, setAiResetKey] = useState(0)              // сброс панели ИИ после сохранения
   const [tplKey, setTplKey] = useState(0)                      // перезагрузка списка шаблонов
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState({ ...getMonthRange(), in_bi_id: '', out_bi_id: '', project_id: '' })
+  // Период запоминается между заходами и хранится отдельно от прочих фильтров
+  const [period, setPeriod] = usePersistedPeriod('operations')
+  const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '' })
   const [selected, setSelected] = useState(new Set())
   const tenant = JSON.parse(localStorage.getItem('tenant') || '{}')
 
@@ -123,20 +115,18 @@ export default function OperationsPage() {
   }, [infoType])
 
  
-  // Было: useEffect(() => { loadOperations() }, [filter])
-  // Стало:
-  useEffect(() => { 
-    loadOperations() 
-  }, [filter, selectedInfoId]) // <-- Добавили selectedInfoId сюда
+  useEffect(() => {
+    loadOperations()
+  }, [filter, period, selectedInfoId])
 
   const loadOperations = () => {
     setLoading(true)
     setSelected(new Set())
     const params = { per_page: 200 }
-    
+
     // Сохраняем старые фильтры
-    if (filter.from)      params.date_from  = filter.from
-    if (filter.to)        params.date_to    = filter.to
+    if (period.from)      params.date_from  = period.from
+    if (period.to)        params.date_to    = period.to
     if (filter.in_bi_id)  params.in_bi_id   = filter.in_bi_id
     if (filter.out_bi_id) params.out_bi_id  = filter.out_bi_id
     if (filter.project_id) params.project_id = filter.project_id
@@ -220,50 +210,6 @@ export default function OperationsPage() {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit'
     })
-
-  const setPeriod = (type) => {
-    const now = new Date()
-    if (type === 'today') {
-      const d = localDate(now)
-      setFilter(f => ({ ...f, from: d, to: d }))
-    } else if (type === 'week') {
-      const mon = new Date(now)
-      mon.setDate(now.getDate() - ((now.getDay() + 6) % 7))
-      setFilter(f => ({ ...f, from: localDate(mon), to: localDate(now) }))
-    } else if (type === 'month') {
-      setFilter(f => ({ ...f, ...getMonthRange() }))
-    } else if (type === 'quarter') {
-      const q = Math.floor(now.getMonth() / 3)
-      const from = new Date(now.getFullYear(), q * 3, 1)
-      const to   = new Date(now.getFullYear(), q * 3 + 3, 0)
-      setFilter(f => ({ ...f, from: localDate(from), to: localDate(to) }))
-    } else if (type === 'year') {
-      setFilter(f => ({ ...f, from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` }))
-    } else if (type === 'all') {
-      setFilter(f => ({ ...f, from: '', to: '' }))
-    }
-  }
-
-  const activePeriod = () => {
-    const now = new Date()
-    const mr  = getMonthRange()
-    const td  = localDate(now)
-    if (filter.from === td && filter.to === td) return 'today'
-    if (filter.from === mr.from && filter.to === mr.to) return 'month'
-    if (filter.from === '' && filter.to === '') return 'all'
-    return ''
-  }
-
-  const periods = [
-    { key: 'today',   label: 'Сегодня' },
-    { key: 'week',    label: 'Неделя' },
-    { key: 'month',   label: 'Месяц' },
-    { key: 'quarter', label: 'Квартал' },
-    { key: 'year',    label: 'Год' },
-    { key: 'all',     label: 'Все' },
-  ]
-
-  const active = activePeriod()
 
   const handleCopySelected = async () => {
     if (selected.size === 0) return
@@ -364,27 +310,9 @@ export default function OperationsPage() {
         {/* Фильтры */}
         <div className="px-6 py-3 border-b border-gray-100 space-y-2">
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex gap-1.5">
-              {periods.map(p => (
-                <button key={p.key} onClick={() => setPeriod(p.key)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                    active === p.key ? 'bg-blue-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            <PeriodPicker value={period} onChange={setPeriod} allowAll />
             <span className="text-gray-300">|</span>
-            <div className="flex items-center gap-2">
-              <input type="date" value={filter.from}
-                onChange={e => setFilter(f => ({ ...f, from: e.target.value }))}
-                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <span className="text-gray-400 text-sm">—</span>
-              <input type="date" value={filter.to}
-                onChange={e => setFilter(f => ({ ...f, to: e.target.value }))}
-                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div className="flex items-center gap-4 flex-wrap pt-2 border-t border-gray-50">
+            <div className="flex items-center gap-4 flex-wrap">
   {projects.length > 1 && (
     <div className="flex items-center gap-2">
       <span className="text-xs text-gray-500 font-medium">Проект:</span>
