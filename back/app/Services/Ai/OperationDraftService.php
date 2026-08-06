@@ -318,35 +318,13 @@ class OperationDraftService
         return ['updated' => $updated, 'skipped' => $skipped, 'log_id' => $logId];
     }
 
-    /** Откат массовой правки по журналу. */
+    /**
+     * Откат массовой правки по журналу.
+     * Журнал общий с ручными правками из списка операций — механизм тот же.
+     */
     public function revertBulk(string $db, int $logId, ?string $lockDate = null): array
     {
-        $log = DB::connection($db)->table('bulk_update_log')->where('id', $logId)->first();
-        if (!$log)               return ['ok' => false, 'message' => 'Запись журнала не найдена'];
-        if ($log->reverted_at)   return ['ok' => false, 'message' => 'Эта правка уже откачена'];
-
-        $undo = json_decode($log->undo, true) ?: [];
-        $restored = 0; $skipped = 0;
-
-        foreach ($undo as $u) {
-            $id = $u['id'] ?? null;
-            $before = $u['before'] ?? [];
-            if (!$id || !$before) continue;
-
-            $op = DB::connection($db)->table('operations')->where('id', $id)->whereNull('deleted_at')
-                ->first(['id', 'date']);
-            if (!$op) { $skipped++; continue; }                       // операция удалена
-            if ($lockDate && substr((string) $op->date, 0, 10) <= $lockDate) { $skipped++; continue; }
-
-            DB::connection($db)->table('operations')->where('id', $id)
-                ->update($before + ['updated_at' => now()]);
-            $restored++;
-        }
-
-        DB::connection($db)->table('bulk_update_log')->where('id', $logId)
-            ->update(['reverted_at' => now(), 'updated_at' => now()]);
-
-        return ['ok' => true, 'restored' => $restored, 'skipped' => $skipped];
+        return app(\App\Services\BulkOperationEditor::class)->revert($db, $logId, $lockDate);
     }
 
     private function bulkDescription(array $f, array $set): string

@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\V1\FundPlanDocController;
 use App\Http\Controllers\Api\V1\AiController;
 use App\Http\Controllers\Api\V1\OperationTemplatesController;
 use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
+use App\Http\Controllers\Api\V1\BulkOperationsController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -40,6 +41,12 @@ Route::prefix('v1')->group(function () {
     Route::get('/dashboard/revenue-series', [DashboardController::class, 'revenueSeries']);
     Route::get('/dashboard/layout',         [DashboardController::class, 'getLayout']);
     Route::put('/dashboard/layout',         [DashboardController::class, 'saveLayout']);
+
+    // Массовая правка выбранных операций — до /operations/{id}
+    Route::post('/operations/bulk-preview',          [BulkOperationsController::class, 'preview']);
+    Route::post('/operations/bulk-update',           [BulkOperationsController::class, 'update']);
+    Route::get ('/operations/bulk-log',              [BulkOperationsController::class, 'log']);
+    Route::post('/operations/bulk-log/{id}/revert',  [BulkOperationsController::class, 'revert']);
 
     // Операции
     Route::get('/operations',         [OperationsController::class, 'index']);

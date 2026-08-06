@@ -212,8 +212,15 @@ class ClientBankExchangeParser
             // Поля для записи в операцию
             'external_id'      => $docNumber ? (string) $docNumber : null,
             'external_date'    => $docDate,
-            // note формируется: [Номер от Дата] НазначениеПлатежа
-            'note'             => $this->buildNote($docNumber, $docDate, $purpose),
+            // note формируется: [Номер от Дата] Контрагент, ИНН …, р/с …
+            // Назначение платежа сюда не идёт — оно уходит в content операции
+            'note'             => $this->buildNote(
+                $docNumber,
+                $docDate,
+                $counterpartyName,
+                $counterpartyInn,
+                $counterpartyAcc,
+            ),
         ];
     }
 
@@ -337,8 +344,22 @@ class ClientBankExchangeParser
         return 'out';
     }
 
-    private function buildNote(?string $number, ?string $date, ?string $purpose): ?string
-    {
+    /**
+     * Примечание к операции: реквизиты платёжки и контрагента.
+     *
+     * Назначение платежа сюда намеренно не попадает — оно уходит в content
+     * операции, и дублировать его в примечании значило бы хранить одно и то же
+     * дважды. В примечании остаётся то, чего в content нет: номер и дата
+     * документа, контрагент, его ИНН и расчётный счёт — по ним потом сверяют
+     * платёж с банком и находят операцию поиском.
+     */
+    private function buildNote(
+        ?string $number,
+        ?string $date,
+        ?string $name,
+        ?string $inn,
+        ?string $account,
+    ): ?string {
         $parts = [];
 
         if ($number || $date) {
@@ -350,9 +371,12 @@ class ClientBankExchangeParser
             $parts[] = $prefix;
         }
 
-        if ($purpose) {
-            $parts[] = trim($purpose);
-        }
+        // Контрагент и его реквизиты — через запятую, пустые опускаем
+        $who = [];
+        if ($name    && trim($name) !== '')    $who[] = trim($name);
+        if ($inn     && trim($inn) !== '')     $who[] = 'ИНН ' . trim($inn);
+        if ($account && trim($account) !== '') $who[] = 'р/с ' . trim($account);
+        if ($who) $parts[] = implode(', ', $who);
 
         return $parts ? implode(' ', $parts) : null;
     }

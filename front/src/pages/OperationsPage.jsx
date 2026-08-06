@@ -10,6 +10,8 @@ import { createTemplate } from '../api/operationTemplates'
 import Layout from '../components/Layout'
 import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
+import usePersistedState from '../hooks/usePersistedState'
+import BulkEditOperations from '../components/BulkEditOperations'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -72,8 +74,11 @@ const SearchableSelect = ({ label, value, onChange, options, placeholder }) => {
 
 
 
-// Единая сетка колонок для шапки и карточек операций (выравнивание между карточками)
-const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(170px,1.3fr)_7.5rem_minmax(130px,1fr)_4rem] gap-x-3'
+// Единая сетка колонок для шапки и карточек операций (выравнивание между карточками).
+// Содержание — предпоследняя колонка: под ним ещё и примечание с реквизитами
+// контрагента, поэтому она расширена (130px/1fr → 207px/1.59fr) и теперь заметно
+// шире колонок дебета и кредита.
+const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(170px,1.3fr)_7.5rem_minmax(207px,1.59fr)_4rem] gap-x-3'
 
 export default function OperationsPage() {
   const navigate = useNavigate()
@@ -90,6 +95,9 @@ export default function OperationsPage() {
   const [period, setPeriod] = usePersistedPeriod('operations')
   const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '' })
   const [selected, setSelected] = useState(new Set())
+  const [showBulkEdit, setShowBulkEdit] = useState(false)
+  // Примечание — отдельной строкой под карточкой. Кому мешает, тот выключит
+  const [showNotes, setShowNotes] = usePersistedState('ops:show-notes', true)
   const tenant = JSON.parse(localStorage.getItem('tenant') || '{}')
 
     // --- НОВЫЕ СОСТОЯНИЯ ---
@@ -290,21 +298,43 @@ export default function OperationsPage() {
   <div className="flex items-center gap-4">
     <h2 className="font-semibold text-gray-800">Операции</h2>
     {selected.size > 0 && (
-      <button
-        onClick={handleCopySelected}
-        className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-100"
-      >
-        <span>📄 Копировать</span>
-        <span className="bg-orange-200 px-1.5 py-0.5 rounded text-[10px]">{selected.size}</span>
-      </button>
+      <>
+        <button
+          onClick={() => setShowBulkEdit(true)}
+          className="flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors border border-blue-100"
+        >
+          <span>✎ Изменить</span>
+          <span className="bg-blue-200 px-1.5 py-0.5 rounded text-[10px]">{selected.size}</span>
+        </button>
+        <button
+          onClick={handleCopySelected}
+          className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-100"
+        >
+          <span>📄 Копировать</span>
+          <span className="bg-orange-200 px-1.5 py-0.5 rounded text-[10px]">{selected.size}</span>
+        </button>
+      </>
     )}
   </div>
-  <button
-    onClick={() => { setEditOperation(null); setShowForm(true) }}
-    className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors"
-  >
-    + Добавить
-  </button>
+  <div className="flex items-center gap-2">
+    <button
+      onClick={() => setShowNotes(v => !v)}
+      title={showNotes ? 'Скрыть примечания' : 'Показать примечания'}
+      className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+        showNotes
+          ? 'bg-blue-50 border-blue-200 text-blue-700'
+          : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+      }`}
+    >
+      💬 Примечания
+    </button>
+    <button
+      onClick={() => { setEditOperation(null); setShowForm(true) }}
+      className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors"
+    >
+      + Добавить
+    </button>
+  </div>
 </div>
 
         {/* Фильтры */}
@@ -401,7 +431,7 @@ export default function OperationsPage() {
           </div>
         ) : (
           <div className="overflow-x-auto px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
-            <div className="min-w-[960px]">
+            <div className="min-w-[1050px]">
               {/* Шапка колонок */}
               <div className={`${OP_GRID} items-center px-4 pb-2 text-xs text-gray-500 uppercase tracking-wide`}>
                 <div>
@@ -427,12 +457,13 @@ export default function OperationsPage() {
                       ? navigate(`/documents?open=${op.table_id}`)
                       : handleEdit(op)}
                     title="Двойной клик — редактировать"
-                    className={`${OP_GRID} items-start px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
+                    className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
                       selected.has(op.id)
                         ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
                         : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
                     }`}
                   >
+                    <div className={`${OP_GRID} items-start`}>
                     <div onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(op.id)}
                         onChange={() => toggleSelect(op.id)} className="rounded" />
@@ -457,9 +488,24 @@ export default function OperationsPage() {
                     </div>
                     <div className="text-right font-semibold text-gray-800 whitespace-nowrap pt-0.5">{formatAmount(op.amount)}</div>
                     <div className="min-w-0">
-                      {op.content && <div className="text-xs text-gray-700 truncate" title={op.content}>{op.content}</div>}
-                      {op.note && <div className="text-xs text-gray-400 italic truncate" title={op.note}>💬 {op.note}</div>}
-                      {!op.content && !op.note && <span className="text-gray-300">—</span>}
+                      {op.content
+                        ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>{op.content}</div>
+                        : (!showNotes || !op.note) && <span className="text-gray-300">—</span>}
+
+                      {/* Примечание — сразу под содержанием. Не обрезаем в одну
+                          строку: в нём реквизиты контрагента из выписки */}
+                      {showNotes && op.note && (
+                        <div
+                          // ИНН и р/с нужно уметь скопировать; выделил текст —
+                          // карточка не переключается
+                          onClick={e => { if (!window.getSelection()?.isCollapsed) e.stopPropagation() }}
+                          title={op.note}
+                          className={`flex items-start gap-1 text-[11px] text-gray-400 leading-snug
+                                      select-text cursor-auto ${op.content ? 'mt-1' : ''}`}>
+                          <span className="text-gray-300 flex-shrink-0 select-none">💬</span>
+                          <span className="break-words line-clamp-3">{op.note}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -476,6 +522,7 @@ export default function OperationsPage() {
                           </>
                         )}
                       </div>
+                    </div>
                     </div>
                   </div>
                 ))}
@@ -545,6 +592,16 @@ export default function OperationsPage() {
           initial={draftOperation}
           onSuccess={() => { if (draftOperation) setAiResetKey(k => k + 1); handleFormClose(); loadOperations() }}
           onCancel={handleFormClose}
+        />
+      )}
+
+      {showBulkEdit && (
+        <BulkEditOperations
+          ids={[...selected]}
+          balanceItems={balanceItems}
+          projects={projects}
+          onClose={() => setShowBulkEdit(false)}
+          onApplied={loadOperations}
         />
       )}
     </Layout>
