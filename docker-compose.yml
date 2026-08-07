@@ -41,6 +41,8 @@ services:
       PHP_MAX_EXECUTION_TIME: 120
     volumes:
       - ./back:/var/www/html
+      # Те же лимиты, что и на проде, — иначе разница вылезает только там
+      - ./php/php.ini:/usr/local/etc/php/conf.d/zz-findir.ini:ro
     deploy:
       resources:
         limits:

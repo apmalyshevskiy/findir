@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\AiController;
 use App\Http\Controllers\Api\V1\OperationTemplatesController;
 use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
+use App\Http\Controllers\Api\V1\BackupController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -113,6 +114,12 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings/acquiring-fee-rules',  [SettingsController::class, 'acquiringFeeRules']);
     Route::put('/settings/acquiring-fee-rules',  [SettingsController::class, 'updateAcquiringFeeRules']);
+
+    // Архивная копия данных компании
+    Route::get ('/backup/summary', [BackupController::class, 'summary']);
+    Route::get ('/backup/export',  [BackupController::class, 'export']);
+    Route::post('/backup/inspect', [BackupController::class, 'inspect']);
+    Route::post('/backup/import',  [BackupController::class, 'import']);
 
     Route::get('/settings/edit-lock-date',       [SettingsController::class, 'showLockDate']);
     Route::put('/settings/edit-lock-date',       [SettingsController::class, 'updateLockDate']);

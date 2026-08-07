@@ -44,6 +44,11 @@ services:
     restart: always
     volumes:
       - ./back:/var/www/html          # включая back/.env
+      # Лимиты памяти и размера загрузки. Без этого контейнер живёт на дефолтах
+      # php (128M / upload 2M), и восстановление архивной копии не проходит.
+      # Правка файла требует пересоздания контейнера: bind-mount одиночного
+      # файла остаётся на старом inode (то же правило, что и для nginx-конфига).
+      - ./php/php.ini:/usr/local/etc/php/conf.d/zz-findir.ini:ro
     networks:
       - findir_net                    # БД — хостовая MariaDB через 172.17.0.1
     depends_on:
