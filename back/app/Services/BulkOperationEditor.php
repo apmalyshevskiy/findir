@@ -163,6 +163,10 @@ final class BulkOperationEditor
         $flat      = array_intersect_key($set, array_flip(self::FIELDS));
         $analytics = $this->validAnalytics($db, $set['analytics'] ?? []);
 
+        // Тип каждого элемента справочника — нужен, чтобы вычистить значения,
+        // лежащие в слотах, которых счёт не объявляет (см. ниже про «осиротевшие»)
+        $infoTypeById = DB::connection($db)->table('info')->pluck('type', 'id');
+
         $plan = [];
         foreach ($ops as $op) {
             if ($lock && substr((string) $op->date, 0, 10) <= $lock) {
@@ -212,6 +216,29 @@ final class BulkOperationEditor
                     $acc = $accounts[$eff[$p]] ?? null;
                     if (!$acc) continue;
 
+                    // Очистка чистит и «осиротевшие» значения: импорт мог
+                    // записать статью в слот, которого счёт не объявляет —
+                    // в списке она видна, а по схеме счёта её как бы нет.
+                    // Требовать объявленный слот здесь значило бы навсегда
+                    // запереть такое значение в операции.
+                    if ($infoId === null) {
+                        foreach ([1, 2, 3] as $n) {
+                            $field = "{$p}_info_{$n}_id";
+                            $cur   = $op->{$field} ?? null;
+
+                            $declared  = ($acc->{"info_{$n}_type"} ?? null) === $type;
+                            $holdsType = $cur && ($infoTypeById[$cur] ?? null) === $type;
+
+                            if ($declared || $holdsType) {
+                                $patch[$field] = null;
+                                $placed++;
+                            }
+                        }
+                        continue;   // чистим все подходящие слоты, не только первый
+                    }
+
+                    // Запись значения — только в объявленный слот: писать мимо
+                    // схемы счёта и есть то, что породило осиротевшие значения
                     foreach ([1, 2, 3] as $n) {
                         if (($acc->{"info_{$n}_type"} ?? null) === $type) {
                             $patch["{$p}_info_{$n}_id"] = $infoId;

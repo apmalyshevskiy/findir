@@ -19,7 +19,10 @@ class OperationDraftService
     /** Типы аналитик, которые модель может назвать словами. */
     private const ANALYTIC_TYPES = ['cash', 'flow', 'partner', 'revenue', 'expenses', 'product', 'employee', 'department'];
 
-    public function __construct(private RouterAiClient $ai) {}
+    public function __construct(
+        private RouterAiClient $ai,
+        private AnalyticsQueryService $analytics,
+    ) {}
 
     /** Что делать с приложенным файлом, если пользователь не написал ничего своего. */
     private const FILE_INSTRUCTION = 'Распознай приложенный документ (чек, счёт, накладную, выписку) '
@@ -159,12 +162,20 @@ class OperationDraftService
         $raw = $result;
         unset($raw['_usage']);
 
+        // Показатели считаем сами: модель отдала только описание выборки
+        $reports = [];
+        foreach (($result['reports'] ?? []) as $spec) {
+            $r = $this->analytics->run($db, is_array($spec) ? $spec : [], $accounts);
+            if ($r) $reports[] = $r;
+        }
+
         return [
             'reply'     => trim((string) ($result['reply'] ?? '')),
             'drafts'    => $drafts,
             'new_items' => $this->newItems($result['dictionary_items'] ?? [], $dicts),
             'links'     => $this->links($result['links'] ?? [], $dicts, $flowExpense),
             'bulk'      => $this->bulkPreview($db, $result['bulk_updates'] ?? [], $dicts, $accounts),
+            'reports'   => $reports,
             'assistant' => json_encode($raw, JSON_UNESCAPED_UNICODE),
             'usage'     => $usage,
         ];
@@ -502,12 +513,43 @@ L;
 {$links}
 
 ЧЕСТНОСТЬ О СВОИХ ВОЗМОЖНОСТЯХ (важнее всего):
-- Ты НЕ видишь уже созданные операции и НЕ можешь менять их напрямую.
+- Ты НЕ видишь отдельные операции и НЕ можешь менять их напрямую.
 - НИКОГДА не пиши «я проставил», «я изменил», «готово» — ты ничего не меняешь сам.
   Всё, что ты возвращаешь, — это ПРЕДЛОЖЕНИЯ, которые применит пользователь кнопкой.
 - Если просят массово поправить существующие операции («проставь статью дохода всем
   операциям за июнь») — не отказывайся и не проси перечислить их вручную:
   верни описание массовой правки в bulk_updates, система сама найдёт операции.
+
+ПОКАЗАТЕЛИ (выручка, расходы, обороты — reports):
+- Спросили цифру за период («какая выручка была за июль?», «сколько потратили на аренду
+  во 2 квартале?», «покажи расходы по месяцам») — НЕ отказывайся и НЕ отправляй
+  пользователя фильтровать список руками. Верни описание выборки в reports.
+- Считать будет система по своей базе, ты цифру не знаешь и не выдумывай её:
+  в reply не пиши конкретных сумм, напиши, что именно считаешь. Результат
+  пользователь увидит таблицей под твоим ответом.
+- Как заполнять: date_from/date_to — ГГГГ-ММ-ДД; account_code — код счёта из плана
+  (выручка → счёт доходов, расходы → счёт расходов, деньги → счёт денежных средств);
+  side — что берём: debit (приход/дебет), credit (расход/кредит), net (сальдо).
+  Для выручки на счёте доходов это credit, для расходов на счёте расходов — debit.
+- group_by — разрез. По времени: day (по дням), week (по неделям), month (по месяцам),
+  quarter (по кварталам), year (по годам). Либо account (по счетам), либо тип аналитики
+  (flow, expenses, revenue, partner, product, department, cash, employee).
+  Разрез по аналитике работает только вместе с account_code. Не нужен разрез — null.
+  Шаг бери такой, как просит пользователь: «по дням» — day, «по неделям» — week.
+  Если для длинного периода шаг слишком мелкий, система сама его укрупнит.
+- filter — отбор по КОНКРЕТНОМУ элементу справочника. Спросили «сколько потратили
+  НА ЭКВАЙРИНГ», «выручка ПО КЛИЕНТУ Ромашка», «расходы ПО АРЕНДЕ» — обязательно
+  заполни: {"type":"expenses","name":"Эквайринг"}. Название бери из справочников выше
+  ТОЧНО как там написано. Без отбора — {"type":null,"name":null}.
+  ВАЖНО: без filter система посчитает ВЕСЬ счёт. Если пользователь назвал конкретную
+  статью, контрагента или товар, а ты не заполнил filter — цифра будет неверной.
+  Группа считается вместе с вложенными статьями.
+- chart — вид графика: line (динамика во времени, к разрезу по месяцам),
+  bar (сравнение категорий — по статьям, по контрагентам), donut (структура, доли
+  в целом; только когда все значения одного знака), null — без графика.
+  Просят «график», «диаграмму», «динамику» — обязательно заполни chart.
+  Не уверен — ставь null, система подберёт сама по разрезу.
+- Год не назвали — бери текущий из даты «сегодня».
 
 ГЛАВНОЕ — ВСЕГДА ОТВЕЧАЙ:
 0. Поле reply заполняй ВСЕГДА: краткий ответ по-русски на то, что просил пользователь.
@@ -599,10 +641,44 @@ TXT;
         return [
             'type' => 'object',
             'additionalProperties' => false,
-            'required' => ['reply', 'operations', 'dictionary_items', 'links', 'bulk_updates'],
+            'required' => ['reply', 'operations', 'dictionary_items', 'links', 'bulk_updates', 'reports'],
             'properties' => [
                 // Свободный ответ пользователю: списки, пояснения, что предлагается
                 'reply' => ['type' => 'string'],
+                // Показатели: модель описывает выборку, считает сервер по своей базе
+                'reports' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'required' => ['title', 'date_from', 'date_to', 'account_code', 'side', 'group_by', 'chart', 'filter'],
+                        'properties' => [
+                            'title'        => ['type' => 'string'],
+                            'date_from'    => ['type' => 'string'],
+                            'date_to'      => ['type' => 'string'],
+                            'account_code' => ['type' => ['string', 'null']],
+                            // Отбор по конкретному элементу справочника
+                            'filter' => [
+                                'type' => ['object', 'null'],
+                                'additionalProperties' => false,
+                                'required' => ['type', 'name'],
+                                'properties' => [
+                                    'type' => ['type' => ['string', 'null'], 'enum' => array_merge(self::ANALYTIC_TYPES, [null])],
+                                    'name' => ['type' => ['string', 'null']],
+                                ],
+                            ],
+                            'side'         => ['type' => 'string', 'enum' => ['debit', 'credit', 'net']],
+                            'group_by'     => [
+                                'type' => ['string', 'null'],
+                                'enum' => array_merge(AnalyticsQueryService::GROUPINGS, [null]),
+                            ],
+                            'chart'        => [
+                                'type' => ['string', 'null'],
+                                'enum' => array_merge(AnalyticsQueryService::CHARTS, [null]),
+                            ],
+                        ],
+                    ],
+                ],
                 // Массовая правка уже существующих операций (применяет пользователь)
                 'bulk_updates' => [
                     'type' => 'array',

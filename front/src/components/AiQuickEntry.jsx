@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getAiStatus, parseOperation, parseFile, transcribeAudio, applyBulk, revertBulk } from '../api/ai'
 import AiNewItems from './AiNewItems'
 import AiLinks from './AiLinks'
+import ReportChart from './ReportChart'
 
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(v || 0)
 
@@ -14,6 +15,95 @@ const storeKey = () => {
 }
 const loadSaved = () => {
   try { return JSON.parse(sessionStorage.getItem(storeKey()) || '{}') } catch { return {} }
+}
+
+const SIDE_LABEL = { debit: 'приход (дебет)', credit: 'расход (кредит)', net: 'сальдо' }
+
+const fmtDate = (iso) => {
+  const p = String(iso || '').split('-')
+  return p.length === 3 ? `${p[2]}.${p[1]}.${p[0]}` : iso
+}
+
+/**
+ * Карточка показателя. Все цифры пришли с сервера — модель их не считала
+ * и не могла придумать: она описала только выборку.
+ */
+function ReportCard({ report }) {
+  const rows = report.rows || []
+  // Вид по умолчанию выбирает сервер: без графика показываем таблицу
+  const [view, setView] = useState(report.chart ? 'chart' : 'table')
+
+  // Отбор не разрешился — цифру не показываем: сумма по всему счёту под
+  // заголовком «расходы на эквайринг» ввела бы в заблуждение
+  if (report.error) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <div className="text-sm font-semibold text-gray-800">{report.title}</div>
+        <div className="text-xs text-amber-700 mt-1">⚠ {report.error}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="text-sm font-semibold text-gray-800">{report.title}</div>
+        <div className="flex items-center gap-2">
+          {report.chart && rows.length > 0 && (
+            <div className="flex rounded-md border border-blue-200 overflow-hidden text-[10px]">
+              {[{ k: 'chart', t: '▦ График' }, { k: 'table', t: '☰ Таблица' }].map(v => (
+                <button key={v.k} type="button" onClick={() => setView(v.k)}
+                  className={`px-1.5 py-0.5 transition-colors ${
+                    view === v.k ? 'bg-blue-900 text-white' : 'text-blue-700 hover:bg-blue-100'
+                  }`}>
+                  {v.t}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="text-lg font-bold text-blue-900">{money(report.total)}</div>
+        </div>
+      </div>
+
+      <div className="text-[11px] text-gray-500 mt-0.5">
+        {fmtDate(report.date_from)} — {fmtDate(report.date_to)}
+        {report.account && <> · счёт {report.account.code} {report.account.name}</>}
+        {' · '}{SIDE_LABEL[report.side] || report.side}
+        {report.operations > 0 && <> · операций: {report.operations}</>}
+      </div>
+
+      {/* Отбор виден явно: по цифре должно быть понятно, что именно посчитано */}
+      {report.filter && (
+        <div className="mt-1">
+          <span className="inline-block text-[11px] bg-blue-100 text-blue-800 rounded px-1.5 py-0.5">
+            только «{report.filter.name}»
+          </span>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        view === 'chart' && report.chart
+          ? <ReportChart type={report.chart} rows={rows} />
+          : (
+            <table className="w-full mt-2 text-xs">
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t border-blue-100/70">
+                    <td className="py-1 pr-2 text-gray-700">{r.name}</td>
+                    <td className="py-1 text-right text-gray-500 w-16">{r.operations}</td>
+                    <td className="py-1 pl-2 text-right font-medium text-gray-800 whitespace-nowrap">{money(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+      )}
+
+      {report.total === 0 && rows.length === 0 && (
+        <div className="text-xs text-gray-400 mt-1.5">За период движений нет</div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -72,10 +162,11 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
     const newItems = r.data.new_items || []
     const links = r.data.links || []
     const bulk = r.data.bulk || []
+    const reports = r.data.reports || []
     const reply = r.data.reply || ''
-    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links, bulk }])
+    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links, bulk, reports }])
     setHistory(prev => [...prev, { role: 'user', content: userContent }, { role: 'assistant', content: r.data.assistant || '' }])
-    if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0 && bulk.length === 0) {
+    if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0 && bulk.length === 0 && reports.length === 0) {
       setError('Не удалось распознать — опишите подробнее.')
     }
   }
@@ -232,6 +323,9 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
                     <div className="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-bl-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap">{t.reply}</div>
                   </div>
                 )}
+                {/* Показатели: цифры посчитал сервер по базе, не модель */}
+                {(t.reports || []).map((rep, k) => <ReportCard key={`r${k}`} report={rep} />)}
+
                 {(t.drafts || []).map((d, k) => {
                   const p = d.payload || {}
                   const low = (d.confidence ?? 0) < 0.7

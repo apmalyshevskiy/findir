@@ -181,6 +181,10 @@ class BankStatementMatcher
      * Дебет (suggested_fee_bi_id) — из разноски ACQUIRING_FEE. Кредит наследует
      * фронт от ноги прихода. Если разноска не настроена — кладём только сумму,
      * счёт/статью пользователь выберет вручную.
+     *
+     * suggested_fee_flow_id нужен здесь как ключ к статье расхода
+     * (defaultExpenseForFlow), в саму операцию комиссии он не пишется: денег она
+     * не двигает, движение описано приходной ногой.
      */
     private function applyAcquiringFeeLeg(array $row): array
     {

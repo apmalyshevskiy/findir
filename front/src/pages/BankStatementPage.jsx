@@ -456,15 +456,22 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
   // Операция комиссии эквайринг-свода (вторая нога). НЕ привязана к А100:
   // обе стороны — обычные счета. Помечена _kind='fee', чтобы рендер и сохранение
   // не навязывали ей фиксированную ногу А100.
-  //   Дт = suggested_fee_bi_id (П589, расход) + статья расхода (info_1) + статья ДДС (info_2)
+  //   Дт = suggested_fee_bi_id (П589, расход) + статья расхода (info_1)
   //   Кт = наследует доходный счёт приходной операции (incomeOp.out_bi_id) + его info_1
+  //
+  // Статью ДДС этой операции НЕ проставляем: денег она не двигает — банк удержал
+  // комиссию из выручки, на счёт пришло уже нетто. Движение денег целиком описано
+  // приходной ногой (Дт А100 + «Поступление от клиентов»), и статья ДДС здесь
+  // задваивала бы поступление в отчётах ДДС.
+  // suggested_fee_flow_id при этом продолжает работать — из него выводится
+  // статья расхода (defaultExpenseForFlow на бэкенде).
   const makeFeeOp = (incomeOp) => {
     return {
       _kind: 'fee',
       amount: row.suggested_fee_amount || 0,
       in_bi_id:      row.suggested_fee_bi_id || null,       // П589 расход (Дт)
       in_info_1_id:  row.suggested_fee_expense_id || null,  // статья расхода на П589
-      in_info_2_id:  row.suggested_fee_flow_id || null,     // статья ДДС комиссии
+      in_info_2_id:  null,                                  // статья ДДС — не для этой ноги
       out_bi_id:     incomeOp.out_bi_id || null,            // доходный счёт прихода (Кт, наследуем)
       out_info_1_id: incomeOp.out_info_1_id || null,
       out_info_2_id: null,
