@@ -505,13 +505,15 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     setError('')
     setLoading(true)
     try {
-      // datetime-local input даёт локальное время. Конвертируем в UTC ISO для сервера.
       const payload = { ...form }
       if (payload.date) {
-        // form.date = "2026-03-29T15:30" (локальное время)
-        // new Date("2026-03-29T15:30") парсит как локальное → .toISOString() отдаёт UTC
-        const utc = new Date(payload.date)
-        payload.date = utc.toISOString().slice(0, 19).replace('T', ' ')
+        // Дата операции хранится и сравнивается как локальная «настенная»:
+        // такой её пишет импорт выписки, по такой фильтрует список и по такой
+        // же проверяется запрет закрытого периода. Перевод в UTC здесь сдвигал
+        // операцию на смещение пояса — у полуночных строк из выписки на сутки
+        // назад, вплоть до попадания в закрытый период. Отдаём как есть.
+        const s = String(payload.date).replace('T', ' ')
+        payload.date = s.length === 16 ? `${s}:00` : s.slice(0, 19)
       }
       isEdit ? await updateOperation(operation.id, payload) : await createOperation(payload)
       onSuccess()

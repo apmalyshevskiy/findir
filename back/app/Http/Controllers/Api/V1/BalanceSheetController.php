@@ -40,6 +40,18 @@ class BalanceSheetController extends TenantController
             $infoTypes = [$request->info_type];
         }
 
+        // Типы аналитик, которые разворачиваем деревом справочника. Остальные —
+        // плоским списком (переключатель ⊞/≡ у пилюли аналитики на фронте).
+        // Параметра нет вообще — старый клиент, ведём себя как раньше: всё деревом.
+        // Пустая строка — осознанный выбор «всё плоско», и это не одно и то же.
+        $hierarchyTypes = $infoTypes;
+        if ($request->has('hierarchy_types')) {
+            $raw = $request->hierarchy_types;
+            $hierarchyTypes = is_array($raw)
+                ? array_values(array_filter($raw))
+                : array_values(array_filter(explode(',', (string) $raw)));
+        }
+
         // Загружаем все balance_items
         $balanceItems = (new BalanceItem)
             ->setConnection($this->dbName)
@@ -190,6 +202,7 @@ class BalanceSheetController extends TenantController
                     $biTurnoverOnly[$biId] ?? [],   // ← передаём флаги turnover_only
                     $infoItems,
                     $infoTree,
+                    $hierarchyTypes,
                     0
                 );
             }
@@ -227,6 +240,7 @@ class BalanceSheetController extends TenantController
             'date_from'         => $dateFrom,
             'date_to'           => $dateTo,
             'info_types'        => $infoTypes,
+            'hierarchy_types'   => $hierarchyTypes,
             'hierarchy_accounts'=> $hierarchyAccounts,
         ]);
     }
@@ -243,6 +257,7 @@ class BalanceSheetController extends TenantController
         array  $turnoverOnlyMap,   // ← новый параметр
         $infoItems,
         array  $infoTree,
+        array  $hierarchyTypes,
         int    $level
     ): array {
         if ($level >= count($infoTypes)) return [];
@@ -252,7 +267,8 @@ class BalanceSheetController extends TenantController
 
         if (!$currentField) {
             return $this->buildChildren(
-                $details, $infoTypes, $fieldMap, $turnoverOnlyMap, $infoItems, $infoTree, $level + 1
+                $details, $infoTypes, $fieldMap, $turnoverOnlyMap, $infoItems, $infoTree,
+                $hierarchyTypes, $level + 1
             );
         }
 
@@ -266,6 +282,14 @@ class BalanceSheetController extends TenantController
         $typeItems   = $infoTree[$currentType] ?? collect();
         $turnoverOnly = $turnoverOnlyMap[$currentType] ?? false;
 
+        // Тип не помечен как иерархический — отдаём плоским списком
+        if (!in_array($currentType, $hierarchyTypes, true)) {
+            return $this->buildInfoFlat(
+                $flatGrouped, $typeItems, $infoTypes, $fieldMap, $turnoverOnlyMap,
+                $infoItems, $infoTree, $hierarchyTypes, $level, $turnoverOnly
+            );
+        }
+
         return $this->buildInfoHierarchy(
             $flatGrouped,
             $typeItems,
@@ -274,10 +298,155 @@ class BalanceSheetController extends TenantController
             $turnoverOnlyMap,
             $infoItems,
             $infoTree,
+            $hierarchyTypes,
             $level,
             null,
             $turnoverOnly
         );
+    }
+
+    /**
+     * Плоский список по типу аналитики: каждый использованный элемент
+     * справочника — отдельная строка, без вложенности по parent_id.
+     *
+     * Суммы берём только собственные, без потомков: иначе родитель и потомок
+     * оказались бы в одном списке рядом, и итог задвоился бы визуально.
+     */
+    private function buildInfoFlat(
+        array  $flatGrouped,
+        $typeItems,
+        array  $infoTypes,
+        array  $fieldMap,
+        array  $turnoverOnlyMap,
+        $infoItems,
+        array  $infoTree,
+        array  $hierarchyTypes,
+        int    $level,
+        bool   $turnoverOnly
+    ): array {
+        $nodes = [];
+
+        foreach ($typeItems as $item) {
+            $rows = $flatGrouped[$item->id] ?? [];
+            if (!$rows) continue;                    // элемент не использован
+
+            $node = $this->makeInfoNode(
+                $item, $rows, $infoTypes, $fieldMap, $turnoverOnlyMap,
+                $infoItems, $infoTree, $hierarchyTypes, $level, $turnoverOnly, []
+            );
+            if ($this->isBlankNode($node)) continue;
+
+            $nodes[] = $node;
+        }
+
+        $this->sortInfoNodes($nodes, $infoItems);
+
+        return $nodes;
+    }
+
+    /**
+     * Узел аналитики: суммы по строкам + дочерние узлы.
+     *
+     * @param array $innerChildren  Уже посчитанные потомки по иерархии справочника.
+     *                              Пусто — уходим на следующий тип аналитики.
+     */
+    private function makeInfoNode(
+        $item,
+        array  $aggregated,
+        array  $infoTypes,
+        array  $fieldMap,
+        array  $turnoverOnlyMap,
+        $infoItems,
+        array  $infoTree,
+        array  $hierarchyTypes,
+        int    $level,
+        bool   $turnoverOnly,
+        array  $innerChildren
+    ): array {
+        $opening    = array_sum(array_column($aggregated, 'opening'));
+        $debit      = array_sum(array_column($aggregated, 'debit'));
+        $credit     = array_sum(array_column($aggregated, 'credit'));
+        $closing    = $opening + $debit - $credit;
+        $qtyOpening = array_sum(array_column($aggregated, 'qty_opening'));
+        $qtyDebit   = array_sum(array_column($aggregated, 'qty_debit'));
+        $qtyCredit  = array_sum(array_column($aggregated, 'qty_credit'));
+        $qtyClosing = $qtyOpening + $qtyDebit - $qtyCredit;
+
+        // Следующий уровень аналитики (если иерархия справочника закончилась)
+        $nextLevelChildren = [];
+        if (empty($innerChildren) && $level + 1 < count($infoTypes)) {
+            $nextLevelChildren = $this->buildChildren(
+                $aggregated, $infoTypes, $fieldMap, $turnoverOnlyMap,
+                $infoItems, $infoTree, $hierarchyTypes, $level + 1
+            );
+        }
+
+        $subChildren = !empty($innerChildren) ? $innerChildren : $nextLevelChildren;
+
+        // ── Применяем turnover_only ───────────────────────────────────────
+        // Если флаг установлен — обнуляем сальдо (opening/closing),
+        // только обороты (debit/credit) имеют смысл.
+        if ($turnoverOnly) {
+            $opening    = 0.0;
+            $closing    = 0.0;
+            $qtyOpening = 0.0;
+            $qtyClosing = 0.0;
+        }
+
+        return [
+            'info_id'        => $item->id,
+            'info_type'      => $infoTypes[$level],
+            'info_name'      => $item->name,
+            'turnover_only'  => $turnoverOnly,   // ← фронт использует для прочерков
+            'opening_debit'  => $opening >= 0 ? $opening : 0,
+            'opening_credit' => $opening < 0  ? abs($opening) : 0,
+            'debit'          => $debit,
+            'credit'         => $credit,
+            'closing_debit'  => $closing >= 0 ? $closing : 0,
+            'closing_credit' => $closing < 0  ? abs($closing) : 0,
+            'qty_opening'    => $qtyOpening >= 0 ? $qtyOpening : 0,
+            'qty_opening_neg'=> $qtyOpening < 0  ? abs($qtyOpening) : 0,
+            'qty_debit'      => $qtyDebit,
+            'qty_credit'     => $qtyCredit,
+            'qty_closing'    => $qtyClosing >= 0 ? $qtyClosing : 0,
+            'qty_closing_neg'=> $qtyClosing < 0  ? abs($qtyClosing) : 0,
+            'children'       => $subChildren,
+        ];
+    }
+
+    /**
+     * Строка, в которой нечего показать: все колонки нулевые и нет потомков.
+     *
+     * Такие берутся из входящих остатков: элемент справочника попадает в выборку,
+     * если по нему были движения ДО периода. Для аналитики с turnover_only
+     * (статьи ДДС) сальдо принудительно обнуляется, и если в самом периоде
+     * движений не было — остаётся строка из одних прочерков.
+     */
+    private function isBlankNode(array $node): bool
+    {
+        if (!empty($node['children'])) return false;
+
+        $fields = [
+            'opening_debit', 'opening_credit', 'debit', 'credit', 'closing_debit', 'closing_credit',
+            'qty_opening', 'qty_opening_neg', 'qty_debit', 'qty_credit', 'qty_closing', 'qty_closing_neg',
+        ];
+        foreach ($fields as $f) {
+            if (abs((float) ($node[$f] ?? 0)) > 0.0000001) return false;
+        }
+
+        return true;
+    }
+
+    private function sortInfoNodes(array &$nodes, $infoItems): void
+    {
+        usort($nodes, function ($a, $b) use ($infoItems) {
+            $itemA = $infoItems->get($a['info_id']);
+            $itemB = $infoItems->get($b['info_id']);
+            $sortA = $itemA?->sort_order ?? 0;
+            $sortB = $itemB?->sort_order ?? 0;
+            if ($sortA !== $sortB) return $sortA - $sortB;
+            return strcmp($a['info_name'], $b['info_name']);
+        });
     }
 
     /**
@@ -293,6 +462,7 @@ class BalanceSheetController extends TenantController
         array  $turnoverOnlyMap,   // ← новый параметр
         $infoItems,
         array  $infoTree,
+        array  $hierarchyTypes,
         int    $level,
         ?int   $parentId,
         bool   $turnoverOnly = false
@@ -312,80 +482,26 @@ class BalanceSheetController extends TenantController
                 }
             }
 
-            if (empty($aggregated) && $this->buildInfoHierarchy(
-                $flatGrouped, $typeItems, $infoTypes, $fieldMap, $turnoverOnlyMap,
-                $infoItems, $infoTree, $level, $item->id, $turnoverOnly
-            ) === []) {
-                continue;
-            }
-
-            $opening    = array_sum(array_column($aggregated, 'opening'));
-            $debit      = array_sum(array_column($aggregated, 'debit'));
-            $credit     = array_sum(array_column($aggregated, 'credit'));
-            $closing    = $opening + $debit - $credit;
-            $qtyOpening = array_sum(array_column($aggregated, 'qty_opening'));
-            $qtyDebit   = array_sum(array_column($aggregated, 'qty_debit'));
-            $qtyCredit  = array_sum(array_column($aggregated, 'qty_credit'));
-            $qtyClosing = $qtyOpening + $qtyDebit - $qtyCredit;
-
             // Рекурсивно строим дочерние узлы этого уровня (иерархия справочника)
             $innerChildren = $this->buildInfoHierarchy(
                 $flatGrouped, $typeItems, $infoTypes, $fieldMap, $turnoverOnlyMap,
-                $infoItems, $infoTree, $level, $item->id, $turnoverOnly
+                $infoItems, $infoTree, $hierarchyTypes, $level, $item->id, $turnoverOnly
             );
 
-            // Следующий уровень аналитики (если иерархия справочника закончилась)
-            $nextLevelChildren = [];
-            if (empty($innerChildren) && $level + 1 < count($infoTypes)) {
-                $nextLevelChildren = $this->buildChildren(
-                    $aggregated, $infoTypes, $fieldMap, $turnoverOnlyMap,
-                    $infoItems, $infoTree, $level + 1
-                );
+            if (empty($aggregated) && empty($innerChildren)) {
+                continue;
             }
 
-            $subChildren = !empty($innerChildren) ? $innerChildren : $nextLevelChildren;
-
-            // ── Применяем turnover_only ───────────────────────────────────────
-            // Если флаг установлен — обнуляем сальдо (opening/closing),
-            // только обороты (debit/credit) имеют смысл.
-            if ($turnoverOnly) {
-                $opening    = 0.0;
-                $closing    = 0.0;
-                $qtyOpening = 0.0;
-                $qtyClosing = 0.0;
-            }
-
-            $node = [
-                'info_id'        => $item->id,
-                'info_type'      => $infoTypes[$level],
-                'info_name'      => $item->name,
-                'turnover_only'  => $turnoverOnly,   // ← фронт использует для прочерков
-                'opening_debit'  => $opening >= 0 ? $opening : 0,
-                'opening_credit' => $opening < 0  ? abs($opening) : 0,
-                'debit'          => $debit,
-                'credit'         => $credit,
-                'closing_debit'  => $closing >= 0 ? $closing : 0,
-                'closing_credit' => $closing < 0  ? abs($closing) : 0,
-                'qty_opening'    => $qtyOpening >= 0 ? $qtyOpening : 0,
-                'qty_opening_neg'=> $qtyOpening < 0  ? abs($qtyOpening) : 0,
-                'qty_debit'      => $qtyDebit,
-                'qty_credit'     => $qtyCredit,
-                'qty_closing'    => $qtyClosing >= 0 ? $qtyClosing : 0,
-                'qty_closing_neg'=> $qtyClosing < 0  ? abs($qtyClosing) : 0,
-                'children'       => $subChildren,
-            ];
+            $node = $this->makeInfoNode(
+                $item, $aggregated, $infoTypes, $fieldMap, $turnoverOnlyMap,
+                $infoItems, $infoTree, $hierarchyTypes, $level, $turnoverOnly, $innerChildren
+            );
+            if ($this->isBlankNode($node)) continue;
 
             $nodes[] = $node;
         }
 
-        usort($nodes, function ($a, $b) use ($infoItems) {
-            $itemA = $infoItems->get($a['info_id']);
-            $itemB = $infoItems->get($b['info_id']);
-            $sortA = $itemA?->sort_order ?? 0;
-            $sortB = $itemB?->sort_order ?? 0;
-            if ($sortA !== $sortB) return $sortA - $sortB;
-            return strcmp($a['info_name'], $b['info_name']);
-        });
+        $this->sortInfoNodes($nodes, $infoItems);
 
         return $nodes;
     }

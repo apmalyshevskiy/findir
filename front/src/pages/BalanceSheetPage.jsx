@@ -155,7 +155,9 @@ export default function BalanceSheetPage() {
     setExpandedAccounts(new Set())
     const params = { date_from: filter.from, date_to: filter.to }
     if (infoTypes.length > 0)    params['info_types[]']      = infoTypes
-    if (hierarchyTypes.size > 0) params['hierarchy_types[]'] = [...hierarchyTypes]
+    // Передаём всегда, в том числе пустым: пустая строка — это «все аналитики
+    // плоско», а отсутствие параметра сервер трактует как «всё деревом»
+    params.hierarchy_types = [...hierarchyTypes].join(',')
     if (biFilter)            params.bi_id               = biFilter
     if (projectFilter)       params.project_id          = projectFilter
     if (hierarchyAccounts)   params.hierarchy_accounts  = 1
