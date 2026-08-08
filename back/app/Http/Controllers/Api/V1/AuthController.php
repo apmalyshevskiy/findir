@@ -37,6 +37,7 @@ class AuthController extends Controller
         DB::table('personal_access_tokens')->insert([
             'tokenable_type' => 'tenant_user',
             'tokenable_id'   => $userId,
+            'tenant_id'      => $tenantId,
             'name'           => 'auth_token',
             'token'          => hash('sha256', $plainToken),
             'abilities'      => json_encode(['*', 'tenant:' . $tenantId]),
@@ -204,9 +205,14 @@ class AuthController extends Controller
             ]);
         }
 
+        // Только сессии этого пользователя В ЭТОЙ компании. Без tenant_id здесь
+        // сносились токены с тем же id пользователя в других базах, а id = 1 у
+        // владельца каждой компании — вход к одному клиенту выбрасывал
+        // финдиректора у всех остальных.
         DB::table('personal_access_tokens')
             ->where('tokenable_type', 'tenant_user')
             ->where('tokenable_id', $user->id)
+            ->where('tenant_id', $tenant->id)
             ->delete();
 
         $plainToken = $this->createToken($tenant->id, $user->id);

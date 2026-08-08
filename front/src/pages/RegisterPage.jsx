@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
+import { rememberAccount } from '../utils/accounts'
 
 // Допустим домен из одного символа: «a» → findir_a.
 // Дефис разрешён только внутри — не в начале и не в конце.
@@ -90,9 +91,9 @@ export default function RegisterPage() {
     setLoading(true)
     try {
       const res = await api.post('/register', form)
-      localStorage.setItem('token', res.data.token)
-      localStorage.setItem('tenant', JSON.stringify(res.data.tenant))
-      localStorage.setItem('user', JSON.stringify(res.data.user))
+      // Новая компания встаёт в общий список: финдиректор мог заводить её,
+      // уже работая с другими клиентами
+      rememberAccount(res.data)
       navigate('/dashboard')
     } catch (err) {
       const errors = err.response?.data?.errors

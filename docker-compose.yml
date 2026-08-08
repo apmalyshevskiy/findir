@@ -43,6 +43,9 @@ services:
       - ./back:/var/www/html
       # Те же лимиты, что и на проде, — иначе разница вылезает только там
       - ./php/php.ini:/usr/local/etc/php/conf.d/zz-findir.ini:ro
+      # Грузится последним и гасит opcache: в образе стоит validate_timestamps=0,
+      # и без этого каждая правка кода требовала бы перезапуска контейнера
+      - ./php/php-dev.ini:/usr/local/etc/php/conf.d/zzz-findir-dev.ini:ro
     deploy:
       resources:
         limits:

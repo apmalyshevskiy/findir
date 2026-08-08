@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
+import { rememberAccount } from '../utils/accounts'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -14,9 +15,9 @@ export default function LoginPage() {
     setLoading(true)
     try {
       const res = await api.post('/login', form)
-      localStorage.setItem('token', res.data.token)
-      localStorage.setItem('tenant', JSON.stringify(res.data.tenant))
-      localStorage.setItem('user', JSON.stringify(res.data.user))
+      // Не затираем уже подключённые компании: вход добавляет ещё одну и
+      // делает её активной
+      rememberAccount(res.data)
       navigate('/dashboard')
     } catch (err) {
       setError(err.response?.data?.message || 'Ошибка входа')
