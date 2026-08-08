@@ -69,6 +69,7 @@ export default function Layout({ children }) {
         { path: '/classification-rules', label: 'Настройка правил' },
         { path: '/acquiring-fee-rules', label: 'Эквайринг' },
         { path: '/edit-lock-date',       label: 'Дата запрета' },
+        { path: '/integrations',         label: 'Интеграции' },
         { path: '/backup',               label: 'Архивная копия' },
       ],
     },

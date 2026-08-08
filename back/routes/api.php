@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\V1\OperationTemplatesController;
 use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
 use App\Http\Controllers\Api\V1\BackupController;
+use App\Http\Controllers\Api\V1\IntegrationsController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
@@ -114,6 +115,20 @@ Route::prefix('v1')->group(function () {
 
     Route::get('/settings/acquiring-fee-rules',  [SettingsController::class, 'acquiringFeeRules']);
     Route::put('/settings/acquiring-fee-rules',  [SettingsController::class, 'updateAcquiringFeeRules']);
+
+    // Интеграции с учётными системами.
+    // /types и /dictionaries объявлены до /{id}, иначе Laravel примет слово
+    // «types» за идентификатор и уронит поиск записи
+    Route::get   ('/integrations/types',              [IntegrationsController::class, 'types']);
+    Route::get   ('/integrations',                    [IntegrationsController::class, 'index']);
+    Route::post  ('/integrations',                    [IntegrationsController::class, 'store']);
+    Route::get   ('/integrations/{id}',               [IntegrationsController::class, 'show']);
+    Route::put   ('/integrations/{id}',               [IntegrationsController::class, 'update']);
+    Route::delete('/integrations/{id}',               [IntegrationsController::class, 'destroy']);
+    Route::post  ('/integrations/{id}/test',          [IntegrationsController::class, 'test']);
+    Route::get   ('/integrations/{id}/dictionaries',  [IntegrationsController::class, 'dictionaries']);
+    Route::post  ('/integrations/{id}/sync',          [IntegrationsController::class, 'sync']);
+    Route::get   ('/integrations/{id}/runs',          [IntegrationsController::class, 'runs']);
 
     // Архивная копия данных компании
     Route::get ('/backup/summary', [BackupController::class, 'summary']);

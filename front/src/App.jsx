@@ -16,6 +16,7 @@ import ProjectsPage from './pages/ProjectsPage'
 import BalanceItemsPage from './pages/BalanceItemsPage'
 import EditLockDatePage from './pages/EditLockDatePage'
 import BackupPage from './pages/BackupPage'
+import IntegrationsPage from './pages/IntegrationsPage'
 import FundPlanningPage from './pages/FundPlanningPage'
 import FundSchemesPage from './pages/FundSchemesPage'
 
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/balance-items"        element={<PrivateRoute><BalanceItemsPage /></PrivateRoute>} />
         <Route path="/edit-lock-date"       element={<PrivateRoute><EditLockDatePage /></PrivateRoute>} />
         <Route path="/backup"               element={<PrivateRoute><BackupPage /></PrivateRoute>} />
+        <Route path="/integrations"         element={<PrivateRoute><IntegrationsPage /></PrivateRoute>} />
         <Route path="/fund-planning"        element={<PrivateRoute><FundPlanningPage /></PrivateRoute>} />
         <Route path="/fund-schemes"         element={<PrivateRoute><FundSchemesPage /></PrivateRoute>} />
       </Routes>

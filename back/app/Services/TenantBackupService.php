@@ -44,7 +44,19 @@ final class TenantBackupService
         'budget_documents', 'budget_items', 'budget_opening_balances',
         'documents', 'document_items',
         'operation_templates',
+        'integrations', 'integration_links', 'integration_runs',
         'operations',                                        // последним: триггеры соберут обороты
+    ];
+
+    /**
+     * Поля, которые обнуляются при выгрузке.
+     *
+     * Токены доступа к чужим системам в скачиваемом файле — это утечка: копию
+     * пересылают почтой и кладут в облако. После восстановления интеграция
+     * останется со всеми настройками, но токен придётся ввести заново.
+     */
+    private const REDACTED = [
+        'integrations' => ['credentials'],
     ];
 
     /** Сколько строк за раз пишем при загрузке. */
@@ -103,20 +115,24 @@ final class TenantBackupService
 
             $firstRow = true;
             $q = DB::connection($db)->table($table);
+            $hide = self::REDACTED[$table] ?? [];
+
+            $write = function ($row) use (&$firstRow, $emit, $hide) {
+                $row = (array) $row;
+                foreach ($hide as $field) {
+                    if (array_key_exists($field, $row)) $row[$field] = null;
+                }
+                $emit(($firstRow ? '' : ',') . json_encode($row, JSON_UNESCAPED_UNICODE));
+                $firstRow = false;
+            };
 
             // chunk требует ключ сортировки; где его нет — таблица маленькая
             if (Schema::connection($db)->hasColumn($table, 'id')) {
-                $q->orderBy('id')->chunk(1000, function ($rows) use (&$firstRow, $emit) {
-                    foreach ($rows as $row) {
-                        $emit(($firstRow ? '' : ',') . json_encode($row, JSON_UNESCAPED_UNICODE));
-                        $firstRow = false;
-                    }
+                $q->orderBy('id')->chunk(1000, function ($rows) use ($write) {
+                    foreach ($rows as $row) $write($row);
                 });
             } else {
-                foreach ($q->get() as $row) {
-                    $emit(($firstRow ? '' : ',') . json_encode($row, JSON_UNESCAPED_UNICODE));
-                    $firstRow = false;
-                }
+                foreach ($q->get() as $row) $write($row);
             }
 
             $emit(']');
