@@ -99,7 +99,16 @@ class IntegrationsController extends TenantController
 
         if (isset($data['name']))      $integration->name      = $data['name'];
         if (isset($data['is_active'])) $integration->is_active = $data['is_active'];
-        if (isset($data['settings']))  $integration->settings  = $data['settings'];
+
+        // Умолчания подмешиваем и при обновлении: не присланное поле должно
+        // вернуться к значению по умолчанию, а не обнулиться. Явно переданное
+        // значение (в том числе false у галочек) всегда сильнее умолчания
+        if (isset($data['settings'])) {
+            $integration->settings = array_merge(
+                IntegrationRegistry::defaults($integration->type),
+                $data['settings']
+            );
+        }
 
         // Пустое значение поля доступа означает «не меняли»: наружу токен не
         // отдаётся, и форма присылает его пустым, пока человек не введёт новый
@@ -266,6 +275,35 @@ class IntegrationsController extends TenantController
         return array_diff_key($integration->credentials(), array_flip($secret));
     }
 
+    /**
+     * Чего не хватает, чтобы запускать загрузку.
+     *
+     * Считаем заранее и показываем на экране загрузки: иначе человек жмёт
+     * «Загрузить» и получает отказ на середине — а причина всё это время
+     * лежала в настройках.
+     *
+     * @return array<int, string> человеческие названия незаполненного
+     */
+    private function missingSetup(Integration $integration): array
+    {
+        $schema  = IntegrationRegistry::schema($integration->type);
+        $creds   = $integration->credentials();
+        $missing = [];
+
+        foreach ($schema['credentials'] as $f) {
+            if (($f['required'] ?? false) && empty($creds[$f['key']])) {
+                $missing[] = mb_strtolower($f['label']);
+            }
+        }
+        foreach ($schema['settings'] as $f) {
+            if (($f['required'] ?? false) && !$integration->setting($f['key'])) {
+                $missing[] = mb_strtolower($f['label']);
+            }
+        }
+
+        return $missing;
+    }
+
     private function format(Integration $integration): array
     {
         return [
@@ -277,6 +315,9 @@ class IntegrationsController extends TenantController
             'credentials'      => $this->publicCredentials($integration),
             // Сам токен не отдаём никогда — только признак, что он задан
             'has_credentials'  => $integration->hasCredentials(),
+            'entities'         => IntegrationRegistry::driver($integration)->entities(),
+            'missing'          => $missing = $this->missingSetup($integration),
+            'is_ready'         => empty($missing),
             'last_run_at'      => $integration->last_run_at,
             'last_run_status'  => $integration->last_run_status,
             'last_run_message' => $integration->last_run_message,

@@ -1,46 +1,23 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import Layout from '../components/Layout'
 import IntegrationSettingsForm from '../components/IntegrationSettingsForm'
 import {
   getIntegrationTypes, getIntegrations, createIntegration, updateIntegration,
-  deleteIntegration, testIntegration, runIntegrationSync, getIntegrationRuns,
+  deleteIntegration, testIntegration,
 } from '../api/integrations'
-import { localDate } from '../utils/period'
 
-const fmtDateTime = (iso) => {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return isNaN(d) ? iso : d.toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
-}
-
-const STATUS = {
-  ok:      { label: 'успешно',            cls: 'bg-green-50 text-green-700 ring-green-200' },
-  warning: { label: 'с предупреждениями', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
-  error:   { label: 'ошибка',             cls: 'bg-red-50 text-red-700 ring-red-200' },
-  running: { label: 'выполняется',        cls: 'bg-gray-50 text-gray-600 ring-gray-200' },
-}
-
-const Badge = ({ status }) => {
-  const s = STATUS[status] || STATUS.running
-  return <span className={`px-2 py-0.5 rounded text-[11px] font-medium ring-1 ${s.cls}`}>{s.label}</span>
-}
-
-// Месяц по умолчанию: загружают почти всегда закрывшийся период
-const defaultPeriod = () => {
-  const now = new Date()
-  const from = new Date(now.getFullYear(), now.getMonth(), 1)
-  const to   = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-  return { from: localDate(from), to: localDate(to) }
-}
+/**
+ * Настройки интеграций: связь с учётной системой и правила переноса.
+ *
+ * Сама загрузка живёт на отдельной странице — сюда заходят один раз при
+ * подключении и потом почти никогда.
+ */
 
 export default function IntegrationsPage() {
   const [types, setTypes]   = useState({})
   const [items, setItems]   = useState([])
   const [editing, setEditing] = useState(null)   // { id?, type, name, is_active, settings, credentials }
-  const [runs, setRuns]     = useState([])
-  const [period, setPeriod] = useState(defaultPeriod)
   const [busy, setBusy]     = useState('')
   const [notice, setNotice] = useState(null)     // { kind, text }
 
@@ -51,10 +28,8 @@ export default function IntegrationsPage() {
     load()
   }, [])
 
-  const loadRuns = (id) => getIntegrationRuns(id).then(r => setRuns(r.data.data || [])).catch(() => setRuns([]))
-
   const openNew = (type) => {
-    setNotice(null); setRuns([])
+    setNotice(null)
     setEditing({
       type,
       name: types[type]?.label || type,
@@ -76,7 +51,6 @@ export default function IntegrationsPage() {
   const openEdit = (item) => {
     setNotice(null)
     setEditing(toForm(item))
-    loadRuns(item.id)
   }
 
   const persist = async () => {
@@ -120,25 +94,6 @@ export default function IntegrationsPage() {
     } finally { setBusy('') }
   }
 
-  const sync = async () => {
-    const entity = Object.keys(types[editing.type]?.entities || { warehouse_invoice: 1 })[0]
-    setBusy('sync'); setNotice(null)
-    try {
-      // Тоже сохраняем сначала: правило переноса должно быть тем, что на экране
-      const saved = await persist()
-      const r = await runIntegrationSync(saved.id, { entity, from: period.from, to: period.to })
-      const run = r.data.data
-      setNotice({
-        kind: run.status === 'warning' ? 'warn' : 'ok',
-        text: run.message || 'Загрузка завершена',
-      })
-      loadRuns(saved.id); load()
-    } catch (e) {
-      setNotice({ kind: 'error', text: e.response?.data?.data?.message || e.response?.data?.message || 'Загрузка не удалась' })
-      if (editing.id) loadRuns(editing.id)
-    } finally { setBusy('') }
-  }
-
   const remove = async (item) => {
     if (!confirm(`Удалить интеграцию «${item.name}»? Загруженные документы останутся, но связь с источником потеряется — повторная загрузка создаст их заново.`)) return
     await deleteIntegration(item.id)
@@ -154,7 +109,14 @@ export default function IntegrationsPage() {
   return (
     <Layout>
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Интеграции</h2>
+        <div>
+          <h2 className="text-xl font-semibold text-gray-800">Интеграции</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Связь с учётной системой и правила переноса. Заполняется один раз —
+            загрузка данных живёт на странице{' '}
+            <Link to="/data-import" className="text-blue-700 hover:underline">Загрузка</Link>.
+          </p>
+        </div>
         <div className="flex gap-2">
           {Object.entries(types).map(([key, t]) => (
             <button key={key} onClick={() => openNew(key)}
@@ -185,7 +147,7 @@ export default function IntegrationsPage() {
               </div>
               <div className="text-[11px] text-gray-400 mt-0.5 pl-4">
                 {types[i.type]?.label || i.type}
-                {i.last_run_at && <> · {fmtDateTime(i.last_run_at)}</>}
+                {!i.is_ready && <span className="text-amber-700"> · не настроена до конца</span>}
               </div>
             </button>
           ))}
@@ -241,68 +203,11 @@ export default function IntegrationsPage() {
               )}
             </div>
 
-            {/* ── Загрузка ────────────────────────────────────────── */}
             {editing.id && (
-              <div className="pt-4 border-t border-gray-100 space-y-3">
-                <div className="text-[11px] uppercase tracking-wide text-gray-400">Загрузка данных</div>
-
-                <div className="flex flex-wrap items-end gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">с</label>
-                    <input type="date" value={period.from}
-                      onChange={e => setPeriod({ ...period, from: e.target.value })}
-                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">по</label>
-                    <input type="date" value={period.to}
-                      onChange={e => setPeriod({ ...period, to: e.target.value })}
-                      className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
-                  </div>
-                  <button onClick={sync} disabled={busy === 'sync'}
-                    className="px-4 py-2 bg-green-700 text-white rounded-lg text-sm font-medium hover:bg-green-800 disabled:opacity-50">
-                    {busy === 'sync' ? 'Загружаю...' : '↓ Загрузить накладные'}
-                  </button>
-                </div>
-
-                <p className="text-[11px] text-gray-400">
-                  Повторная загрузка за тот же период безопасна: накладные сопоставляются
-                  по их идентификатору в источнике, дубли не появятся. Период — не больше 92 дней.
-                </p>
-
-                {runs.length > 0 && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs mt-2">
-                      <thead>
-                        <tr className="text-gray-400 text-left">
-                          <th className="py-1.5 pr-3 font-medium">Когда</th>
-                          <th className="py-1.5 pr-3 font-medium">Период</th>
-                          <th className="py-1.5 pr-3 font-medium">Итог</th>
-                          <th className="py-1.5 font-medium">Состояние</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {runs.map(r => (
-                          <tr key={r.id} className="border-t border-gray-50 align-top">
-                            <td className="py-1.5 pr-3 whitespace-nowrap text-gray-600">{fmtDateTime(r.started_at)}</td>
-                            <td className="py-1.5 pr-3 whitespace-nowrap text-gray-500">
-                              {String(r.period_from).slice(0, 10)} — {String(r.period_to).slice(0, 10)}
-                            </td>
-                            <td className="py-1.5 pr-3 text-gray-700">
-                              {r.message}
-                              {r.details?.length > 0 && (
-                                <ul className="mt-1 text-amber-800 list-disc pl-4 space-y-0.5">
-                                  {r.details.map((d, k) => <li key={k}>{d}</li>)}
-                                </ul>
-                              )}
-                            </td>
-                            <td className="py-1.5"><Badge status={r.status} /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+              <div className="pt-4 border-t border-gray-100 text-sm text-gray-500">
+                Настроили — дальше грузите данные на странице{' '}
+                <Link to="/data-import" className="text-blue-700 hover:underline font-medium">Загрузка</Link>.
+                Сюда возвращаться не нужно.
               </div>
             )}
           </div>

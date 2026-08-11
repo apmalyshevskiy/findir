@@ -51,6 +51,7 @@ export default function Layout({ children }) {
     { path: '/documents',        label: 'Документы' },
     { path: '/balance-sheet',    label: 'Оборотка' },
     { path: '/bank-statement',   label: 'Выписка' },
+    { path: '/data-import',      label: 'Загрузка' },
     { path: '/budget',           label: 'Бюджет' },
     { path: '/payment-calendar', label: 'Календарь' },
     {
