@@ -46,7 +46,26 @@ interface IntegrationDriver
     public function entities(): array;
 
     /**
-     * Загрузка за период. Пишет в переданный прогон счётчики и предупреждения.
+     * Что лежит в источнике за период — без изменения данных.
+     *
+     * Первый шаг загрузки: список объектов с пометкой, какие уже загружены,
+     * какие изменились и какие взять нельзя.
+     *
+     * @return array<int, array{id: string, status: string}>
      */
-    public function sync(Integration $integration, IntegrationRun $run, string $from, string $to): void;
+    public function preview(Integration $integration, string $entity, string $from, string $to): array;
+
+    /**
+     * Один объект источника целиком: реквизиты, состав и то, как он ложится
+     * в учёт. Справочный показ — данные не меняет.
+     */
+    public function object(Integration $integration, string $entity, string $externalId): array;
+
+    /**
+     * Загрузка за период. Пишет в переданный прогон счётчики и предупреждения.
+     *
+     * $only — внешние идентификаторы отмеченных объектов; null означает «всё,
+     * что попадает в период».
+     */
+    public function sync(Integration $integration, IntegrationRun $run, string $from, string $to, ?array $only = null): void;
 }

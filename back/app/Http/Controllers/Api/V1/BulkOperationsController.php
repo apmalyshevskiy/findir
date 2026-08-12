@@ -89,6 +89,7 @@ class BulkOperationsController extends TenantController
             'set.project_id'   => 'nullable|integer|exists:' . $this->dbName . '.projects,id',
             'set.content'      => 'nullable|string|max:1000',
             'set.note'         => 'nullable|string|max:1000',
+            'set.is_posted'    => 'nullable|boolean',
             'set.analytics'    => 'nullable|array',
             'set.analytics.*'  => 'nullable|integer',
         ], [], ['set.analytics.*' => 'аналитика']);
@@ -103,10 +104,11 @@ class BulkOperationsController extends TenantController
 
         $set = array_intersect_key($data['set'], array_flip(BulkOperationEditor::FIELDS));
 
-        // Счета и проект у операции обязательны — «очистить» для них не бывает
-        foreach (['in_bi_id', 'out_bi_id', 'project_id'] as $f) {
+        // Счета, проект и признак проведения — «очистить» для них не бывает
+        foreach (['in_bi_id', 'out_bi_id', 'project_id', 'is_posted'] as $f) {
             if (array_key_exists($f, $set) && $set[$f] === null) unset($set[$f]);
         }
+        if (array_key_exists('is_posted', $set)) $set['is_posted'] = (bool) $set['is_posted'];
 
         if ($analytics) $set['analytics'] = $analytics;
 

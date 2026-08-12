@@ -10,6 +10,7 @@ const FIELDS = [
   { key: 'project_id', label: 'Проект',       kind: 'project' },
   { key: 'content',    label: 'Содержание',   kind: 'text' },
   { key: 'note',       label: 'Примечание',   kind: 'text' },
+  { key: 'is_posted',  label: 'Проведение',   kind: 'posting' },
 ]
 
 const ANALYTICS = [
@@ -97,6 +98,9 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
     FIELDS.forEach(f => {
       if (!enabled.has(f.key)) return
       const v = values[f.key]
+      // Проведение — выбор из двух, а не «значение или очистить»:
+      // невыбранное поле по умолчанию означает «провести»
+      if (f.kind === 'posting') { set[f.key] = (v ?? '1') === '1'; return }
       set[f.key] = v === '' || v === undefined ? null : v
     })
     const analytics = {}
@@ -231,6 +235,14 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
                     <input type="text" className={ic} value={values[f.key] ?? ''}
                       placeholder="пусто — очистить"
                       onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))} />
+                  )}
+                  {/* «Очистить» тут не бывает: операция либо в оборотах, либо нет */}
+                  {f.kind === 'posting' && (
+                    <select className={ic} value={values[f.key] ?? '1'}
+                      onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}>
+                      <option value="1">Провести — попадут в обороты</option>
+                      <option value="0">Снять проведение — уйдут из оборотов</option>
+                    </select>
                   )}
                 </Row>
               ))}

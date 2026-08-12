@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\DB;
 final class BulkOperationEditor
 {
     /** Плоские поля операции, доступные для массовой правки. */
-    public const FIELDS = ['in_bi_id', 'out_bi_id', 'project_id', 'content', 'note'];
+    public const FIELDS = ['in_bi_id', 'out_bi_id', 'project_id', 'content', 'note', 'is_posted'];
 
     public const ANALYTIC_TYPES = ['partner', 'employee', 'department', 'cash', 'flow', 'expenses', 'product', 'revenue'];
 
@@ -151,14 +151,19 @@ final class BulkOperationEditor
         $accounts = DB::connection($db)->table('balance_items')
             ->get(['id', 'code', 'name', 'info_1_type', 'info_2_type', 'info_3_type'])->keyBy('id');
 
+        // Правимые поля берём из FIELDS, а не перечисляем ещё раз: забытая
+        // здесь колонка читалась бы как NULL, сравнение с новым значением
+        // давало бы «уже такое» — и правка молча ничего не делала
+        $columns = array_values(array_unique(array_merge([
+            'id', 'date', 'table_name', 'table_id',
+            'in_bi_id', 'out_bi_id',
+            'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
+            'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
+        ], self::FIELDS)));
+
         $ops = DB::connection($db)->table('operations')
             ->whereIn('id', $ids)->whereNull('deleted_at')
-            ->get([
-                'id', 'date', 'table_name', 'table_id', 'project_id', 'content', 'note',
-                'in_bi_id', 'out_bi_id',
-                'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
-                'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
-            ]);
+            ->get($columns);
 
         $flat      = array_intersect_key($set, array_flip(self::FIELDS));
         $analytics = $this->validAnalytics($db, $set['analytics'] ?? []);
@@ -295,6 +300,11 @@ final class BulkOperationEditor
     /** null и '' считаем одним и тем же «пусто», числа сравниваем как строки. */
     private function same($a, $b): bool
     {
+        // Признак проведения приходит булевым, а в базе лежит 0/1: строковое
+        // сравнение решило бы, что «0» и false — разные значения
+        if (is_bool($a) || is_bool($b)) {
+            return (bool) $a === (bool) $b;
+        }
         return (string) ($a ?? '') === (string) ($b ?? '');
     }
 
@@ -311,6 +321,10 @@ final class BulkOperationEditor
         if (array_key_exists('project_id', $set)) {
             $name = DB::connection($db)->table('projects')->where('id', $set['project_id'])->value('name');
             $parts[] = 'проект → ' . ($name ?: '—');
+        }
+
+        if (array_key_exists('is_posted', $set)) {
+            $parts[] = $set['is_posted'] ? 'провести' : 'снять проведение';
         }
 
         foreach (['content' => 'содержание', 'note' => 'примечание'] as $f => $label) {

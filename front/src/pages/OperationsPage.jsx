@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
-import { getOperations, deleteOperation, getBalanceItems, createOperation} from '../api/operations'
+import { getOperations, deleteOperation, getBalanceItems, createOperation, setOperationPosting } from '../api/operations'
 import { getProjects } from '../api/projects'
 import OperationForm from '../components/OperationForm'
 import AiQuickEntry from '../components/AiQuickEntry'
@@ -93,7 +93,7 @@ export default function OperationsPage() {
   const [loading, setLoading] = useState(true)
   // Период запоминается между заходами и хранится отдельно от прочих фильтров
   const [period, setPeriod] = usePersistedPeriod('operations')
-  const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '' })
+  const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '', is_posted: '' })
   const [selected, setSelected] = useState(new Set())
   const [showBulkEdit, setShowBulkEdit] = useState(false)
   // Примечание — отдельной строкой под карточкой. Кому мешает, тот выключит
@@ -138,6 +138,8 @@ export default function OperationsPage() {
     if (filter.in_bi_id)  params.in_bi_id   = filter.in_bi_id
     if (filter.out_bi_id) params.out_bi_id  = filter.out_bi_id
     if (filter.project_id) params.project_id = filter.project_id
+    // Именно !== '': «0» — это осмысленный фильтр «только непроведённые»
+    if (filter.is_posted !== '') params.is_posted = filter.is_posted
 
     // --- ДОБАВЛЯЕМ НОВЫЙ ФИЛЬТР ---
     if (selectedInfoId)   params.info_id    = selectedInfoId
@@ -145,6 +147,17 @@ export default function OperationsPage() {
     getOperations(params)
       .then(res => setOperations(res.data.data))
       .finally(() => setLoading(false))
+  }
+
+  // Проведение — не правка реквизитов, а включение операции в обороты,
+  // поэтому отдельным запросом и без формы
+  const togglePosting = async (op) => {
+    try {
+      await setOperationPosting(op.id, !op.is_posted)
+      loadOperations()
+    } catch (err) {
+      alert(err.response?.data?.message || 'Не удалось изменить проведение')
+    }
   }
 
   const handleDelete = async (id) => {
@@ -413,6 +426,16 @@ export default function OperationsPage() {
                 ))}
               </select>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 font-medium">Проведение:</span>
+              <select value={filter.is_posted}
+                onChange={e => setFilter(f => ({ ...f, is_posted: e.target.value }))}
+                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">Все</option>
+                <option value="1">Проведённые</option>
+                <option value="0">Непроведённые</option>
+              </select>
+            </div>
             {(filter.in_bi_id || filter.out_bi_id) && (
               <button onClick={() => setFilter(f => ({ ...f, in_bi_id: '', out_bi_id: '' }))}
                 className="text-xs text-gray-400 hover:text-red-500 transition-colors">
@@ -457,10 +480,14 @@ export default function OperationsPage() {
                       ? navigate(`/documents?open=${op.table_id}`)
                       : handleEdit(op)}
                     title="Двойной клик — редактировать"
+                    // Непроведённая — пунктиром и приглушённая: она в списке
+                    // есть, а в оборотах её нет, и это должно быть видно сразу
                     className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
                       selected.has(op.id)
                         ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
-                        : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
+                        : op.is_posted === false
+                          ? 'border-dashed border-gray-300 bg-gray-50 hover:border-blue-300'
+                          : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
                     }`}
                   >
                     <div className={`${OP_GRID} items-start`}>
@@ -486,7 +513,16 @@ export default function OperationsPage() {
                       {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_1_name}</span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
                       {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_2_name}</span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
                     </div>
-                    <div className="text-right font-semibold text-gray-800 whitespace-nowrap pt-0.5">{formatAmount(op.amount)}</div>
+                    <div className="text-right whitespace-nowrap pt-0.5">
+                      <div className={`font-semibold ${op.is_posted === false ? 'text-gray-400' : 'text-gray-800'}`}>
+                        {formatAmount(op.amount)}
+                      </div>
+                      {op.is_posted === false && (
+                        <div className="text-[10px] text-gray-500 bg-gray-200 rounded px-1 mt-0.5 inline-block">
+                          не проведена
+                        </div>
+                      )}
+                    </div>
                     <div className="min-w-0">
                       {op.content
                         ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>{op.content}</div>
@@ -514,6 +550,13 @@ export default function OperationsPage() {
                             className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
                         ) : (
                           <>
+                            <button onClick={() => togglePosting(op)}
+                              title={op.is_posted === false ? 'Провести — попадёт в обороты' : 'Снять проведение — уйдёт из оборотов'}
+                              className={op.is_posted === false
+                                ? 'text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50'
+                                : 'text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100'}>
+                              {op.is_posted === false ? '✓' : '⊘'}
+                            </button>
                             <button onClick={() => templateFromOp(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
                               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>
                             </button>

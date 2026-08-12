@@ -46,14 +46,35 @@ class FusionPosDriver implements IntegrationDriver
         ];
     }
 
-    public function sync(Integration $integration, IntegrationRun $run, string $from, string $to): void
+    public function preview(Integration $integration, string $entity, string $from, string $to): array
     {
-        if ($run->entity !== WarehouseInvoiceImporter::ENTITY) {
-            throw new RuntimeException("FUSIONPOS пока не умеет загружать: {$run->entity}");
-        }
+        $this->assertEntity($entity);
+
+        return (new WarehouseInvoiceImporter($this->client($integration), $integration))
+            ->preview($from, $to);
+    }
+
+    public function object(Integration $integration, string $entity, string $externalId): array
+    {
+        $this->assertEntity($entity);
+
+        return (new WarehouseInvoiceImporter($this->client($integration), $integration))
+            ->describeOne($externalId);
+    }
+
+    public function sync(Integration $integration, IntegrationRun $run, string $from, string $to, ?array $only = null): void
+    {
+        $this->assertEntity($run->entity);
 
         (new WarehouseInvoiceImporter($this->client($integration), $integration))
-            ->run($run, $from, $to);
+            ->run($run, $from, $to, $only);
+    }
+
+    private function assertEntity(string $entity): void
+    {
+        if ($entity !== WarehouseInvoiceImporter::ENTITY) {
+            throw new RuntimeException("FUSIONPOS пока не умеет загружать: {$entity}");
+        }
     }
 
     private function client(Integration $integration): FusionPosClient

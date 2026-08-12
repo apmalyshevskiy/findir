@@ -35,6 +35,8 @@ class OperationsController extends TenantController
         if ($request->in_bi_id)      $query->where('in_bi_id', $request->in_bi_id);
         if ($request->out_bi_id)     $query->where('out_bi_id', $request->out_bi_id);
         if ($request->source)        $query->where('source', $request->source);
+        // Строка «0» валидна: она означает «показать только непроведённые»
+        if ($request->filled('is_posted')) $query->where('is_posted', (bool) (int) $request->is_posted);
         if ($request->external_id)   $query->where('external_id', $request->external_id);
         if ($request->external_date) $query->where('external_date', $request->external_date);
         if ($request->ids)           $query->whereIn('id', array_map('intval', explode(',', $request->ids)));
@@ -83,15 +85,20 @@ class OperationsController extends TenantController
             'content'       => 'nullable|string|max:1000',
             'note'          => 'nullable|string|max:1000',
             'source'        => 'nullable|string|max:50',
+            'is_posted'     => 'nullable|boolean',
             'external_id'   => 'nullable|string|max:25',
             'external_date' => 'nullable|date',
         ]);
 
         if ($resp = $this->lockError($data['date'])) return $resp;
 
+        // is_posted задаём явно, а не полагаемся на умолчание схемы: после
+        // create() модель не перечитывается, и в ответе оказалось бы false,
+        // хотя в базе операция проведена
         $op = $this->model()->newQuery()->create(array_merge($data, [
-            'quantity' => $data['quantity'] ?? 0,
-            'source'   => $data['source'] ?? 'manual',
+            'quantity'  => $data['quantity'] ?? 0,
+            'source'    => $data['source'] ?? 'manual',
+            'is_posted' => $data['is_posted'] ?? true,
         ]));
 
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
@@ -132,6 +139,7 @@ class OperationsController extends TenantController
             'content'       => 'nullable|string|max:1000',
             'note'          => 'nullable|string|max:1000',
             'source'        => 'nullable|string|max:50',
+            'is_posted'     => 'nullable|boolean',
             'external_id'   => 'nullable|string|max:25',
             'external_date' => 'nullable|date',
         ]);
@@ -167,6 +175,38 @@ class OperationsController extends TenantController
         return response()->json(['message' => 'Операция удалена']);
     }
 
+    /**
+     * POST /operations/{id}/posting — провести или снять проведение.
+     *
+     * Снятая с проведения операция остаётся в списке, но исчезает из оборотов:
+     * balance_changes по ней убирает триггер. Поэтому это правка учётных цифр
+     * и на неё распространяется дата запрета.
+     */
+    public function setPosting(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate(['is_posted' => 'required|boolean']);
+
+        $op = $this->model()->newQuery()->findOrFail($id);
+
+        if ($resp = $this->lockError($op->date)) return $resp;
+
+        // Проведением операций документа управляет сам документ: снимешь здесь —
+        // документ останется «проведённым», а его строка перестанет считаться
+        if ($op->fromDocument()) {
+            return response()->json([
+                'message'     => 'Операция создана из документа. Проведением управляйте через документ.',
+                'document_id' => (int) $op->table_id,
+            ], 422);
+        }
+
+        $op->update(['is_posted' => $data['is_posted']]);
+        $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
+
+        return response()->json(['data' => $this->formatOperation($op)]);
+    }
+
     private function formatOperation(Operation $op): array
     {
         return [
@@ -177,6 +217,7 @@ class OperationsController extends TenantController
             'content'         => $op->content,
             'note'            => $op->note,
             'source'          => $op->source,
+            'is_posted'       => (bool) $op->is_posted,
             'table_name'      => $op->table_name,   // ← добавлено: для определения источника
             'table_id'        => $op->table_id,     // ← добавлено: ID документа-источника
             'external_id'     => $op->external_id,

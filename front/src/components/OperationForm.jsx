@@ -439,6 +439,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     out_info_2_id: src?.out_info_2_id ?? '',
     content:       src?.content ?? '',
     note:          src?.note ?? '',
+    // Новая операция проводится сразу — иначе её пришлось бы проводить
+    // вторым действием, а это норма, а не исключение
+    is_posted:     src ? src.is_posted !== false : true,
 
     })
 
@@ -598,6 +601,20 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     </div>
   )
 
+  const postingField = (
+    <label className="flex items-start gap-2 cursor-pointer">
+      <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
+        checked={form.is_posted !== false}
+        onChange={e => setForm({ ...form, is_posted: e.target.checked })} />
+      <span>
+        <span className="text-sm text-gray-700">Проведена</span>
+        <span className="block text-[11px] text-gray-400">
+          Непроведённая операция остаётся в списке, но не попадает в обороты и отчёты
+        </span>
+      </span>
+    </label>
+  )
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className={`bg-white rounded-2xl shadow-xl w-full my-4 ${layout === 'wide' ? 'max-w-3xl' : 'max-w-lg'}`}>
@@ -664,6 +681,8 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           {layout === 'wide' ? commentField : (
             <div className="space-y-4">{contentField}{commentField}</div>
           )}
+
+          {postingField}
 
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onCancel}

@@ -171,8 +171,14 @@ class IntegrationsController extends TenantController
 
     // ─── Загрузка ────────────────────────────────────────────────────
 
-    /** POST /integrations/{id}/sync */
-    public function sync(Request $request, int $id): JsonResponse
+    /**
+     * POST /integrations/{id}/preview — что лежит в источнике за период.
+     *
+     * Шаг перед загрузкой: ничего не пишем, только показываем список с
+     * пометками. Так человек видит, что именно изменится, до того как это
+     * попадёт в учёт.
+     */
+    public function preview(Request $request, int $id): JsonResponse
     {
         $this->initTenant($request);
 
@@ -184,14 +190,74 @@ class IntegrationsController extends TenantController
             'to'     => 'required|date|after_or_equal:from',
         ]);
 
+        if ($resp = $this->periodError($data['from'], $data['to'])) return $resp;
+
+        @set_time_limit(300);
+
+        try {
+            $rows = IntegrationRegistry::driver($integration)
+                ->preview($integration, $data['entity'], Carbon::parse($data['from'])->toDateString(), Carbon::parse($data['to'])->toDateString());
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $counts = array_count_values(array_column($rows, 'status'));
+
+        return response()->json([
+            'data'   => $rows,
+            'counts' => $counts,
+            'total'  => count($rows),
+        ]);
+    }
+
+    /** POST /integrations/{id}/object — что внутри одного объекта источника */
+    public function object(Request $request, int $id): JsonResponse
+    {
+        $this->initTenant($request);
+
+        $integration = Integration::on($this->dbName)->findOrFail($id);
+
+        $data = $request->validate([
+            'entity'      => 'required|string|max:40',
+            'external_id' => 'required|string|max:191',
+        ]);
+
+        try {
+            $detail = IntegrationRegistry::driver($integration)
+                ->object($integration, $data['entity'], $data['external_id']);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['data' => $detail]);
+    }
+
+    /** POST /integrations/{id}/sync */
+    public function sync(Request $request, int $id): JsonResponse
+    {
+        $this->initTenant($request);
+
+        $integration = Integration::on($this->dbName)->findOrFail($id);
+
+        $data = $request->validate([
+            'entity' => 'required|string|max:40',
+            'from'   => 'required|date',
+            'to'     => 'required|date|after_or_equal:from',
+            'ids'    => 'sometimes|array',
+            'ids.*'  => 'string|max:191',
+        ]);
+
+        if ($resp = $this->periodError($data['from'], $data['to'])) return $resp;
+
         $from = Carbon::parse($data['from'])->toDateString();
         $to   = Carbon::parse($data['to'])->toDateString();
 
-        if (Carbon::parse($from)->diffInDays(Carbon::parse($to)) > self::MAX_DAYS) {
-            return response()->json([
-                'message' => 'Период больше ' . self::MAX_DAYS . ' дней — загружайте частями, иначе запрос оборвётся по таймауту',
-            ], 422);
+        // Пустой список отмеченных — это «не выбрано ничего», а не «взять всё»:
+        // молча загрузить весь период вместо ничего было бы худшим ответом
+        if (array_key_exists('ids', $data) && count($data['ids']) === 0) {
+            return response()->json(['message' => 'Не отмечено ни одной накладной'], 422);
         }
+        $only = $data['ids'] ?? null;
 
         $driver = IntegrationRegistry::driver($integration);
 
@@ -218,7 +284,7 @@ class IntegrationsController extends TenantController
         @set_time_limit(300);
 
         try {
-            $driver->sync($integration, $run, $from, $to);
+            $driver->sync($integration, $run, $from, $to, $only);
             // Часть накладных могла не пройти (закрытый период, кривые данные) —
             // это не провал загрузки, но и не «всё хорошо»
             $run->status  = $run->failed > 0 ? 'warning' : 'ok';
@@ -322,6 +388,17 @@ class IntegrationsController extends TenantController
             'last_run_status'  => $integration->last_run_status,
             'last_run_message' => $integration->last_run_message,
         ];
+    }
+
+    /** Общий для просмотра и загрузки предел периода. */
+    private function periodError(string $from, string $to): ?JsonResponse
+    {
+        if (Carbon::parse($from)->diffInDays(Carbon::parse($to)) > self::MAX_DAYS) {
+            return response()->json([
+                'message' => 'Период больше ' . self::MAX_DAYS . ' дней — берите частями, иначе запрос оборвётся по таймауту',
+            ], 422);
+        }
+        return null;
     }
 
     private function summary(IntegrationRun $run): string

@@ -138,6 +138,75 @@ class FusionPosSelfTest extends Command
                   'её операции убраны');
         $this->ok(abs(Document::on($conn)->sum('amount') - 575.50) < 0.01, 'остаток 575.50');
 
+        // ── просмотр и загрузка отмеченных ───────────────────────────
+        $this->resetData($conn);
+
+        $this->fake([$this->inv(1, 'ТН-001', 150000, '7704217370', 'ООО Ромашка'),
+                     $this->inv(2, 'ТН-002',  47550, '500100732259', 'ИП Петров'),
+                     $this->inv(3, 'ТН-003',  10000, null, 'Без ИНН')]);
+
+        $seen = $this->preview($integration);
+        $this->ok(count($seen) === 3, 'просмотр показал 3 накладные');
+        $this->ok($seen['ТН-001'] === 'new', 'незагруженная помечена «новая»');
+        $this->ok(Document::on($conn)->count() === 0, 'просмотр ничего не записал в базу');
+
+        // Берём только одну из трёх
+        $run6 = $this->sync($integration, $conn, ['uuid-2']);
+        $this->ok($run6->created === 1, "загружена только отмеченная (создано {$run6->created})");
+        $this->ok(Document::on($conn)->count() === 1, 'остальные не тронуты');
+
+        $seen2 = $this->preview($integration);
+        $this->ok($seen2['ТН-002'] === 'loaded', 'загруженная помечена «уже загружена»');
+        $this->ok($seen2['ТН-001'] === 'new', 'непогруженная так и осталась новой');
+
+        // Меняем сумму загруженной — просмотр должен это заметить
+        $this->fake([$this->inv(1, 'ТН-001', 150000, '7704217370', 'ООО Ромашка'),
+                     $this->inv(2, 'ТН-002',  99900, '500100732259', 'ИП Петров'),
+                     $this->inv(3, 'ТН-003',  10000, null, 'Без ИНН')]);
+        $seen3 = $this->preview($integration);
+        $this->ok($seen3['ТН-002'] === 'changed', 'изменившаяся помечена «изменилась»');
+
+        // Повторная загрузка уже загруженной: отметили руками — значит грузим
+        $this->fake([$this->inv(1, 'ТН-001', 150000, '7704217370', 'ООО Ромашка'),
+                     $this->inv(2, 'ТН-002',  47550, '500100732259', 'ИП Петров'),
+                     $this->inv(3, 'ТН-003',  10000, null, 'Без ИНН')]);
+        $run7 = $this->sync($integration, $conn, ['uuid-2']);
+        $this->ok($run7->updated === 1 && $run7->skipped === 0,
+                  "отмеченная перезагружается, а не пропускается (обновлено {$run7->updated}, пропущено {$run7->skipped})");
+        $this->ok(Document::on($conn)->count() === 1, 'повторная загрузка не создала дубль');
+        $this->ok(DB::connection($conn)->table('operations')->where('table_name', 'documents')->count() === 1,
+                  'операции не задвоились');
+
+        // Без отметок бережная логика на месте
+        $run8 = $this->sync($integration, $conn);
+        $this->ok($run8->skipped === 1 && $run8->updated === 0,
+                  "без отметок неизменившееся пропускается (пропущено {$run8->skipped})");
+
+        // Состав и разноска одной накладной
+        $detail = IntegrationRegistry::driver($integration)
+            ->object($integration, 'warehouse_invoice', 'uuid-2');
+        $this->ok(count($detail['items']) === 3, 'в составе 3 позиции (факт ' . count($detail['items']) . ')');
+        $this->ok($detail['items'][0]['name'] === 'Молоко', 'название с первой страницы справочника: ' . $detail['items'][0]['name']);
+        // Позиция со второй страницы: фильтра по списку id в FUSIONPOS нет,
+        // поэтому справочник должен вычитываться целиком
+        $this->ok($detail['items'][2]['name'] === 'Позиция 125',
+                  'название со второй страницы справочника: ' . $detail['items'][2]['name']);
+        $this->ok(!str_contains(json_encode($detail['items'], JSON_UNESCAPED_UNICODE), 'позиция #'),
+                  'ни одна позиция не осталась без названия');
+        $this->ok($detail['supplier'] === 'ИП Петров' && $detail['inn'] === '500100732259', 'контрагент и ИНН показаны');
+        $this->ok(abs($detail['posting']['amount'] - 475.50) < 0.01, 'разноска: сумма 475.50');
+        $this->ok((float) $detail['posting']['price'] === 1.0, 'разноска: цена 1 ₽');
+        $this->ok(str_contains((string) $detail['posting']['credit'], 'П100'), 'разноска: кредит П100');
+        $this->ok($detail['document_id'] !== null, 'ссылка на наш документ есть');
+
+        // Удалённая в источнике — своя пометка
+        $this->fake([$this->inv(1, 'ТН-001', 150000, '7704217370', 'ООО Ромашка')],
+                    [$this->inv(2, 'ТН-002', 99900, '500100732259', 'ИП Петров')]);
+        $seen4 = $this->preview($integration);
+        $this->ok(($seen4['ТН-002'] ?? null) === 'deleted', 'удалённая в источнике помечена «удалена»');
+
+        $this->resetData($conn);
+
         // ── закрытый период ──────────────────────────────────────────
         DB::connection($conn)->table('settings')->updateOrInsert(
             ['key' => 'edit_lock_date'],
@@ -169,7 +238,15 @@ class FusionPosSelfTest extends Command
 
     // ── вспомогательное ─────────────────────────────────────────────
 
-    private function sync(Integration $i, string $conn): IntegrationRun
+    private function preview(Integration $i): array
+    {
+        $rows = IntegrationRegistry::driver($i)
+            ->preview($i, 'warehouse_invoice', '2026-07-01', '2026-07-31');
+
+        return array_column($rows, 'status', 'number');
+    }
+
+    private function sync(Integration $i, string $conn, ?array $only = null): IntegrationRun
     {
         $run = (new IntegrationRun)->setConnection($conn);
         $run->fill(['integration_id' => $i->id, 'entity' => 'warehouse_invoice',
@@ -178,7 +255,7 @@ class FusionPosSelfTest extends Command
                     'fetched' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0, 'failed' => 0]);
         $run->save();
 
-        IntegrationRegistry::driver($i)->sync($i, $run, '2026-07-01', '2026-07-31');
+        IntegrationRegistry::driver($i)->sync($i, $run, '2026-07-01', '2026-07-31', $only);
         $run->save();
 
         return $run;
@@ -192,10 +269,41 @@ class FusionPosSelfTest extends Command
         Http::swap(new \Illuminate\Http\Client\Factory());
 
         Http::fake(function ($request) use ($items, $deleted) {
-            $url  = (string) $request->url();
-            $body = str_contains($url, 'is_deleted=true') ? $deleted : $items;
+            $url = (string) $request->url();
+
+            if (str_contains($url, 'nomenclatures')) {
+                // Как настоящий FUSIONPOS: фильтр id принимает одно число,
+                // списком через запятую не работает. Справочник отдаётся
+                // страницами — иначе проверка не поймала бы разбор страниц
+                if (preg_match('~[?&]id=([^&]*)~', $url, $m) && str_contains(urldecode($m[1]), ',')) {
+                    return Http::response(['items' => [], '_meta' => ['totalCount' => 0, 'pageCount' => 1]]);
+                }
+
+                $all   = [];
+                for ($i = 101; $i <= 130; $i++) $all[] = ['id' => $i, 'name' => "Позиция {$i}"];
+                $all[0]['name'] = 'Молоко';
+                $all[1]['name'] = 'Кофе в зёрнах';
+
+                preg_match('~[?&]page=(\d+)~', $url, $pm);
+                $page  = (int) ($pm[1] ?? 1);
+                $chunk = array_slice($all, ($page - 1) * 20, 20);
+
+                return Http::response(['items' => $chunk,
+                    '_meta' => ['totalCount' => count($all), 'pageCount' => 2, 'currentPage' => $page]]);
+            }
 
             if (str_contains($url, 'warehouse/invoices')) {
+                $body = str_contains($url, 'is_deleted=true') ? $deleted : $items;
+
+                // Запрос одной накладной по uuid — так ходит показ состава
+                if (preg_match('~[?&]uuid=([^&]+)~', $url, $m)) {
+                    $wanted = urldecode($m[1]);
+                    $body = array_values(array_filter(
+                        array_merge($items, $deleted),
+                        fn($i) => ($i['uuid'] ?? null) === $wanted
+                    ));
+                }
+
                 return Http::response(['items' => $body,
                     '_meta' => ['totalCount' => count($body), 'pageCount' => 1, 'currentPage' => 1]]);
             }
@@ -215,6 +323,13 @@ class FusionPosSelfTest extends Command
             'supplier'    => ['id' => $id * 10, 'name' => $name, 'inn' => $inn],
             'warehouse'   => ['id' => 1, 'name' => 'Основной склад'],
             'legalEntity' => ['id' => 1, 'name' => 'ООО Тест'],
+            // Состав в учёт не переносится, но показывается справочно
+            'warehouseInvoiceItems' => [
+                ['nomenclature_id' => 101, 'quantity' => 10, 'price' => (int) round($kopecks * 0.5 / 10), 'amount' => (int) round($kopecks * 0.5)],
+                ['nomenclature_id' => 102, 'quantity' => 4,  'price' => (int) round($kopecks * 0.3 / 4),  'amount' => (int) round($kopecks * 0.3)],
+                // Со второй страницы справочника — проверяем разбор страниц
+                ['nomenclature_id' => 125, 'quantity' => 2,  'price' => (int) round($kopecks * 0.2 / 2),  'amount' => (int) round($kopecks * 0.2)],
+            ],
         ];
     }
 
@@ -247,6 +362,20 @@ class FusionPosSelfTest extends Command
         $this->line('Заведите отдельного тенанта для проверок.');
 
         return false;
+    }
+
+    /** Между блоками проверок чистим только данные, интеграцию оставляем. */
+    private function resetData(string $conn): void
+    {
+        if (!$this->since) return;
+
+        DB::connection($conn)->table('operations')
+            ->where('table_name', 'documents')->where('id', '>', $this->since['operations'])->delete();
+        DB::connection($conn)->table('document_items')
+            ->where('id', '>', $this->since['document_items'])->delete();
+        DB::connection($conn)->table('documents')
+            ->where('id', '>', $this->since['documents'])->delete();
+        DB::connection($conn)->table('integration_links')->delete();
     }
 
     /** Убираем ровно то, что создал прогон, — по границе идентификаторов. */

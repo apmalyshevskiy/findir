@@ -16,14 +16,21 @@ class Operation extends Model
     'in_bi_id', 'out_bi_id',
     'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
     'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
-    'note', 'content', 'source',
+    'note', 'content', 'source', 'is_posted',
     'external_id', 'external_date',
 ];
     protected $casts = [
         'date'          => 'datetime',
         'external_date' => 'date',
         'amount'        => 'float',
+        'is_posted'     => 'boolean',
     ];
+
+    /** Создана проведением документа — правится только через него. */
+    public function fromDocument(): bool
+    {
+        return $this->table_name === 'documents' && $this->table_id;
+    }
 
     public function inBalanceItem()
     {

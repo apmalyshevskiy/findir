@@ -54,6 +54,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/operations',         [OperationsController::class, 'index']);
     Route::post('/operations',        [OperationsController::class, 'store']);
     Route::put('/operations/{id}',    [OperationsController::class, 'update']);
+    Route::post('/operations/{id}/posting', [OperationsController::class, 'setPosting']);
     Route::delete('/operations/{id}', [OperationsController::class, 'destroy']);
 
     // Банковская выписка
@@ -127,6 +128,8 @@ Route::prefix('v1')->group(function () {
     Route::delete('/integrations/{id}',               [IntegrationsController::class, 'destroy']);
     Route::post  ('/integrations/{id}/test',          [IntegrationsController::class, 'test']);
     Route::get   ('/integrations/{id}/dictionaries',  [IntegrationsController::class, 'dictionaries']);
+    Route::post  ('/integrations/{id}/preview',       [IntegrationsController::class, 'preview']);
+    Route::post  ('/integrations/{id}/object',        [IntegrationsController::class, 'object']);
     Route::post  ('/integrations/{id}/sync',          [IntegrationsController::class, 'sync']);
     Route::get   ('/integrations/{id}/runs',          [IntegrationsController::class, 'runs']);
 

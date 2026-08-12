@@ -31,11 +31,18 @@ final class WarehouseInvoiceImporter
     /** Сколько предупреждений сохраняем в журнале: остальное — шум. */
     private const MAX_DETAILS = 50;
 
+    /** Предел списка для просмотра: дальше таблицу всё равно не осмотреть. */
+    private const MAX_PREVIEW = 1000;
+
+    /** Сколько страниц справочника номенклатуры вычитываем ради названий. */
+    private const MAX_DICT_PAGES = 20;
+
     private string  $conn;
     private array   $details      = [];
     private array   $supplierById = [];  // кэш: id поставщика FUSIONPOS → id в справочнике
     private bool    $lockLoaded   = false;
     private ?string $lockValue    = null;
+    private ?array  $nomenclature = null;  // id → название, читается один раз
 
     public function __construct(
         private FusionPosClient $client,
@@ -44,10 +51,9 @@ final class WarehouseInvoiceImporter
         $this->conn = $integration->getConnectionName();
     }
 
-    public function run(IntegrationRun $run, string $from, string $to): void
+    /** Условия отбора накладных — общие для просмотра и для загрузки. */
+    private function buildQuery(array $cfg, string $from, string $to): array
     {
-        $cfg = $this->config();
-
         $query = [
             'expand'         => 'supplier,warehouse,legalEntity',
             'doc_date_start' => $from . ' 00:00:00',
@@ -68,11 +74,74 @@ final class WarehouseInvoiceImporter
         if ($cfg['warehouse_ids'])    $query['warehouse_id']    = implode(',', $cfg['warehouse_ids']);
         if ($cfg['legal_entity_ids']) $query['legal_entity_id'] = implode(',', $cfg['legal_entity_ids']);
 
-        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $cfg) {
+        return $query;
+    }
+
+    /**
+     * Что лежит в источнике за период — без единой записи в базу.
+     *
+     * Первый шаг двухшаговой загрузки: человек видит список и отмечает, что
+     * именно брать. Уже загруженное показываем тоже — иначе непонятно, всё ли
+     * на месте, и приходится грузить наугад.
+     */
+    public function preview(string $from, string $to): array
+    {
+        $cfg   = $this->config();
+        $query = $this->buildQuery($cfg, $from, $to);
+        $rows  = [];
+
+        $this->client->each('warehouse/invoices', $query, function (array $items) use (&$rows, $cfg) {
             foreach ($items as $invoice) {
+                if (count($rows) >= self::MAX_PREVIEW) return;
+                $rows[] = $this->describe($invoice, $cfg);
+            }
+        });
+
+        // Удалённые в источнике — отдельным проходом и с своей пометкой:
+        // по ним загрузка означает снятие документа, а не создание
+        $deleted = $query;
+        $deleted['is_deleted'] = 'true';
+        unset($deleted['is_processed']);
+
+        $this->client->each('warehouse/invoices', $deleted, function (array $items) use (&$rows, $cfg) {
+            foreach ($items as $invoice) {
+                if (count($rows) >= self::MAX_PREVIEW) return;
+
+                $row = $this->describe($invoice, $cfg);
+                if ($row['status'] === 'new') continue;   // не грузили — и снимать нечего
+
+                $row['status'] = 'deleted';
+                $rows[] = $row;
+            }
+        });
+
+        return $rows;
+    }
+
+    /**
+     * Загрузка за период.
+     *
+     * $only — внешние идентификаторы отмеченных накладных; null означает «всё,
+     * что попадает в период».
+     */
+    public function run(IntegrationRun $run, string $from, string $to, ?array $only = null): void
+    {
+        $cfg   = $this->config();
+        $query = $this->buildQuery($cfg, $from, $to);
+        $pick  = $only === null ? null : array_flip($only);
+
+        // Отмеченное грузим, даже если оно не менялось: раз человек выбрал
+        // строку руками, «пропущено, ничего не изменилось» — не тот ответ,
+        // которого он ждёт. Без отметок работает прежняя бережная логика
+        $force = $pick !== null;
+
+        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $cfg, $pick, $force) {
+            foreach ($items as $invoice) {
+                if ($pick !== null && !isset($pick[$this->externalId($invoice)])) continue;
+
                 $run->fetched++;
                 try {
-                    $this->importOne($invoice, $run, $cfg);
+                    $this->importOne($invoice, $run, $cfg, $force);
                 } catch (\Throwable $e) {
                     $run->failed++;
                     $this->warn($this->label($invoice) . ' — ' . $e->getMessage());
@@ -80,16 +149,169 @@ final class WarehouseInvoiceImporter
             }
         });
 
-        $this->removeDeleted($query, $run);
+        $this->removeDeleted($query, $run, $pick);
 
         $run->details = $this->details ?: null;
     }
 
+    /** Строка списка: что это за накладная и в каком она у нас состоянии. */
+    private function describe(array $invoice, array $cfg): array
+    {
+        $externalId = $this->externalId($invoice);
+        $date       = $this->resolveDate($invoice, $cfg['date_field']);
+
+        $link = $externalId === '' ? null : IntegrationLink::on($this->conn)
+            ->where('integration_id', $this->integration->id)
+            ->where('entity', self::ENTITY)
+            ->where('external_id', $externalId)
+            ->first();
+
+        $existing = $link ? Document::on($this->conn)->find($link->local_id) : null;
+
+        $status = match (true) {
+            !$existing                                                  => 'new',
+            $link->fingerprint === $this->fingerprint($invoice, $cfg)   => 'loaded',
+            default                                                     => 'changed',
+        };
+
+        // Закрытый период важнее остального: такую накладную не взять, и
+        // отмечать её к загрузке бессмысленно
+        $lock = $this->lockDate();
+        if ($status !== 'loaded' && $date && $lock && $date->toDateString() <= $lock) {
+            $status = 'locked';
+        }
+
+        return [
+            'id'          => $externalId,
+            'number'      => $invoice['doc_number'] ?? null,
+            'date'        => $date?->toDateString(),
+            'supplier'    => data_get($invoice, 'supplier.name'),
+            'inn'         => data_get($invoice, 'supplier.inn'),
+            'warehouse'   => data_get($invoice, 'warehouse.name'),
+            'amount'      => round(((int) ($invoice['amount'] ?? 0)) / 100, 2),
+            'status'      => $status,
+            'document_id' => $existing?->id,
+        ];
+    }
+
+    private function externalId(array $invoice): string
+    {
+        return (string) ($invoice['uuid'] ?? $invoice['id'] ?? '');
+    }
+
+    /**
+     * Одна накладная целиком: реквизиты, состав и то, как она легла у нас.
+     *
+     * Состав в учёт не переносится — вся накладная ложится одной строкой на
+     * служебную позицию. Но увидеть, что именно закупили, финдиректору нужно,
+     * поэтому показываем позиции источника рядом с нашей единственной строкой.
+     */
+    public function describeOne(string $externalId): array
+    {
+        $cfg  = $this->config();
+        $body = $this->client->get('warehouse/invoices', [
+            'uuid'   => $externalId,
+            'expand' => 'supplier,warehouse,legalEntity,warehouseInvoiceItems',
+        ]);
+
+        $invoice = ($body['items'] ?? [])[0] ?? null;
+        if (!$invoice) {
+            throw new RuntimeException('Накладная не найдена в источнике — возможно, её удалили');
+        }
+
+        $items = $invoice['warehouseInvoiceItems'] ?? [];
+        $names = $this->nomenclatureNames(array_column($items, 'nomenclature_id'));
+
+        $row = $this->describe($invoice, $cfg);
+
+        return [
+            'number'       => $invoice['doc_number'] ?? null,
+            'date'         => $this->parse($invoice['doc_date'] ?? null)?->toDateString(),
+            'processed_at' => $this->parse($invoice['processed_at'] ?? null)?->format('d.m.Y H:i'),
+            'supplier'     => data_get($invoice, 'supplier.name'),
+            'inn'          => data_get($invoice, 'supplier.inn'),
+            'kpp'          => data_get($invoice, 'supplier.kpp'),
+            'warehouse'    => data_get($invoice, 'warehouse.name'),
+            'legal_entity' => data_get($invoice, 'legalEntity.name'),
+            'comment'      => $invoice['comment'] ?? null,
+            'amount'       => round(((int) ($invoice['amount'] ?? 0)) / 100, 2),
+            'vat_amount'   => round(((int) ($invoice['vat_amount'] ?? 0)) / 100, 2),
+            'status'       => $row['status'],
+            'document_id'  => $row['document_id'],
+            'items'        => array_map(fn($it) => [
+                'name'     => $names[$it['nomenclature_id'] ?? null] ?? ('позиция #' . ($it['nomenclature_id'] ?? '?')),
+                'quantity' => (float) ($it['quantity'] ?? 0),
+                'price'    => round(((int) ($it['price'] ?? 0)) / 100, 2),
+                'amount'   => round(((int) ($it['amount'] ?? 0)) / 100, 2),
+            ], $items),
+            // Как это легло в учёт — чтобы не гадать, что получилось из накладной
+            'posting'      => $this->postingSummary($cfg, $invoice),
+        ];
+    }
+
+    /**
+     * Названия номенклатуры.
+     *
+     * Фильтр `id` в FUSIONPOS принимает одно число, списком его не передать —
+     * поэтому читаем справочник страницами и складываем в карту. За каждой
+     * позицией отдельным запросом ходить нельзя: в накладной их бывает под сотню.
+     *
+     * Справочник читается один раз на объект: показ состава ходит сюда за
+     * каждой раскрытой накладной.
+     */
+    private function nomenclatureNames(array $ids): array
+    {
+        if ($this->nomenclature !== null) return $this->nomenclature;
+        if (!array_filter($ids))          return $this->nomenclature = [];
+
+        $this->nomenclature = [];
+        $page = 1;
+
+        try {
+            do {
+                $body = $this->client->get('nomenclatures', ['page' => $page, 'per-page' => 100]);
+
+                foreach ($body['items'] ?? [] as $n) {
+                    if (isset($n['id'])) $this->nomenclature[$n['id']] = $n['name'] ?? null;
+                }
+
+                $pages = (int) data_get($body, '_meta.pageCount', 1);
+                $page++;
+            } while ($page <= $pages && $page <= self::MAX_DICT_PAGES);
+        } catch (\Throwable) {
+            // Без названий состав всё равно читается — суммы и количества на месте
+        }
+
+        return $this->nomenclature;
+    }
+
+    /** Куда ляжет накладная в нашем учёте — человеческими названиями. */
+    private function postingSummary(array $cfg, array $invoice): array
+    {
+        $name = fn(string $table, $id) => $id
+            ? DB::connection($this->conn)->table($table)->where('id', $id)->value('name')
+            : null;
+
+        $rubles = round(((int) ($invoice['amount'] ?? 0)) / 100, 2);
+
+        return [
+            'project'  => $name('projects', $cfg['project_id']),
+            'debit'    => DB::connection($this->conn)->table('balance_items')
+                            ->where('id', $cfg['line_bi_id'])->value('code') . ' '
+                          . $name('balance_items', $cfg['line_bi_id']),
+            'credit'   => self::HEADER_CODE . ' ' . $name('balance_items', $cfg['header_bi_id']),
+            'product'  => $name('info', $cfg['service_product_id']),
+            'quantity' => $rubles,
+            'price'    => 1,
+            'amount'   => $rubles,
+        ];
+    }
+
     // ─── Одна накладная ──────────────────────────────────────────────
 
-    private function importOne(array $invoice, IntegrationRun $run, array $cfg): void
+    private function importOne(array $invoice, IntegrationRun $run, array $cfg, bool $force = false): void
     {
-        $externalId = (string) ($invoice['uuid'] ?? $invoice['id'] ?? '');
+        $externalId = $this->externalId($invoice);
         if ($externalId === '') {
             throw new RuntimeException('в ответе нет ни uuid, ни id');
         }
@@ -112,8 +334,9 @@ final class WarehouseInvoiceImporter
             : null;
 
         // Ничего не изменилось — не трогаем: иначе каждая загрузка
-        // перепроводила бы весь период и переписывала ручные правки
-        if ($existing && $link->fingerprint === $fingerprint) {
+        // перепроводила бы весь период и переписывала ручные правки.
+        // Явно отмеченную строку это правило не касается
+        if (!$force && $existing && $link->fingerprint === $fingerprint) {
             $run->skipped++;
             return;
         }
@@ -196,15 +419,16 @@ final class WarehouseInvoiceImporter
      * исчезают из выдачи. Без отдельного прохода наш документ остался бы
      * проведённым, и обороты разошлись бы с источником молча.
      */
-    private function removeDeleted(array $query, IntegrationRun $run): void
+    private function removeDeleted(array $query, IntegrationRun $run, ?array $pick = null): void
     {
         $query['is_deleted'] = 'true';
         unset($query['is_processed']);
 
-        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run) {
+        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $pick) {
             foreach ($items as $invoice) {
-                $externalId = (string) ($invoice['uuid'] ?? $invoice['id'] ?? '');
+                $externalId = $this->externalId($invoice);
                 if ($externalId === '') continue;
+                if ($pick !== null && !isset($pick[$externalId])) continue;
 
                 $link = IntegrationLink::on($this->conn)
                     ->where('integration_id', $this->integration->id)

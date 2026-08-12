@@ -14,6 +14,13 @@ export const testIntegration      = (id) => api.post(`/integrations/${id}/test`)
 export const getRemoteDictionaries = (id) => api.get(`/integrations/${id}/dictionaries`)
 export const getIntegrationRuns    = (id) => api.get(`/integrations/${id}/runs`)
 
-// Загрузка идёт синхронно и может занять минуты — свой таймаут
+// Просмотр и загрузка идут синхронно и могут занять минуты — свой таймаут
+export const previewIntegration = (id, data) =>
+  api.post(`/integrations/${id}/preview`, data, { timeout: 300000 })
+
 export const runIntegrationSync = (id, data) =>
   api.post(`/integrations/${id}/sync`, data, { timeout: 300000 })
+
+// Состав и разноска одного объекта — по раскрытию строки
+export const getIntegrationObject = (id, data) =>
+  api.post(`/integrations/${id}/object`, data, { timeout: 60000 })

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { Fragment, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
@@ -298,7 +298,7 @@ export default function BalanceSheetPage() {
   // --- ИСПРАВЛЕННЫЙ МЕТОД DRILL-DOWN ---
   const openDrill = async (title, biId, direction, infoId = null) => {
     setDrillLoading(true)
-    setDrillModal({ title, ops: [], biId, direction, infoId })
+    setDrillModal({ title, ops: [], posted: [], unposted: [], biId, direction, infoId })
     const params = { per_page: 200, date_from: filter.from, date_to: filter.to }
 
     let ops = []
@@ -336,7 +336,15 @@ export default function BalanceSheetPage() {
     }
 
     ops.sort((a, b) => new Date(b.date) - new Date(a.date))
-    setDrillModal({ title, ops, biId, direction, infoId })
+
+    // Оборотка считается по balance_changes, а туда попадают только
+    // проведённые операции. Показать вперемешку — значит дать итог, который
+    // не сходится с ячейкой. Непроведённые выносим вниз отдельным блоком:
+    // спрятать их совсем тоже нельзя — тогда непонятно, куда делась операция
+    const posted   = ops.filter(op => op.is_posted !== false)
+    const unposted = ops.filter(op => op.is_posted === false)
+
+    setDrillModal({ title, ops: [...posted, ...unposted], posted, unposted, biId, direction, infoId })
     setDrillLoading(false)
   }
 
@@ -1048,8 +1056,19 @@ export default function BalanceSheetPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {drillModal.ops.map(op => (
-                      <tr key={op.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors group">
+                    {drillModal.ops.map((op, idx) => (
+                      <Fragment key={op.id}>
+                      {/* Черта перед непроведёнными: ниже неё суммы в обороты не идут */}
+                      {op.is_posted === false && idx > 0 && drillModal.ops[idx - 1].is_posted !== false && (
+                        <tr className="bg-gray-100">
+                          <td colSpan={8} className="px-4 py-1.5 text-[11px] text-gray-500 uppercase tracking-wide">
+                            Не проведены — в обороты не входят
+                          </td>
+                        </tr>
+                      )}
+                      <tr className={`border-b border-gray-50 hover:bg-gray-50 transition-colors group ${
+                        op.is_posted === false ? 'bg-gray-50/70 text-gray-400' : ''
+                      }`}>
                         <td className="px-4 py-3 text-xs text-gray-400 font-mono">{op.id}</td>
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(op.date)}</td>
                         <td className="px-4 py-3">
@@ -1068,7 +1087,9 @@ export default function BalanceSheetPage() {
                           {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_1_name}</div>}
                           {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_2_name}</div>}
                         </td>
-                        <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{fmt(op.amount)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${
+                          op.is_posted === false ? 'text-gray-400' : 'text-gray-800'
+                        }`}>{fmt(op.amount)}</td>
                         <td className="px-4 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
                           {op.quantity ? fmtQty(op.quantity) : '—'}
                         </td>
@@ -1093,18 +1114,31 @@ export default function BalanceSheetPage() {
                           )}
                         </td>
                       </tr>
+                      </Fragment>
                     ))}
                   </tbody>
                   <tfoot>
+                    {/* Итог считаем по проведённым — он должен сходиться с ячейкой оборотки */}
                     <tr className="border-t-2 border-gray-200 bg-gray-50">
                       <td colSpan={4} className="px-4 py-2 text-xs font-semibold text-gray-600">
-                        Итого ({drillModal.ops.length} операций)
+                        Итого ({drillModal.posted.length} операций)
                       </td>
                       <td className="px-4 py-2 text-right text-xs font-bold text-gray-800 whitespace-nowrap">
-                        {fmt(drillModal.ops.reduce((s, op) => s + parseFloat(op.amount), 0))}
+                        {fmt(drillModal.posted.reduce((s, op) => s + parseFloat(op.amount), 0))}
                       </td>
                       <td colSpan={3}></td>
                     </tr>
+                    {drillModal.unposted.length > 0 && (
+                      <tr className="bg-gray-50 border-t border-gray-200">
+                        <td colSpan={4} className="px-4 py-2 text-xs text-gray-500">
+                          Не проведены ({drillModal.unposted.length}) — в оборот не вошли
+                        </td>
+                        <td className="px-4 py-2 text-right text-xs font-semibold text-gray-400 whitespace-nowrap">
+                          {fmt(drillModal.unposted.reduce((s, op) => s + parseFloat(op.amount), 0))}
+                        </td>
+                        <td colSpan={3}></td>
+                      </tr>
+                    )}
                   </tfoot>
                 </table>
               )}
