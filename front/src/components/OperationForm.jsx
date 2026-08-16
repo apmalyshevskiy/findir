@@ -4,6 +4,7 @@ import { getInfo, createInfo, updateInfo } from '../api/info'
 import { getProjects } from '../api/projects'
 import AmountInput from './AmountInput'
 import OperationChanges from './OperationChanges'
+import { BusyLabel } from './Busy'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -99,6 +100,9 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
   )
 
   const selectedOption = items?.find(o => o.id == value)
+  // Справочник ещё не пришёл: значение в операции есть, а имени для него нет.
+  // Пустое поле в этот момент читается как «аналитика не заполнена»
+  const dictLoading = items === undefined
 
   const resetForm = () => {
     setFormMode(null)
@@ -182,7 +186,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
           <input
             type="text"
             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder={selectedOption ? '' : "Выберите значение..."}
+            placeholder={dictLoading ? 'Загружаю справочник...' : selectedOption ? '' : "Выберите значение..."}
             value={search}
             onFocus={() => { setIsOpen(true); if (formMode === 'edit') resetForm() }}
             onChange={(e) => {
@@ -194,6 +198,12 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
           {selectedOption && !search && (
             <div className="absolute inset-y-0 left-0 right-0 flex items-center px-3 text-sm text-gray-900 pointer-events-none truncate">
               {selectedOption.name}
+            </div>
+          )}
+          {/* Значение выбрано, а имя ещё едет — держим место серой полоской */}
+          {dictLoading && value && !search && (
+            <div className="absolute inset-y-0 left-0 right-0 flex items-center px-3 pointer-events-none">
+              <span className="h-3 w-2/3 rounded bg-gray-200 animate-pulse" />
             </div>
           )}
         </div>
@@ -411,6 +421,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
   const [projects, setProjects] = useState([])
   const [infoCache, setInfoCache] = useState({})
   const [loading, setLoading] = useState(false)
+  // Справочники формы (проекты, план счетов, аналитика выбранных счетов):
+  // на своей базе они приходят не мгновенно, а до их прихода поля пустые
+  const [dictLoading, setDictLoading] = useState(true)
   const [error, setError] = useState('')
   // Режим формы: 'classic' (в столбик) | 'wide' (дебет/кредит рядом). Запоминаем выбор.
   const [layout, setLayout] = useState(() => localStorage.getItem('op_form_layout') || 'wide')
@@ -453,7 +466,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     })
 
   useEffect(() => {
-    getProjects().then(res => {
+    const projectsLoaded = getProjects().then(res => {
       const list = res.data.data || []
       setProjects(list)
       // При создании операции — подставляем первый проект, если ещё не выбран.
@@ -462,7 +475,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
       }
     })
 
-    getBalanceItems().then(res => {
+    const itemsLoaded = getBalanceItems().then(res => {
       const items = res.data.data
       setBalanceItems(items)
 
@@ -474,13 +487,17 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           outBi?.info_1_type, outBi?.info_2_type,
         ].filter(Boolean))]
 
-        types.forEach(type => {
+        // Ждём и справочники аналитики: пока их нет, поля выбранного
+        // контрагента и статьи стоят пустыми, и форма выглядит недозаполненной
+        return Promise.allSettled(types.map(type =>
           getInfo({ type }).then(r => {
             setInfoCache(prev => ({ ...prev, [type]: r.data.data }))
           })
-        })
+        ))
       }
     })
+
+    Promise.allSettled([projectsLoaded, itemsLoaded]).then(() => setDictLoading(false))
   }, [])
 
   const loadInfoForBi = (biId, prevCache) => {
@@ -548,7 +565,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
             loadInfoForBi(e.target.value, infoCache)
           }}
           className={ic} required>
-          <option value="">Выберите счёт...</option>
+          <option value="">{dictLoading ? 'Загружаю план счетов...' : 'Выберите счёт...'}</option>
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
@@ -575,7 +592,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
             loadInfoForBi(e.target.value, infoCache)
           }}
           className={ic} required>
-          <option value="">Выберите счёт...</option>
+          <option value="">{dictLoading ? 'Загружаю план счетов...' : 'Выберите счёт...'}</option>
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
@@ -660,6 +677,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
             <h3 className="text-lg font-semibold text-gray-800">
               {isEdit ? 'Редактировать операцию' : 'Новая операция'}
             </h3>
+            {/* Форма открывается сразу, а справочники подтягиваются следом:
+                видно, что поля ещё наполняются, а не пусты по существу */}
+            <BusyLabel active={dictLoading}>Загружаю справочники</BusyLabel>
             {/* Движения есть только у сохранённой операции — их порождает триггер */}
             {isEdit && (
               <div className="flex items-center gap-3 text-sm">

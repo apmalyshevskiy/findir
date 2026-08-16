@@ -11,6 +11,7 @@ import OperationForm from '../components/OperationForm'
 import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
+import { BusyLabel, BusyOverlay, SkeletonRows, Spinner } from '../components/Busy'
 import { presetRange } from '../utils/period'
 
 // Хранение Set в localStorage — через массив
@@ -724,7 +725,7 @@ export default function BalanceSheetPage() {
             </button>
           )}
 
-          {loading && <span className="text-xs text-gray-400">Загрузка...</span>}
+          <BusyLabel active={loading}>Формирую оборотку</BusyLabel>
         </div>
 
         {/* ── Панель доп. фильтров (проект + счёт) ── */}
@@ -847,7 +848,12 @@ export default function BalanceSheetPage() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="relative bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        {/* Пока идёт пересчёт, на экране остаются цифры прошлого периода —
+            плашка не даёт принять их за новые */}
+        <BusyOverlay active={loading && data.length > 0}
+          label="Пересчитываю обороты"
+          hint="Долго — обычно из-за длинного периода или нескольких аналитик сразу" />
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
@@ -886,7 +892,12 @@ export default function BalanceSheetPage() {
             </tr>
           </thead>
           <tbody>
-            {data.length === 0 && !loading ? (
+            {data.length === 0 && loading ? (
+              // Первый заход: показывать нечего, но видно, что отчёт считается
+              <tr><td colSpan={7} className="p-4">
+                <SkeletonRows rows={8} height="h-9" />
+              </td></tr>
+            ) : data.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-12 text-gray-400">Нет данных за выбранный период</td></tr>
             ) : (hierarchyAccounts ? flattenAccountTree(data, expandedAccounts) : data).map(row => {
               const depth       = row._depth ?? 0
@@ -1044,7 +1055,13 @@ export default function BalanceSheetPage() {
             </div>
             <div className="overflow-auto flex-1">
               {drillLoading ? (
-                <div className="text-center py-12 text-gray-400">Загрузка...</div>
+                <div className="p-5">
+                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+                    <Spinner className="w-4 h-4" />
+                    Подбираю операции по этой цифре
+                  </div>
+                  <SkeletonRows rows={6} height="h-8" />
+                </div>
               ) : drillModal.ops.length === 0 ? (
                 <div className="text-center py-12 text-gray-400">Операций не найдено</div>
               ) : (

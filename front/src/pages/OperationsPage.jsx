@@ -12,6 +12,7 @@ import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
 import BulkEditOperations from '../components/BulkEditOperations'
+import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -429,7 +430,7 @@ export default function OperationsPage() {
     </div>
   )}
 </div>
-            {loading && <span className="text-xs text-gray-400">Загрузка...</span>}
+            <BusyLabel active={loading}>Загружаю операции</BusyLabel>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             <div className="flex items-center gap-2">
@@ -473,7 +474,13 @@ export default function OperationsPage() {
           </div>
         </div>
 
-        {!loading && operations.length === 0 ? (
+        {loading && operations.length === 0 ? (
+          // Первый заход или смена периода с нуля: карточек ещё нет, но список
+          // уже «занимает место» — экран не выглядит пустым и сломанным
+          <div className="px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
+            <SkeletonRows rows={7} height="h-16" />
+          </div>
+        ) : operations.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-gray-400 mb-4">Нет операций за выбранный период</p>
             <button onClick={() => setShowForm(true)} className="text-blue-600 hover:underline text-sm">
@@ -481,7 +488,11 @@ export default function OperationsPage() {
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
+          <div className="relative overflow-x-auto px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
+            {/* Перезагрузка списка при смене фильтра: старые карточки ещё видны */}
+            <BusyOverlay active={loading}
+              label="Обновляю список"
+              hint="Долго — сузьте период или добавьте фильтр по счёту" />
             <div className="min-w-[1050px]">
               {/* Шапка колонок */}
               <div className={`${OP_GRID} items-center px-4 pb-2 text-xs text-gray-500 uppercase tracking-wide`}>

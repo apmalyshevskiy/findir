@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
+import { TopProgress } from './Busy'
 import { listAccounts, clearAccounts } from '../utils/accounts'
 
 /**
@@ -82,6 +83,10 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Общая полоска загрузки: любой запрос к API виден сразу, на какой бы
+          странице он ни ушёл */}
+      <TopProgress />
+
       {/* Полоса шапки во всю ширину, а её содержимое — по той же сетке, что и
           страница ниже: иначе меню и карточки живут по разным левым краям */}
       <header className="bg-white border-b border-gray-200">

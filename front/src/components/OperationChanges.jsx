@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getOperationChanges } from '../api/operations'
+import { SkeletonRows, Spinner } from './Busy'
 
 /**
  * Движения по счетам, которые дала операция.
@@ -33,7 +34,15 @@ export default function OperationChanges({ operationId }) {
   }, [operationId])
 
   if (error)   return <div className="text-sm text-red-600">{error}</div>
-  if (!state)  return <div className="text-sm text-gray-400">Загружаю...</div>
+  if (!state) return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-sm text-gray-500">
+        <Spinner className="w-4 h-4" />
+        Читаю движения по счетам
+      </div>
+      <SkeletonRows rows={2} height="h-8" />
+    </div>
+  )
 
   const rows = state.data || []
 
