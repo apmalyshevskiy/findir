@@ -207,6 +207,41 @@ class OperationsController extends TenantController
         return response()->json(['data' => $this->formatOperation($op)]);
     }
 
+    /**
+     * GET /operations/{id}/changes — движения, которые дала операция.
+     *
+     * balance_changes ведут триггеры, и это единственное, что видят отчёты.
+     * Показать их рядом с операцией — самый прямой способ ответить на вопрос
+     * «почему в оборотке такая цифра».
+     */
+    public function changes(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $op = $this->model()->newQuery()->findOrFail($id);
+
+        $rows = DB::connection($this->dbName)->table('balance_changes as bc')
+            ->leftJoin('balance_items as bi', 'bi.id', '=', 'bc.bi_id')
+            ->leftJoin('info as i1', 'i1.id', '=', 'bc.info_1_id')
+            ->leftJoin('info as i2', 'i2.id', '=', 'bc.info_2_id')
+            ->leftJoin('info as i3', 'i3.id', '=', 'bc.info_3_id')
+            ->where('bc.operation_id', $id)
+            // У таблицы нет ключа, поэтому порядок задаём явно: дебет первым
+            ->orderByRaw("bc.side = 'credit'")
+            ->get([
+                'bc.side', 'bc.date', 'bc.project_id', 'bc.amount', 'bc.quantity',
+                'bc.bi_id', 'bi.code as bi_code', 'bi.name as bi_name',
+                'bc.content',
+                'i1.name as info_1_name', 'i2.name as info_2_name', 'i3.name as info_3_name',
+            ]);
+
+        return response()->json([
+            'data'      => $rows,
+            'is_posted' => (bool) $op->is_posted,
+            'deleted'   => (bool) $op->deleted_at,
+        ]);
+    }
+
     private function formatOperation(Operation $op): array
     {
         return [

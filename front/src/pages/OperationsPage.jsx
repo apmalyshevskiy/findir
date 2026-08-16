@@ -194,6 +194,34 @@ export default function OperationsPage() {
     content: op.content, note: op.note,
   }, op.content || '')
 
+  /**
+   * Копия операции: те же реквизиты, новая запись.
+   *
+   * Дату не переносим — форма подставит текущую: копируют, чтобы записать
+   * такую же операцию сейчас, а не задним числом. Открываем форму, а не
+   * создаём молча: копируют обычно ради того, чтобы что-то в копии изменить.
+   *
+   * Счета местами меняются кнопкой в самой форме, если копия нужна обратная.
+   */
+  const copyOp = (op) => {
+    handleUseDraft({
+      project_id:    op.project_id,
+      amount:        op.amount,
+      quantity:      op.quantity,
+      in_bi_id:      op.in_bi_id,
+      out_bi_id:     op.out_bi_id,
+      in_info_1_id:  op.in_info_1_id,
+      in_info_2_id:  op.in_info_2_id,
+      in_info_3_id:  op.in_info_3_id,
+      out_info_1_id: op.out_info_1_id,
+      out_info_2_id: op.out_info_2_id,
+      out_info_3_id: op.out_info_3_id,
+      content:       op.content,
+      note:          op.note,
+      is_posted:     op.is_posted,
+    })
+  }
+
   const toggleSelect = (id) => {
     setSelected(prev => {
       const next = new Set(prev)
@@ -556,6 +584,11 @@ export default function OperationsPage() {
                                 ? 'text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50'
                                 : 'text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100'}>
                               {op.is_posted === false ? '✓' : '⊘'}
+                            </button>
+                            <button onClick={() => copyOp(op)}
+                              title="Скопировать операцию"
+                              className="text-gray-300 hover:text-blue-600 p-1 rounded hover:bg-blue-50">
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                             </button>
                             <button onClick={() => templateFromOp(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
                               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>

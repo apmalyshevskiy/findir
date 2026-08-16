@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\DB;
  *
  * Доход и расход берутся ПО ФАКТУ из движений денег (счета info_1_type='cash',
  * статья ДДС — в info_2_id):
- *   поступления  = приход (amount > 0) по scheme.income_flow_ids;
- *   расход фонда = списание (amount < 0) по fund.flow_info_ids.
+ *   поступления  = приход (сторона дебета) по scheme.income_flow_ids;
+ *   расход фонда = списание (сторона кредита) по fund.flow_info_ids.
  *
  * Накопление от scheme.start_date:
  *   остаток фонда = opening_balance + %·(поступления с start_date) − (потрачено с start_date).
@@ -91,9 +91,11 @@ class FundsController extends TenantController
             ->where('date', '>=', $from->toDateString() . ' 00:00:00')
             ->where('date', '<=', $to->toDateString() . ' 23:59:59');
 
+        // Приход и списание — это стороны проводки, а не знак суммы: сторно
+        // прихода должно уменьшать поступления, а не считаться расходом
         if ($dir === 'in') {
-            return round((float) $q->where('amount', '>', 0)->sum('amount'), 2);
+            return round((float) $q->where('side', 'debit')->sum('amount'), 2);
         }
-        return round((float) -$q->where('amount', '<', 0)->sum('amount'), 2);
+        return round((float) -$q->where('side', 'credit')->sum('amount'), 2);
     }
 }

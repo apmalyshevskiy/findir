@@ -3,6 +3,7 @@ import { getBalanceItems, createOperation, updateOperation } from '../api/operat
 import { getInfo, createInfo, updateInfo } from '../api/info'
 import { getProjects } from '../api/projects'
 import AmountInput from './AmountInput'
+import OperationChanges from './OperationChanges'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -403,6 +404,7 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
 
 // `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
 export default function OperationForm({ operation, initial, onSuccess, onCancel }) {
+  const [tab, setTab] = useState('fields')   // 'fields' | 'changes'
   const isEdit = !!(operation && operation.id)
   const src = operation || initial || null
   const [balanceItems, setBalanceItems] = useState([])
@@ -437,6 +439,11 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     in_info_2_id:  src?.in_info_2_id ?? '',
     out_info_1_id: src?.out_info_1_id ?? '',
     out_info_2_id: src?.out_info_2_id ?? '',
+    // Третий слот форма не редактирует, но держит: иначе обмен сторон
+    // поменял бы местами только первые две аналитики, а третья осталась бы
+    // на чужом счёте
+    in_info_3_id:  src?.in_info_3_id ?? '',
+    out_info_3_id: src?.out_info_3_id ?? '',
     content:       src?.content ?? '',
     note:          src?.note ?? '',
     // Новая операция проводится сразу — иначе её пришлось бы проводить
@@ -601,6 +608,36 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     </div>
   )
 
+  /**
+   * Поменять дебет и кредит местами — вместе с аналитикой.
+   *
+   * Аналитика едет за своим счётом: она осмысленна только в паре с ним,
+   * оставить её на месте значило бы приписать контрагента чужому счёту.
+   */
+  const swapSides = () => setForm(f => ({
+    ...f,
+    in_bi_id:      f.out_bi_id,
+    out_bi_id:     f.in_bi_id,
+    in_info_1_id:  f.out_info_1_id,
+    in_info_2_id:  f.out_info_2_id,
+    in_info_3_id:  f.out_info_3_id,
+    out_info_1_id: f.in_info_1_id,
+    out_info_2_id: f.in_info_2_id,
+    out_info_3_id: f.in_info_3_id,
+  }))
+
+  const swapButton = (
+    <button type="button" onClick={swapSides}
+      title="Поменять дебет и кредит местами вместе с аналитикой"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200
+                 text-xs text-gray-600 hover:bg-gray-50 hover:text-blue-700 transition-colors">
+      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 2l4 4-4 4" /><path d="M3 6h18" /><path d="M7 22l-4-4 4-4" /><path d="M21 18H3" />
+      </svg>
+      Поменять местами
+    </button>
+  )
+
   const postingField = (
     <label className="flex items-start gap-2 cursor-pointer">
       <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
@@ -619,10 +656,31 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className={`bg-white rounded-2xl shadow-xl w-full my-4 ${layout === 'wide' ? 'max-w-3xl' : 'max-w-lg'}`}>
         <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-gray-800">
-            {isEdit ? 'Редактировать операцию' : 'Новая операция'}
-          </h3>
-          <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0">
+          <div className="flex items-baseline gap-4 flex-wrap">
+            <h3 className="text-lg font-semibold text-gray-800">
+              {isEdit ? 'Редактировать операцию' : 'Новая операция'}
+            </h3>
+            {/* Движения есть только у сохранённой операции — их порождает триггер */}
+            {isEdit && (
+              <div className="flex items-center gap-3 text-sm">
+                <button type="button" onClick={() => setTab('fields')}
+                  className={tab === 'fields'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  Реквизиты
+                </button>
+                <button type="button" onClick={() => setTab('changes')}
+                  className={tab === 'changes'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  Движения
+                </button>
+              </div>
+            )}
+          </div>
+          <div className={`items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0 ${
+            tab === 'changes' ? 'hidden' : 'flex'
+          }`}>
             <button type="button" onClick={() => changeLayout('classic')}
               className={`px-2.5 py-1 rounded-md transition-colors ${layout === 'classic' ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}>
               В столбик
@@ -634,6 +692,17 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           </div>
         </div>
 
+        {tab === 'changes' ? (
+          <div className="p-6 space-y-4">
+            <OperationChanges operationId={operation.id} />
+            <div className="flex justify-end pt-2">
+              <button type="button" onClick={onCancel}
+                className="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">
+                Закрыть
+              </button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
 
@@ -668,6 +737,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           {layout === 'wide' && contentField}
 
           {/* Дебет / Кредит — рядом (wide) или в столбик (classic) */}
+          <div className="flex justify-end">{swapButton}</div>
           {layout === 'wide' ? (
             <div className="grid grid-cols-2 border border-gray-200 rounded-xl">
               <div className="p-4 space-y-3 border-r border-gray-200 bg-green-50/40 rounded-l-xl">{debitFields}</div>
@@ -695,6 +765,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   )

@@ -134,14 +134,15 @@ final class AnalyticsQueryService
     // ── Внутреннее ────────────────────────────────────────────────────────────
 
     /**
-     * В balance_changes дебет — это amount > 0, кредит — amount < 0
-     * (так же считает оборотка).
+     * Сторону берём из колонки side, а не из знака суммы — так же, как
+     * оборотка. Отрицательная сумма означает сторно: она уменьшает оборот
+     * по своей стороне, а не превращается в оборот по противоположной.
      */
     private function amountExpr(string $side): string
     {
         return match ($side) {
-            'debit'  => 'SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)',
-            'credit' => 'SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END)',
+            'debit'  => "SUM(CASE WHEN side = 'debit'  THEN  amount ELSE 0 END)",
+            'credit' => "SUM(CASE WHEN side = 'credit' THEN -amount ELSE 0 END)",
             default  => 'SUM(amount)',
         };
     }

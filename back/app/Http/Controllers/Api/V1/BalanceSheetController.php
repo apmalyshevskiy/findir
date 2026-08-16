@@ -103,10 +103,14 @@ class BalanceSheetController extends TenantController
             ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
             ->where('date', '<=', $dateTo . ' 23:59:59')
             ->select('bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
-                DB::raw('SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as debit'),
-                DB::raw('SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as credit'),
-                DB::raw('SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) as qty_debit'),
-                DB::raw('SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) as qty_credit'))
+                // Сторона берётся из side, а не из знака суммы. Минус — это
+                // сторно: оно уменьшает оборот по своей стороне, а не создаёт
+                // оборот по противоположной. На положительных суммах формулы
+                // дают ровно те же числа, что и раньше
+                DB::raw("SUM(CASE WHEN side = 'debit'  THEN  amount   ELSE 0 END) as debit"),
+                DB::raw("SUM(CASE WHEN side = 'credit' THEN -amount   ELSE 0 END) as credit"),
+                DB::raw("SUM(CASE WHEN side = 'debit'  THEN  quantity ELSE 0 END) as qty_debit"),
+                DB::raw("SUM(CASE WHEN side = 'credit' THEN -quantity ELSE 0 END) as qty_credit"))
             ->groupBy('bi_id', 'info_1_id', 'info_2_id', 'info_3_id')
             ->get();
 

@@ -55,6 +55,7 @@ Route::prefix('v1')->group(function () {
     Route::post('/operations',        [OperationsController::class, 'store']);
     Route::put('/operations/{id}',    [OperationsController::class, 'update']);
     Route::post('/operations/{id}/posting', [OperationsController::class, 'setPosting']);
+    Route::get ('/operations/{id}/changes', [OperationsController::class, 'changes']);
     Route::delete('/operations/{id}', [OperationsController::class, 'destroy']);
 
     // Банковская выписка

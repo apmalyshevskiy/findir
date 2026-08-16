@@ -301,13 +301,13 @@ export default function BalanceSheetPage() {
     setDrillModal({ title, ops: [], posted: [], unposted: [], biId, direction, infoId })
     const params = { per_page: 200, date_from: filter.from, date_to: filter.to }
 
+    // Сторона оборота — это слот счёта в операции, знак суммы на неё не
+    // влияет: минус означает сторно и уменьшает оборот по своей же стороне
     let ops = []
     if (direction === 'debit') {
-      const res = await getOperations({ ...params, in_bi_id: biId })
-      ops = res.data.data || []
+      ops = (await getOperations({ ...params, in_bi_id: biId })).data.data || []
     } else if (direction === 'credit') {
-      const res = await getOperations({ ...params, out_bi_id: biId })
-      ops = res.data.data || []
+      ops = (await getOperations({ ...params, out_bi_id: biId })).data.data || []
     } else {
       const [resIn, resOut] = await Promise.all([
         getOperations({ ...params, in_bi_id: biId }),
@@ -455,11 +455,17 @@ export default function BalanceSheetPage() {
     closing_credit: acc.closing_credit + row.closing_credit,
   }), { opening_debit: 0, opening_credit: 0, debit: 0, credit: 0, closing_debit: 0, closing_credit: 0 })
 
-  // Ячейка суммы — кликабельна для drill-down
+  // Ячейка суммы — кликабельна для drill-down.
+  // Отрицательный оборот бывает только от сторно; помечаем его отдельно,
+  // иначе минус в зелёной колонке «Дт» читается как ошибка
   const AmtCell = ({ val, onClick, extra = '' }) => (
     <td className={`px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap ${extra}`}>
       {val === 0 ? <span className="text-gray-300">—</span> : (
-        <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
+        <button onClick={onClick}
+          title={val < 0 ? 'Отрицательный оборот — сторно за период превысило обычные проводки' : undefined}
+          className={`hover:underline hover:opacity-75 transition-opacity cursor-pointer ${
+            val < 0 ? 'text-amber-700 underline decoration-dotted' : ''
+          }`}>
           {fmt(val)}
         </button>
       )}
