@@ -41,6 +41,18 @@ services:
       PHP_MAX_EXECUTION_TIME: 120
     volumes:
       - ./back:/var/www/html
+      # vendor живёт внутри контейнера, а не в папке Windows.
+      #
+      # Мост Docker Desktop между Windows и Linux стоит дорого на каждом файле:
+      # обход vendor (8249 файлов) через него — 14 с, свой код (110 файлов) —
+      # 0,19 с. Пока vendor был снаружи, PHP проверял его на каждом запросе, и
+      # пустой /health отвечал 5 секунд.
+      #
+      # Плата за это: composer запускать внутри контейнера —
+      #   docker compose exec php composer install
+      # На хосте back/vendor остаётся для подсказок IDE, но контейнер его
+      # не видит и не читает.
+      - vendor_data:/var/www/html/vendor
       # Те же лимиты, что и на проде, — иначе разница вылезает только там
       - ./php/php.ini:/usr/local/etc/php/conf.d/zz-findir.ini:ro
       # Грузится последним и гасит opcache: в образе стоит validate_timestamps=0,
@@ -101,6 +113,7 @@ services:
     container_name: findir_horizon
     restart: unless-stopped
     command: sh -c "sleep 30 && php /var/www/html/artisan horizon"
+    # vendor — тот же том, что у php: см. пояснение там
     environment:
       APP_ENV: local
       APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
@@ -112,6 +125,7 @@ services:
       QUEUE_CONNECTION: redis
     volumes:
       - ./back:/var/www/html
+      - vendor_data:/var/www/html/vendor
     depends_on:
       - mariadb
       - redis
@@ -125,6 +139,7 @@ services:
     container_name: findir_scheduler
     restart: unless-stopped
     command: sh -c "while true; do php /var/www/html/artisan schedule:run; sleep 60; done"
+    # vendor — тот же том, что у php: см. пояснение там
     environment:
       APP_ENV: local
       APP_KEY: "base64:rxG0Xd+0d5fvgounk8ck7yqSW4oEVcWGL+V/1MJccOM="
@@ -135,6 +150,7 @@ services:
       REDIS_HOST: redis
     volumes:
       - ./back:/var/www/html
+      - vendor_data:/var/www/html/vendor
     depends_on:
       - mariadb
       - redis
@@ -187,7 +203,13 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - C:/work/findir/front:/app
+      - ./front:/app
+      # node_modules — внутри контейнера, по той же причине, что и vendor
+      # у php: через мост Windows каждый файл читается на два порядка дольше,
+      # а их тут десятки тысяч. Заодно на хосте остаётся своя папка — та,
+      # что ставилась под Windows, и её больше не перетирает установка
+      # из контейнера (собранные под Linux бинарники в ней ломали npm)
+      - node_modules_data:/app/node_modules
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     networks:
       - findir_net
@@ -195,6 +217,10 @@ services:
 volumes:
   mariadb_data:
   redis_data:
+  # Зависимости composer — внутри Linux, а не в папке Windows (см. службу php)
+  vendor_data:
+  # То же самое для зависимостей фронта (см. службу web)
+  node_modules_data:
 
 networks:
   findir_net:
