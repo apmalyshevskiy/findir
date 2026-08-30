@@ -6,10 +6,12 @@ const groupInt = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
 export const fmtTyping = (v) => {
   let s = v == null ? '' : String(v)
   if (s === '') return ''
-  const neg = s[0] === '-' ? '-' : ''
-  s = s.replace('-', '')
+  // Явный плюс сохраняем: в плане бюджета он значащий — так набирают возврат
+  // в расходном разделе, где без знака подставился бы минус
+  const sign = s[0] === '-' ? '-' : s[0] === '+' ? '+' : ''
+  s = s.replace(/^[+-]/, '')
   const dot = s.indexOf('.')
-  return dot === -1 ? neg + groupInt(s) : neg + groupInt(s.slice(0, dot)) + ',' + s.slice(dot + 1)
+  return dot === -1 ? sign + groupInt(s) : sign + groupInt(s.slice(0, dot)) + ',' + s.slice(dot + 1)
 }
 
 /**
@@ -31,7 +33,7 @@ const AmountInput = forwardRef(function AmountInput(
     const el = e.target
     const digitsBefore = el.value.slice(0, el.selectionStart).replace(/\D/g, '').length
     const clean = el.value.replace(/\s/g, '').replace(',', '.')
-    if (clean !== '' && clean !== '-' && !/^-?\d*\.?\d*$/.test(clean)) return
+    if (clean !== '' && clean !== '-' && clean !== '+' && !/^[+-]?\d*\.?\d*$/.test(clean)) return
     onChange(clean)
     const formatted = fmtTyping(clean)
     requestAnimationFrame(() => {

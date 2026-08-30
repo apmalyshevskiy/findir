@@ -7,6 +7,7 @@ import { getDocument, postDocument, cancelDocument } from '../../api/documents'
 import { getInfo } from '../../api/info'
 import OperationForm from '../OperationForm'
 import AmountInput from '../AmountInput'
+import { sectionSign, parsePlanAmount, formatPlanAmount } from '../../utils/budgetSign'
 import { DocumentForm } from '../../pages/DocumentsPage'
 
 // ── Утилиты форматирования ─────────────────────────────────────────────────
@@ -235,6 +236,9 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
 
   const articleOptions = useMemo(() => buildArticleOptions(articles, section), [articles, section])
 
+  // Знак раздела: в расходах и себестоимости сумму можно набирать без минуса
+  const sign = sectionSign(section)
+
   const loadItems = async () => {
     setLoading(true)
     try {
@@ -276,7 +280,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
   const total = rows.reduce((s, r) => s + (r.amount || 0), 0)
 
   const handleAdd = async () => {
-    const amount = parseFloat(newAmount.replace(/\s/g, '').replace(',', '.')) || 0
+    const amount = parsePlanAmount(newAmount, sign)
     if (!amount) return
     setSaving(true)
     try {
@@ -349,7 +353,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
       {rows.length === 0 && !adding && <div className="text-center py-8 text-gray-400 text-sm">Нет строк плана</div>}
       <div className="space-y-2">
         {rows.map(item => (
-          <DrawerRow key={item.id} item={item} articleOptions={articleOptions} onUpdate={handleRowUpdate} onDelete={handleDelete} />
+          <DrawerRow key={item.id} item={item} articleOptions={articleOptions} sign={sign} onUpdate={handleRowUpdate} onDelete={handleDelete} />
         ))}
       </div>
 
@@ -373,6 +377,16 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
               placeholder="Сумма" value={newAmount} onChange={setNewAmount}
               onKeyDown={e => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') setAdding(false) }} />
           </div>
+          {/* Что именно уйдёт в базу — видно до сохранения, чтобы правило про
+              знак объяснялось само, а не запоминалось */}
+          {sign < 0 && (
+            <div className="text-[10px] text-gray-500 leading-relaxed">
+              {newAmount
+                ? <>Запишется как <span className="font-medium text-gray-700 tabular-nums">{fmt(parsePlanAmount(newAmount, sign))}</span></>
+                : <>Минус в расходах подставляется сам — набирайте сумму как есть.</>}
+              <span className="text-gray-400"> Возврат — со знаком «+».</span>
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={handleAdd} disabled={saving || !newAmount} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">{saving ? 'Сохранение...' : 'Добавить'}</button>
             <button onClick={() => setAdding(false)} className="px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg">Отмена</button>
@@ -453,7 +467,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
 // ══════════════════════════════════════════════════════════════════════════════
 // Строка плана с inline-редактированием
 // ══════════════════════════════════════════════════════════════════════════════
-function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
+function DrawerRow({ item, articleOptions, sign = 1, onUpdate, onDelete }) {
   const [editField, setEditField] = useState(null) // 'content' | 'amount' | 'article' | 'date'
   const [text, setText] = useState('')
   const ref = useRef(null)
@@ -463,7 +477,7 @@ function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
   const commit = (field, value) => {
     setEditField(null)
     if (field === 'amount') {
-      const n = parseFloat(String(value).replace(/\s/g, '').replace(',', '.')) || 0
+      const n = parsePlanAmount(value, sign)
       if (n !== item.amount) onUpdate(item, { amount: n })
     } else if (field === 'content') {
       if (value !== item.content) onUpdate(item, { content: value })
@@ -523,7 +537,7 @@ function DrawerRow({ item, articleOptions, onUpdate, onDelete }) {
               onBlur={() => commit('amount', text)} onKeyDown={e => { if (e.key === 'Enter') commit('amount', text); if (e.key === 'Escape') setEditField(null) }} />
           ) : (
             <div className="text-sm font-medium text-blue-600 tabular-nums cursor-pointer hover:text-blue-800"
-              onClick={() => { setText(String(Math.round(item.amount))); setEditField('amount') }}>
+              onClick={() => { setText(formatPlanAmount(item.amount, sign)); setEditField('amount') }}>
               {fmt(item.amount)}
             </div>
           )}
