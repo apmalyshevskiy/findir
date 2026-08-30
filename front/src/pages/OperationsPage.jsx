@@ -261,19 +261,38 @@ export default function OperationsPage() {
       hour: '2-digit', minute: '2-digit'
     })
 
+  /**
+   * Дата и время «как на стене» — без перевода в UTC.
+   *
+   * Тот же формат, что шлёт форма операции: операция сравнивается с датой
+   * запрета по локальной дате, и сдвиг на часовой пояс мог бы утащить копию
+   * на сутки назад — обратно в закрытый период.
+   */
+  const localNow = () => {
+    const d = new Date()
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  }
+
   const handleCopySelected = async () => {
     if (selected.size === 0) return
-    if (!confirm(`Скопировать выбранные операции (${selected.size} шт.)?`)) return
-  
+    if (!confirm(`Скопировать выбранные операции (${selected.size} шт.) на текущую дату?`)) return
+
     setLoading(true)
     try {
       // Фильтруем массив операций, оставляя только выделенные
       const opsToCopy = operations.filter(op => selected.has(op.id))
-  
+      // Одно время на всю пачку: копии одного действия должны лечь рядом,
+      // а не разъехаться по секундам
+      const copyDate = localNow()
+
       // Выполняем запросы последовательно (или через Promise.all)
       for (const op of opsToCopy) {
         const payload = {
-          date: op.date, // Оставляем оригинальную дату
+          // Дату не переносим: копируют, чтобы записать такую же операцию
+          // сейчас. Исходная дата часто лежит в закрытом периоде, и сервер
+          // законно отказывал — а копия туда и не метила
+          date: copyDate,
           project_id: op.project_id,
           amount: op.amount,
           quantity: op.quantity,
