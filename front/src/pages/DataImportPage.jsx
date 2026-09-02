@@ -77,9 +77,9 @@ export default function DataImportPage() {
   return (
     <Layout>
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Загрузка данных</h2>
+        <h2 className="text-xl font-semibold text-gray-800">Загрузка из учётных систем</h2>
         <Link to="/integrations" className="text-sm text-blue-700 hover:underline">
-          Настройки интеграций →
+          Настройка интеграций →
         </Link>
       </div>
 

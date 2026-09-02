@@ -51,8 +51,17 @@ export default function Layout({ children }) {
     { path: '/operations',       label: 'Операции' },
     { path: '/documents',        label: 'Документы' },
     { path: '/balance-sheet',    label: 'Оборотка' },
-    { path: '/bank-statement',   label: 'Выписка' },
-    { path: '/data-import',      label: 'Загрузка' },
+    // Всё, что приходит в базу извне, — в одном разделе: и разовая загрузка
+    // файла выписки, и обмен с учётной системой вместе с его настройкой.
+    // Порознь это выглядело как разные умения, хотя задача одна
+    {
+      label: 'Обмен данными',
+      children: [
+        { path: '/bank-statement', label: 'Банковская выписка' },
+        { path: '/data-import',    label: 'Загрузка из учётных систем' },
+        { path: '/integrations',   label: 'Настройка интеграций' },
+      ],
+    },
     { path: '/budget',           label: 'Бюджет' },
     { path: '/payment-calendar', label: 'Календарь' },
     {
@@ -71,7 +80,7 @@ export default function Layout({ children }) {
         { path: '/classification-rules', label: 'Настройка правил' },
         { path: '/acquiring-fee-rules', label: 'Эквайринг' },
         { path: '/edit-lock-date',       label: 'Дата запрета' },
-        { path: '/integrations',         label: 'Интеграции' },
+        // «Интеграции» переехали в «Обмен данными» — там же, где сама загрузка
         { path: '/backup',               label: 'Архивная копия' },
       ],
     },
@@ -113,8 +122,11 @@ export default function Layout({ children }) {
                       {n.label}
                       <span className="text-[10px]">▾</span>
                     </button>
+                    {/* Ширина списка — по самому длинному пункту: названия
+                        разделов бывают в три слова, и перенос строки в узком
+                        списке читался бы как два разных пункта */}
                     {openMenu === n.label && (
-                      <div className="absolute left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
+                      <div className="absolute left-0 mt-1 w-max min-w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
                         {n.children.map(c => (
                           <button
                             key={c.path}

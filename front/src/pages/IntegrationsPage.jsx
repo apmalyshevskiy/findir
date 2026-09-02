@@ -110,11 +110,11 @@ export default function IntegrationsPage() {
     <Layout>
       <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Интеграции</h2>
+          <h2 className="text-xl font-semibold text-gray-800">Настройка интеграций</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             Связь с учётной системой и правила переноса. Заполняется один раз —
-            загрузка данных живёт на странице{' '}
-            <Link to="/data-import" className="text-blue-700 hover:underline">Загрузка</Link>.
+            сама загрузка живёт рядом, в{' '}
+            <Link to="/data-import" className="text-blue-700 hover:underline">загрузке из учётных систем</Link>.
           </p>
         </div>
         <div className="flex gap-2">
@@ -205,8 +205,8 @@ export default function IntegrationsPage() {
 
             {editing.id && (
               <div className="pt-4 border-t border-gray-100 text-sm text-gray-500">
-                Настроили — дальше грузите данные на странице{' '}
-                <Link to="/data-import" className="text-blue-700 hover:underline font-medium">Загрузка</Link>.
+                Настроили — дальше грузите данные в{' '}
+                <Link to="/data-import" className="text-blue-700 hover:underline font-medium">загрузке из учётных систем</Link>.
                 Сюда возвращаться не нужно.
               </div>
             )}
