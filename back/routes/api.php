@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\InfoController;
 use App\Http\Controllers\Api\V1\BankStatementController;
 use App\Http\Controllers\Api\V1\ProjectsController;
 use App\Http\Controllers\Api\V1\DocumentsController;
+use App\Http\Controllers\Api\V1\DocumentTypesController;
 use App\Http\Controllers\Api\V1\CostController;
 use App\Http\Controllers\Api\V1\BudgetController;
 use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
@@ -92,6 +93,12 @@ Route::prefix('v1')->group(function () {
     Route::put   ('/category-postings/{id}', [CategoryPostingController::class, 'update']);
     Route::delete('/category-postings/{id}', [CategoryPostingController::class, 'destroy']);
 
+    // Виды документов — справочник, из которого документы берут счета и стороны
+    Route::get   ('/document-types',      [DocumentTypesController::class, 'index']);
+    Route::post  ('/document-types',      [DocumentTypesController::class, 'store']);
+    Route::put   ('/document-types/{id}', [DocumentTypesController::class, 'update']);
+    Route::delete('/document-types/{id}', [DocumentTypesController::class, 'destroy']);
+
     // Документы — статические маршруты ПЕРЕД динамическими {id}
     Route::get('/documents',                   [DocumentsController::class, 'index']);
     Route::post('/documents',                  [DocumentsController::class, 'store']);
@@ -100,6 +107,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/documents/{id}',              [DocumentsController::class, 'show']);
     Route::put('/documents/{id}',              [DocumentsController::class, 'update']);
     Route::delete('/documents/{id}',           [DocumentsController::class, 'destroy']);
+    Route::get ('/documents/{id}/changes',     [DocumentsController::class, 'changes']);
     Route::post('/documents/{id}/post',        [DocumentsController::class, 'post']);
     Route::post('/documents/{id}/cancel',      [DocumentsController::class, 'cancel']);
 

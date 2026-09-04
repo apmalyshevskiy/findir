@@ -12,6 +12,10 @@ class DocumentItem extends Model
     protected $fillable = [
         'document_id', 'sort_order',
         'bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
+        // Корреспондирующая сторона именно этой строки. Пусто — берётся из
+        // шапки: так статья ДДС бывает своя у каждой строки авансового отчёта,
+        // а касса — общая
+        'head_bi_id', 'head_info_1_id', 'head_info_2_id', 'head_info_3_id',
         'quantity', 'price', 'amount', 'amount_vat', 'amount_cost',
         'content', 'note',
     ];
@@ -47,5 +51,27 @@ class DocumentItem extends Model
     public function info3(): BelongsTo
     {
         return $this->belongsTo(Info::class, 'info_3_id');
+    }
+
+    // ── Корреспондирующая сторона строки ──────────────────────────────────────
+
+    public function headBalanceItem(): BelongsTo
+    {
+        return $this->belongsTo(BalanceItem::class, 'head_bi_id');
+    }
+
+    public function headInfo1(): BelongsTo
+    {
+        return $this->belongsTo(Info::class, 'head_info_1_id');
+    }
+
+    public function headInfo2(): BelongsTo
+    {
+        return $this->belongsTo(Info::class, 'head_info_2_id');
+    }
+
+    public function headInfo3(): BelongsTo
+    {
+        return $this->belongsTo(Info::class, 'head_info_3_id');
     }
 }

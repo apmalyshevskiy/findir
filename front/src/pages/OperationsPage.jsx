@@ -12,6 +12,9 @@ import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
 import BulkEditOperations from '../components/BulkEditOperations'
+import { DocumentForm } from './DocumentsPage'
+import { getDocument } from '../api/documents'
+import { getInfo } from '../api/info'
 import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
 
 const INFO_TYPES = [
@@ -97,6 +100,12 @@ export default function OperationsPage() {
   const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '', is_posted: '' })
   const [selected, setSelected] = useState(new Set())
   const [showBulkEdit, setShowBulkEdit] = useState(false)
+  // Документ-источник открываем сразу для правки и поверх списка: уходить со
+  // страницы посреди разбора операций незачем, а вернуться потом — значит
+  // заново задать период
+  const [docModal, setDocModal]         = useState(null)   // { doc }
+  const [docInfoCache, setDocInfoCache] = useState({})
+  const [docError, setDocError]         = useState('')
   // Примечание — отдельной строкой под карточкой. Кому мешает, тот выключит
   const [showNotes, setShowNotes] = usePersistedState('ops:show-notes', true)
   const tenant = JSON.parse(localStorage.getItem('tenant') || '{}')
@@ -169,6 +178,23 @@ export default function OperationsPage() {
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось удалить операцию')
     }
+  }
+
+  // ── Документ-источник ─────────────────────────────────────────────────────
+
+  const openDocument = async (tableId) => {
+    setDocError('')
+    try {
+      const r = await getDocument(tableId)
+      setDocModal({ doc: r.data.data })
+    } catch {
+      setDocError('Документ не найден — возможно, его удалили')
+      setTimeout(() => setDocError(''), 4000)
+    }
+  }
+
+  const loadDocInfo = (type) => {
+    getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
   }
 
   const handleEdit = (op) => { setDraftOperation(null); setEditOperation(op); setShowForm(true) }
@@ -537,10 +563,12 @@ export default function OperationsPage() {
                 {operations.map(op => (
                   <div key={op.id}
                     onClick={() => toggleSelect(op.id)}
-                    onDoubleClick={() => (op.table_name === 'documents' && op.table_id)
-                      ? navigate(`/documents?open=${op.table_id}`)
-                      : handleEdit(op)}
-                    title="Двойной клик — редактировать"
+                    // Двойной клик открывает саму операцию — в том числе
+                    // созданную документом: в ней смотрят движения по счетам.
+                    // В документ ведёт своя иконка, и он открывается тут же,
+                    // не уводя со списка
+                    onDoubleClick={() => handleEdit(op)}
+                    title="Двойной клик — открыть операцию"
                     // Непроведённая — пунктиром и приглушённая: она в списке
                     // есть, а в оборотах её нет, и это должно быть видно сразу
                     className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
@@ -607,8 +635,14 @@ export default function OperationsPage() {
                     <div className="text-right" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {op.table_name === 'documents' && op.table_id ? (
-                          <button onClick={() => navigate(`/documents?open=${op.table_id}`)} title="Открыть документ-источник"
-                            className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
+                          <>
+                            <button onClick={() => openDocument(op.table_id)} title="Открыть документ-источник"
+                              className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
+                            <button onClick={() => handleEdit(op)} title="Открыть операцию"
+                              className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50">
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                            </button>
+                          </>
                         ) : (
                           <>
                             <button onClick={() => togglePosting(op)}
@@ -699,8 +733,29 @@ export default function OperationsPage() {
         <OperationForm
           operation={editOperation}
           initial={draftOperation}
+          onOpenDocument={(id) => { handleFormClose(); openDocument(id) }}
           onSuccess={() => { if (draftOperation) setAiResetKey(k => k + 1); handleFormClose(); loadOperations() }}
           onCancel={handleFormClose}
+        />
+      )}
+
+      {docError && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
+          {docError}
+        </div>
+      )}
+
+      {/* Документ-источник — сразу в правке, поверх списка операций */}
+      {docModal && (
+        <DocumentForm
+          docType={docModal.doc.type}
+          doc={docModal.doc}
+          balanceItems={balanceItems}
+          infoCache={docInfoCache}
+          loadInfo={loadDocInfo}
+          onSave={() => { setDocModal(null); loadOperations() }}
+          onCancel={() => setDocModal(null)}
+          onChanged={loadOperations}
         />
       )}
 

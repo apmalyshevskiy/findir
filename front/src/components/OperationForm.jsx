@@ -413,9 +413,12 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemC
 }
 
 // `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
-export default function OperationForm({ operation, initial, onSuccess, onCancel }) {
+export default function OperationForm({ operation, initial, onSuccess, onCancel, onOpenDocument }) {
   const [tab, setTab] = useState('fields')   // 'fields' | 'changes'
   const isEdit = !!(operation && operation.id)
+  // Операцию, рождённую документом, сервер править не даст — и правильно:
+  // документ пересоздаёт свои проводки при каждом проведении
+  const fromDocument = !!(operation?.table_name === 'documents' && operation?.table_id)
   const src = operation || initial || null
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects] = useState([])
@@ -768,6 +771,29 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
 
+          {/* Операция из документа: реквизиты правятся только в нём, иначе
+              документ и его проводки разъехались бы. Поля показываем, но
+              выключаем — смотреть можно, менять нельзя */}
+          {fromDocument && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+              <span className="text-base leading-none">📄</span>
+              <span>
+                Операция создана документом — реквизиты меняются в нём.
+                {onOpenDocument && (
+                  <button type="button" onClick={() => onOpenDocument(operation.table_id)}
+                    className="ml-1 underline hover:no-underline font-medium">
+                    Открыть документ
+                  </button>
+                )}
+                <span className="block text-[11px] text-amber-700 mt-0.5">
+                  Движения по счетам видны на соседней вкладке.
+                </span>
+              </span>
+            </div>
+          )}
+
+          <fieldset disabled={fromDocument} className="contents">
+
           {projects.length > 1 && (
             <div>
               <label className={lc}>Проект</label>
@@ -816,15 +842,19 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
 
           {postingField}
 
+          </fieldset>
+
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onCancel}
               className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">
-              Отмена
+              {fromDocument ? 'Закрыть' : 'Отмена'}
             </button>
-            <button type="submit" disabled={loading}
-              className="flex-1 px-4 py-2.5 bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium">
-              {loading ? 'Сохранение...' : isEdit ? 'Обновить' : 'Сохранить'}
-            </button>
+            {!fromDocument && (
+              <button type="submit" disabled={loading}
+                className="flex-1 px-4 py-2.5 bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium">
+                {loading ? 'Сохранение...' : isEdit ? 'Обновить' : 'Сохранить'}
+              </button>
+            )}
           </div>
         </form>
         )}

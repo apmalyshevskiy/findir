@@ -27,11 +27,6 @@ const STATUS = {
   cancelled: { label: 'отменён',  cls: 'bg-red-50 text-red-700 ring-red-200' },
 }
 
-const TYPE = {
-  incoming_invoice: 'Приходная накладная',
-  outgoing_invoice: 'Расходная накладная',
-}
-
 export default function DocumentPeek({ id, onClose }) {
   const [doc, setDoc]     = useState(null)
   const [error, setError] = useState('')
@@ -62,7 +57,9 @@ export default function DocumentPeek({ id, onClose }) {
         <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-gray-100">
           <div>
             <div className="font-semibold text-gray-800">
-              {TYPE[doc?.type] || 'Документ'} {doc?.number ? `№${doc.number}` : ''}
+              {/* Название вида приходит вместе с документом: виды теперь
+                  заводятся в справочнике, и списком в коде их не перечислить */}
+              {doc?.type_name || 'Документ'} {doc?.number ? `№${doc.number}` : ''}
             </div>
             {doc && (
               <div className="text-xs text-gray-400 mt-0.5">

@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { getOperationChanges } from '../api/operations'
+import { getDocumentChanges } from '../api/documents'
 import { SkeletonRows, Spinner } from './Busy'
 
 /**
- * Движения по счетам, которые дала операция.
+ * Движения по счетам — то, что видят отчёты.
  *
- * Это содержимое balance_changes — единственное, что видят отчёты. Операция
- * лишь порождает эти строки триггером, поэтому вопрос «почему в оборотке
- * такая цифра» разрешается именно здесь.
+ * Это содержимое balance_changes. Операция лишь порождает эти строки триггером,
+ * поэтому вопрос «почему в оборотке такая цифра» разрешается именно здесь.
+ *
+ * Работает и от документа: в операцию, созданную документом, не зайти — она
+ * правится только через него, — так что документ показывает движения всех
+ * своих операций сам, разделяя их по строкам.
  */
 
 const money = (v) => Number(v ?? 0).toLocaleString('ru-RU', {
@@ -21,17 +25,20 @@ const SIDE = {
   credit: { label: 'Кредит', cls: 'bg-red-50 text-red-700 ring-red-200' },
 }
 
-export default function OperationChanges({ operationId }) {
+export default function OperationChanges({ operationId, documentId }) {
   const [state, setState] = useState(null)
   const [error, setError] = useState('')
 
+  const subject = documentId ? 'Документ не проведён' : 'Операция не проведена'
+
   useEffect(() => {
     let alive = true
-    getOperationChanges(operationId)
+    const request = documentId ? getDocumentChanges(documentId) : getOperationChanges(operationId)
+    request
       .then(r => { if (alive) setState(r.data) })
       .catch(() => { if (alive) setError('Не удалось получить движения') })
     return () => { alive = false }
-  }, [operationId])
+  }, [operationId, documentId])
 
   if (error)   return <div className="text-sm text-red-600">{error}</div>
   if (!state) return (
@@ -51,8 +58,8 @@ export default function OperationChanges({ operationId }) {
       {rows.length === 0 ? (
         <div className="border border-amber-200 bg-amber-50/60 rounded-lg px-4 py-3 text-sm text-amber-900">
           {state.is_posted
-            ? 'Движений нет. Такое бывает у удалённой операции — отчёты её не видят.'
-            : 'Операция не проведена, поэтому движений по счетам нет и в обороты она не входит.'}
+            ? 'Движений нет. Такое бывает у удалённой записи — отчёты её не видят.'
+            : `${subject}, поэтому движений по счетам нет и в обороты записи не входят.`}
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -70,8 +77,15 @@ export default function OperationChanges({ operationId }) {
               {rows.map((r, k) => {
                 const s = SIDE[r.side] || SIDE.debit
                 const analytics = [r.info_1_name, r.info_2_name, r.info_3_name].filter(Boolean)
+                // У документа операций несколько — отбиваем их друг от друга,
+                // иначе проводки трёх строк слипаются в одну простыню
+                const newOperation = r.operation_id && r.operation_id !== rows[k - 1]?.operation_id
                 return (
-                  <tr key={k} className="border-t border-gray-100 align-top">
+                  <Fragment key={k}>
+                  {newOperation && k > 0 && (
+                    <tr><td colSpan={5} className="pt-3" /></tr>
+                  )}
+                  <tr className={`border-t align-top ${newOperation ? 'border-gray-200' : 'border-gray-100'}`}>
                     <td className="py-2 pr-3">
                       <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ring-1 ${s.cls}`}>
                         {s.label}
@@ -93,6 +107,7 @@ export default function OperationChanges({ operationId }) {
                       {Number(r.quantity) ? qty(r.quantity) : '—'}
                     </td>
                   </tr>
+                  </Fragment>
                 )
               })}
             </tbody>

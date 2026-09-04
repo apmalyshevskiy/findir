@@ -8,9 +8,25 @@ use App\Services\Documents\DocumentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class DocumentsController extends TenantController
 {
+    /** Справочник видов, по коду. Читается один раз на запрос */
+    private ?array $typesByCode = null;
+
+    private function types(): array
+    {
+        return $this->typesByCode ??= DB::connection($this->dbName)
+            ->table('document_types')->get()->keyBy('code')->all();
+    }
+
+    /** Коды видов документов, заведённых у тенанта */
+    private function typeCodes(): array
+    {
+        return array_keys($this->types());
+    }
+
     private function model(): Document
     {
         return (new Document)->setConnection($this->dbName);
@@ -61,6 +77,7 @@ class DocumentsController extends TenantController
                 'balanceItem', 'info1', 'info2', 'info3',
                 'revenueBalanceItem', 'cogsBalanceItem', 'revenueItem',
                 'items.balanceItem', 'items.info1', 'items.info2', 'items.info3',
+            'items.headBalanceItem', 'items.headInfo1', 'items.headInfo2', 'items.headInfo3',
             ])
             ->findOrFail($id);
 
@@ -96,6 +113,7 @@ class DocumentsController extends TenantController
             'balanceItem', 'info1', 'info2', 'info3',
             'revenueBalanceItem', 'cogsBalanceItem', 'revenueItem',
             'items.balanceItem', 'items.info1', 'items.info2', 'items.info3',
+            'items.headBalanceItem', 'items.headInfo1', 'items.headInfo2', 'items.headInfo3',
         ]);
 
         return response()->json(['data' => $this->formatDocument($doc, withItems: true)], 201);
@@ -135,6 +153,7 @@ class DocumentsController extends TenantController
             'balanceItem', 'info1', 'info2', 'info3',
             'revenueBalanceItem', 'cogsBalanceItem', 'revenueItem',
             'items.balanceItem', 'items.info1', 'items.info2', 'items.info3',
+            'items.headBalanceItem', 'items.headInfo1', 'items.headInfo2', 'items.headInfo3',
         ]);
 
         return response()->json(['data' => $this->formatDocument($doc, withItems: true)]);
@@ -163,6 +182,7 @@ class DocumentsController extends TenantController
             'balanceItem', 'info1', 'info2', 'info3',
             'revenueBalanceItem', 'cogsBalanceItem', 'revenueItem',
             'items.balanceItem', 'items.info1', 'items.info2', 'items.info3',
+            'items.headBalanceItem', 'items.headInfo1', 'items.headInfo2', 'items.headInfo3',
         ]);
 
         return response()->json(['data' => $this->formatDocument($doc, withItems: true)]);
@@ -186,6 +206,48 @@ class DocumentsController extends TenantController
         DocumentService::cancel($doc);
 
         return response()->json(['data' => $this->formatDocument($doc->fresh())]);
+    }
+
+    // ─── GET /documents/{id}/changes ──────────────────────────
+
+    /**
+     * Движения по счетам, которые дал документ.
+     *
+     * В операции такая вкладка уже есть, но в операцию, рождённую документом,
+     * не зайти — она правится только через документ. Поэтому те же движения
+     * показываем здесь: вопрос «почему в оборотке такая цифра» разрешается
+     * одинаково, с какой стороны ни подойди.
+     */
+    public function changes(Request $request, int $id): JsonResponse
+    {
+        $this->initTenant($request);
+
+        $doc = $this->model()->newQuery()->findOrFail($id);
+
+        $rows = DB::connection($this->dbName)->table('balance_changes as bc')
+            ->join('operations as o', 'o.id', '=', 'bc.operation_id')
+            ->leftJoin('balance_items as bi', 'bi.id', '=', 'bc.bi_id')
+            ->leftJoin('info as i1', 'i1.id', '=', 'bc.info_1_id')
+            ->leftJoin('info as i2', 'i2.id', '=', 'bc.info_2_id')
+            ->leftJoin('info as i3', 'i3.id', '=', 'bc.info_3_id')
+            ->where('o.table_name', 'documents')
+            ->where('o.table_id', (string) $doc->id)
+            // У balance_changes нет ключа, поэтому порядок задаём явно:
+            // строки идут по операциям, внутри операции дебет первым
+            ->orderBy('bc.operation_id')
+            ->orderByRaw("bc.side = 'credit'")
+            ->get([
+                'bc.operation_id', 'bc.side', 'bc.date', 'bc.amount', 'bc.quantity',
+                'bc.bi_id', 'bi.code as bi_code', 'bi.name as bi_name',
+                'bc.content',
+                'i1.name as info_1_name', 'i2.name as info_2_name', 'i3.name as info_3_name',
+            ]);
+
+        return response()->json([
+            'data'      => $rows,
+            'is_posted' => $doc->isPosted(),
+            'status'    => $doc->status,
+        ]);
     }
 
     // ─── DELETE /documents/{id} ───────────────────────────────
@@ -214,7 +276,9 @@ class DocumentsController extends TenantController
             'external_number' => 'nullable|string|max:100',
             'external_date'   => 'nullable|date',
             'project_id'      => 'required|integer',
-            'type'            => 'required|in:incoming_invoice,outgoing_invoice',
+            // Вид документа живёт в справочнике тенанта, поэтому список
+            // допустимых значений берём оттуда, а не из константы
+            'type'            => ['required', 'string', Rule::in($this->typeCodes())],
             'bi_id'           => 'required|integer',
             'info_1_id'       => 'nullable|integer',
             'info_2_id'       => 'nullable|integer',
@@ -229,6 +293,11 @@ class DocumentsController extends TenantController
             'items.*.info_1_id'      => 'nullable|integer',
             'items.*.info_2_id'      => 'nullable|integer',
             'items.*.info_3_id'      => 'nullable|integer',
+            // Корреспондирующая сторона строки: пусто — берётся из шапки
+            'items.*.head_bi_id'     => 'nullable|integer',
+            'items.*.head_info_1_id' => 'nullable|integer',
+            'items.*.head_info_2_id' => 'nullable|integer',
+            'items.*.head_info_3_id' => 'nullable|integer',
             'items.*.quantity'       => 'nullable|numeric|min:0',
             'items.*.price'          => 'nullable|numeric|min:0',
             'items.*.amount'         => 'required_with:items|numeric',
@@ -299,6 +368,10 @@ class DocumentsController extends TenantController
                 'info_1_id'   => $row['info_1_id'] ?? null,
                 'info_2_id'   => $row['info_2_id'] ?? null,
                 'info_3_id'   => $row['info_3_id'] ?? null,
+                'head_bi_id'     => $row['head_bi_id']     ?? null,
+                'head_info_1_id' => $row['head_info_1_id'] ?? null,
+                'head_info_2_id' => $row['head_info_2_id'] ?? null,
+                'head_info_3_id' => $row['head_info_3_id'] ?? null,
                 'quantity'    => $row['quantity'] ?? 0,
                 'price'       => $row['price'] ?? 0,
                 'amount'      => $row['amount'],
@@ -334,6 +407,10 @@ class DocumentsController extends TenantController
             'external_date'     => $doc->external_date?->format('Y-m-d'),
             'project_id'        => $doc->project_id,
             'type'              => $doc->type,
+            // Название вида и сторона шапки — чтобы список показывал документ,
+            // не подгружая справочник строкой за строкой
+            'type_name'         => $this->types()[$doc->type]->name      ?? $doc->type,
+            'type_head_side'    => $this->types()[$doc->type]->head_side ?? 'credit',
             'status'            => $doc->status,
             'created_by'        => $doc->created_by,
             'bi_id'             => $doc->bi_id,
@@ -381,6 +458,17 @@ class DocumentsController extends TenantController
                 'info_2_name'  => $item->info2?->name,
                 'info_3_id'    => $item->info_3_id,
                 'info_3_name'  => $item->info3?->name,
+                // Корреспондирующая сторона строки. Пустые поля берутся из
+                // шапки — подставляет их проведение, не форма
+                'head_bi_id'        => $item->head_bi_id,
+                'head_bi_code'      => $item->headBalanceItem?->code,
+                'head_bi_name'      => $item->headBalanceItem?->name,
+                'head_info_1_id'    => $item->head_info_1_id,
+                'head_info_1_name'  => $item->headInfo1?->name,
+                'head_info_2_id'    => $item->head_info_2_id,
+                'head_info_2_name'  => $item->headInfo2?->name,
+                'head_info_3_id'    => $item->head_info_3_id,
+                'head_info_3_name'  => $item->headInfo3?->name,
                 'quantity'     => $item->quantity,
                 'price'        => $item->price,
                 'amount'       => $item->amount,

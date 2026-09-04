@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { getInfo, createInfo, updateInfo, deleteInfo } from '../api/info'
 import Layout from '../components/Layout'
 import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
+import InfoTypeBadge from '../components/InfoTypeBadge'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -47,6 +48,47 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
 }
 
 const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '' }
+
+/**
+ * Поиск по справочнику.
+ *
+ * Ищем не только по названию: контрагента чаще помнят по ИНН, статью — по коду,
+ * а свой же элемент из формы операции — по номеру, который там показан решёткой.
+ * Поэтому «7707083893», «02.01» и «#128» находят каждый своё.
+ */
+const matchesSearch = (item, q) => {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+
+  // «#128» и просто «128» — это про идентификатор, но по числу ищем и в
+  // остальных полях: код статьи тоже бывает числом
+  if (needle.startsWith('#')) return String(item.id) === needle.slice(1)
+
+  // Номер сверяем целиком: по подстроке «1» нашлась бы половина справочника
+  if (String(item.id) === needle) return true
+
+  return [item.name, item.code, item.inn, item.description]
+    .some(v => v && String(v).toLowerCase().includes(needle))
+}
+
+/** Подсветка найденного куска — глазу проще зацепиться в длинном списке */
+const Highlight = ({ text, q }) => {
+  const needle = q.trim()
+  if (!text) return null
+  if (!needle || needle.startsWith('#')) return <>{text}</>
+
+  const idx = String(text).toLowerCase().indexOf(needle.toLowerCase())
+  if (idx < 0) return <>{text}</>
+
+  const s = String(text)
+  return (
+    <>
+      {s.slice(0, idx)}
+      <mark className="bg-amber-100 text-inherit rounded-sm px-0.5">{s.slice(idx, idx + needle.length)}</mark>
+      {s.slice(idx + needle.length)}
+    </>
+  )
+}
 
 const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
   const [search, setSearch] = useState('')
@@ -193,6 +235,7 @@ const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
 export default function InfoPage() {
   const [items, setItems] = useState([])
   const [filterType, setFilterType] = useState('')
+  const [search, setSearch] = useState('')
   const [expandedByType, setExpandedByType] = useState({})
   const [showForm, setShowForm] = useState(false)
   const [editItem, setEditItem] = useState(null)
@@ -293,13 +336,33 @@ export default function InfoPage() {
 
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
 
+  const searching = search.trim().length > 0
+  const found = searching ? items.filter(i => matchesSearch(i, search)) : items
+
   const grouped = filterType
-    ? { [filterType]: items }
+    ? (found.length > 0 ? { [filterType]: found } : {})
     : INFO_TYPES.reduce((acc, t) => {
-        const f = items.filter(i => i.type === t.value)
+        const f = found.filter(i => i.type === t.value)
         if (f.length > 0) acc[t.value] = f
         return acc
       }, {})
+
+  /**
+   * Путь до родителя — «Расходы › Аренда».
+   *
+   * В поиске дерево разворачивается в плоский список, и без пути непонятно,
+   * та ли это «Аренда»: одноимённые статьи в разных ветках — обычное дело.
+   */
+  const parentPath = (item) => {
+    const byId = Object.fromEntries(items.map(i => [i.id, i]))
+    const path = []
+    let cur = byId[item.parent_id]
+    while (cur && path.length < 4) {
+      path.unshift(cur.name)
+      cur = byId[cur.parent_id]
+    }
+    return path.join(' › ')
+  }
 
   return (
     <Layout>
@@ -316,6 +379,34 @@ export default function InfoPage() {
           </button>
         </div>
       </div>
+
+      {/* Поиск: по названию, коду, ИНН, описанию и номеру */}
+      <div className="relative mb-4 max-w-md">
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape') setSearch('') }}
+          placeholder="Поиск: название, код, ИНН, описание, #номер"
+          className="w-full pl-9 pr-9 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+        </svg>
+        {searching && (
+          <button onClick={() => setSearch('')} title="Очистить (Esc)"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-sm">✕</button>
+        )}
+      </div>
+
+      {searching && (
+        <div className="text-xs text-gray-400 mb-4">
+          {found.length === 0
+            ? 'Ничего не найдено'
+            : `Найдено: ${found.length} — показаны списком, без вложенности`}
+        </div>
+      )}
 
       {/* Фильтр по типу */}
       <div className="flex gap-2 flex-wrap mb-6">
@@ -334,6 +425,13 @@ export default function InfoPage() {
       {/* Список */}
       {loading ? (
         <div className="text-center py-12 text-gray-400">Загрузка...</div>
+      ) : searching && found.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 px-6 text-center">
+          <p className="text-gray-500 text-sm">По запросу «{search}» ничего нет</p>
+          <p className="text-gray-400 text-xs mt-1.5">
+            Ищем по названию, коду, ИНН, описанию и номеру записи
+          </p>
+        </div>
       ) : items.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 px-6 text-center">
           <p className="text-gray-500 text-sm">Справочники пока пустые</p>
@@ -350,14 +448,21 @@ export default function InfoPage() {
         Object.entries(grouped).map(([type, typeItems]) => {
           const typeLabel = INFO_TYPES.find(t => t.value === type)?.label || type
           const expandedSet = expandedByType[type] || new Set()
-          const tree = buildTree(typeItems)
-          const flat = flattenTree(tree, 0, expandedSet)
+          // В поиске дерево не строим: найденная ветка может лежать глубоко, и
+          // раскрывать её вручную ради одной статьи — лишняя работа
+          const flat = searching
+            ? typeItems.map(i => ({ ...i, depth: 0, children: [] }))
+            : flattenTree(buildTree(typeItems), 0, expandedSet)
 
           return (
             <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
               <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
                 <span className="text-sm font-semibold text-gray-700">{typeLabel}</span>
-                <span className="text-xs text-gray-400">{typeItems.length}</span>
+                <span className="text-xs text-gray-400">
+                  {searching
+                    ? `${typeItems.length} из ${items.filter(i => i.type === type).length}`
+                    : typeItems.length}
+                </span>
               </div>
               <table className="w-full">
                 <tbody>
@@ -381,11 +486,29 @@ export default function InfoPage() {
                             ) : null}
                           </div>
                           <span className="text-sm text-gray-800">
-                            {item.name}
+                            <Highlight text={item.name} q={search} />
                           </span>
+                          {/* Тип — стикером у каждой строки: заголовок группы
+                              уезжает при прокрутке, а «Аренда» без типа может
+                              оказаться и расходом, и статьёй ДДС */}
+                          <InfoTypeBadge type={item.type} className="ml-2" />
+                          {/* В поиске дерева не видно — показываем, где элемент лежит */}
+                          {searching && parentPath(item) && (
+                            <span className="ml-2 text-xs text-gray-400 truncate">{parentPath(item)}</span>
+                          )}
                           {/* Показываем ИНН для partner */}
                           {item.type === 'partner' && item.inn && (
-                            <span className="ml-2 text-xs text-gray-400">ИНН: {item.inn}</span>
+                            <span className="ml-2 text-xs text-gray-400">
+                              ИНН: <Highlight text={item.inn} q={search} />
+                            </span>
+                          )}
+                          {/* Описание — только когда нашли по нему: иначе оно
+                              загромождало бы обычный список */}
+                          {searching && item.description &&
+                            String(item.description).toLowerCase().includes(search.trim().toLowerCase()) && (
+                            <span className="ml-2 text-xs text-gray-400 truncate">
+                              <Highlight text={item.description} q={search} />
+                            </span>
                           )}
                         </div>
                       </td>
@@ -397,7 +520,9 @@ export default function InfoPage() {
                       </td>
                       <td className="py-2.5 pr-4">
                         {item.code && (
-                          <span className="text-xs font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{item.code}</span>
+                          <span className="text-xs font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
+                            <Highlight text={item.code} q={search} />
+                          </span>
                         )}
                       </td>
                       <td className="py-2.5 pr-6 text-right">

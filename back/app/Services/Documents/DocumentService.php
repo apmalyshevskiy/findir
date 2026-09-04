@@ -3,20 +3,45 @@
 namespace App\Services\Documents;
 
 use App\Models\Tenant\Document;
+use App\Models\Tenant\DocumentType;
 use Illuminate\Support\Facades\DB;
 
 class DocumentService
 {
     /**
-     * Получить стратегию по типу документа.
+     * Чем проводить этот документ.
+     *
+     * Вид документа лежит в справочнике тенанта, поэтому стратегию нельзя
+     * получить по одному только коду — нужна база, где этот код заведён.
+     * Обычные виды проводит UniversalStrategy (шапка против строк), у расходной
+     * накладной собственный движок: выручка и себестоимость дают две операции
+     * на строку, и в общую схему это не укладывается.
      */
-    public static function strategy(string $type): DocumentStrategyInterface
+    public static function strategyFor(Document $document): DocumentStrategyInterface
     {
-        return match ($type) {
-            'incoming_invoice' => new IncomingInvoiceStrategy(),
+        $type = self::type($document);
+
+        return match ($type->engine) {
             'outgoing_invoice' => new OutgoingInvoiceStrategy(),
-            default => throw new \InvalidArgumentException("Неизвестный тип документа: {$type}"),
+            default            => new UniversalStrategy($type),
         };
+    }
+
+    /** Строка справочника видов для документа */
+    public static function type(Document $document): DocumentType
+    {
+        $type = (new DocumentType)->setConnection($document->getConnectionName())
+            ->newQuery()
+            ->where('code', $document->type)
+            ->first();
+
+        if (!$type) {
+            throw new \InvalidArgumentException(
+                "Вид документа «{$document->type}» не найден в справочнике"
+            );
+        }
+
+        return $type;
     }
 
     /**
@@ -87,7 +112,7 @@ class DocumentService
             $document->amount_vat = $vatSum > 0 ? $vatSum : null;
 
             // 3. Генерируем content шапки
-            $strategy = self::strategy($document->type);
+            $strategy = self::strategyFor($document);
             $document->content = $strategy->buildContent($document);
             $document->status  = 'posted';
             $document->save();

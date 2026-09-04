@@ -28,6 +28,9 @@ class TenantDatabaseSeeder extends Seeder
             // она доразрешится при применении шаблона справочников.
             CategoryPostingSeeder::class,
             AcquiringFeeRulesSeeder::class,
+            // Виды документов ссылаются на счета кодами, поэтому идут после
+            // плана счетов: до него подставлять было бы нечего
+            DocumentTypesSeeder::class,
         ]);
     }
 }

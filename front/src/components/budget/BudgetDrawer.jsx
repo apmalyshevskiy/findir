@@ -3,7 +3,7 @@ import { getOperations, getBalanceItems } from '../../api/operations'
 import {
   getBudgetItems, createBudgetItem, updateBudgetItem, deleteBudgetItem,
 } from '../../api/budget'
-import { getDocument, postDocument, cancelDocument } from '../../api/documents'
+import { getDocument } from '../../api/documents'
 import { getInfo } from '../../api/info'
 import OperationForm from '../OperationForm'
 import AmountInput from '../AmountInput'
@@ -90,7 +90,6 @@ export default function BudgetDrawer({
   const [editOp, setEditOp] = useState(null)
   const [docModal, setDocModal] = useState(null)
   const [docInfoCache, setDocInfoCache] = useState({})
-  const [docActionError, setDocActionError] = useState('')
   const [balanceItems, setBalanceItems] = useState([])
   useEffect(() => { getBalanceItems().then(r => setBalanceItems(r.data.data || [])).catch(() => {}) }, [])
 
@@ -107,32 +106,6 @@ export default function BudgetDrawer({
     setDocModal(null)
     reloadFact()
     onUpdate?.()
-  }
-
-  const handleDocPost = async (doc) => {
-    setDocActionError('')
-    try {
-      await postDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      reloadFact(); onUpdate?.()
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    }
-  }
-
-  const handleDocCancel = async (doc) => {
-    setDocActionError('')
-    try {
-      await cancelDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      reloadFact(); onUpdate?.()
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка отмены проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    }
   }
 
   const loadDocInfo = (type) => {
@@ -186,24 +159,16 @@ export default function BudgetDrawer({
 
       {/* Инлайн-просмотр документа */}
       {docModal && (
-        <>
-          {docActionError && (
-            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
-              {docActionError}
-            </div>
-          )}
-          <DocumentForm
-            docType={docModal.doc.type}
-            doc={docModal.doc}
-            balanceItems={balanceItems}
-            infoCache={docInfoCache}
-            loadInfo={loadDocInfo}
-            onSave={refreshAfterDocAction}
-            onCancel={refreshAfterDocAction}
-            onPost={handleDocPost}
-            onCancelDoc={handleDocCancel}
-          />
-        </>
+        <DocumentForm
+          docType={docModal.doc.type}
+          doc={docModal.doc}
+          balanceItems={balanceItems}
+          infoCache={docInfoCache}
+          loadInfo={loadDocInfo}
+          onSave={refreshAfterDocAction}
+          onCancel={refreshAfterDocAction}
+          onChanged={() => { reloadFact(); onUpdate?.() }}
+        />
       )}
     </>
   )

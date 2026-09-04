@@ -402,7 +402,7 @@ final class WarehouseInvoiceImporter
             if ($cfg['post_documents']) {
                 DocumentService::post($doc);
             } else {
-                $doc->content = DocumentService::strategy('incoming_invoice')->buildContent($doc);
+                $doc->content = DocumentService::strategyFor($doc)->buildContent($doc);
                 $doc->save();
             }
 

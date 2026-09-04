@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import Layout from '../components/Layout'
 import api from '../api/client'
 import { getBalanceSheet, getBalanceItems, getOperations } from '../api/operations'
-import { getDocument, postDocument, cancelDocument } from '../api/documents'
+import { getDocument } from '../api/documents'
 import { DocumentForm } from './DocumentsPage'
 import { getInfo } from '../api/info'
 import OperationForm from '../components/OperationForm'
@@ -117,8 +117,6 @@ export default function BalanceSheetPage() {
 
   // Состояние для инлайн-просмотра документа из drill-down
   const [docModal, setDocModal]           = useState(null)  // { doc }
-  const [docActionLoading, setDocActionLoading] = useState(false)
-  const [docActionError, setDocActionError]     = useState('')
   const [docInfoCache, setDocInfoCache]   = useState({})
 
   useEffect(() => {
@@ -398,41 +396,12 @@ export default function BalanceSheetPage() {
     refreshAfterDocAction()
   }
 
-  const handleDocPost = async (doc) => {
-    setDocActionLoading(true)
-    setDocActionError('')
-    try {
-      await postDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      load()
-      if (drillModal) {
-        openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
-      }
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    } finally {
-      setDocActionLoading(false)
-    }
-  }
-
-  const handleDocCancel = async (doc) => {
-    setDocActionLoading(true)
-    setDocActionError('')
-    try {
-      await cancelDocument(doc.id)
-      const r = await getDocument(doc.id)
-      setDocModal({ doc: r.data.data })
-      load()
-      if (drillModal) {
-        openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
-      }
-    } catch (err) {
-      setDocActionError(err.response?.data?.message || 'Ошибка отмены проведения')
-      setTimeout(() => setDocActionError(''), 4000)
-    } finally {
-      setDocActionLoading(false)
+  // Сохранение или проведение без закрытия: сама форма документа справляется,
+  // отчёту остаётся перечитать цифры и обновить открытую расшифровку
+  const refreshReports = () => {
+    load()
+    if (drillModal) {
+      openDrill(drillModal.title, drillModal.biId, drillModal.direction, drillModal.infoId)
     }
   }
 
@@ -1198,11 +1167,6 @@ export default function BalanceSheetPage() {
       {/* Инлайн-просмотр/редактирование документа из drill-down */}
       {docModal && (
         <>
-          {docActionError && (
-            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg shadow-lg">
-              {docActionError}
-            </div>
-          )}
           <DocumentForm
             docType={docModal.doc.type}
             doc={docModal.doc}
@@ -1211,8 +1175,7 @@ export default function BalanceSheetPage() {
             loadInfo={loadDocInfo}
             onSave={handleDocSaved}
             onCancel={refreshAfterDocAction}
-            onPost={handleDocPost}
-            onCancelDoc={handleDocCancel}
+            onChanged={refreshReports}
           />
         </>
       )}

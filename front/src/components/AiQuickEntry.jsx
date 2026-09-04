@@ -123,6 +123,16 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
   const chunksRef = useRef([])
   const endRef = useRef(null)
   const fileRef = useRef(null)
+  const inputRef = useRef(null)
+
+  // Поле растёт под текст само, до ~7 строк, дальше — прокрутка внутри.
+  // Высоту меряем через scrollHeight: сбросили в auto, взяли фактическую
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 168) + 'px'
+  }, [text])
 
   useEffect(() => {
     getAiStatus().then(r => setEnabled(!!r.data.enabled)).catch(() => setEnabled(false))
@@ -445,14 +455,25 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
         </div>
       )}
 
-      {/* Ввод */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <input
-          className="flex-1 min-w-[240px] px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      {/* Ввод. Кнопки прижаты к низу: когда поле разрастается на несколько
+          строк, им место рядом с последней, как в любом чате */}
+      <div className="flex items-end gap-2 flex-wrap">
+        <textarea
+          ref={inputRef}
+          rows={1}
+          className="flex-1 min-w-[240px] px-3 py-2 border border-gray-200 rounded-lg text-sm leading-relaxed
+                     resize-none overflow-y-auto focus:outline-none focus:ring-2 focus:ring-blue-500"
           placeholder={turns.length ? 'Уточните: «статья — Аренда помещения», «сумма 65000»…' : 'Опишите операцию: «оплатил аренду 50000 с расчётного счёта»'}
           value={text}
           onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') send() }}
+          onKeyDown={e => {
+            // Enter отправляет, Shift+Enter переносит строку — как в чатах.
+            // isComposing — чтобы Enter при наборе через IME не улетал письмом
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              send()
+            }
+          }}
           disabled={!!busy}
         />
         <input ref={fileRef} type="file" className="hidden" onChange={onFile}
@@ -478,6 +499,11 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
           {busyLabel || 'Отправить'}
         </button>
       </div>
+
+      {/* Подсказка про перенос строки — иначе о Shift+Enter не догадаться */}
+      <p className="text-[11px] text-gray-400 mt-1.5">
+        Enter — отправить · Shift+Enter — новая строка
+      </p>
 
       {recording && <p className="text-xs text-red-600 mt-2">● Идёт запись — нажмите на микрофон, чтобы остановить</p>}
       {error && <p className="text-xs text-red-600 mt-2">{error}</p>}

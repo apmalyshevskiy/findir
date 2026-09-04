@@ -5,29 +5,24 @@ import api from '../api/client'
 import { getDocuments, getDocument, createDocument, updateDocument,
          deleteDocument, postDocument, cancelDocument } from '../api/documents'
 import { getBalanceItems } from '../api/operations'
+import { getDocumentTypes } from '../api/documentTypes'
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
+import { SkeletonRows } from '../components/Busy'
+import OperationChanges from '../components/OperationChanges'
+import { INFO_LABELS } from '../utils/infoLabels'
 
 // Расчёт себестоимости
 const calculateCostApi = (data) => api.post('/documents/calculate-cost', data)
 
 // ─── Константы ────────────────────────────────────────────────────────────────
 
-const TABS = [
-  { type: 'incoming_invoice', label: 'Приходные накладные', color: 'teal' },
-  { type: 'outgoing_invoice', label: 'Расходные накладные', color: 'rose' },
-]
+// Вкладки строятся из справочника видов документов: вид — это данные, а не код
 
 const STATUS_LABELS = {
   draft:     { label: 'Не проведён', cls: 'bg-amber-100 text-amber-700' },
   posted:    { label: 'Проведён',    cls: 'bg-green-100 text-green-700' },
   cancelled: { label: 'Отменён',     cls: 'bg-red-100 text-red-600' },
-}
-
-const INFO_LABELS = {
-  partner: 'Контрагент', product: 'Номенклатура', department: 'Склад/Отдел',
-  cash: 'Касса/Счёт', flow: 'Статья ДДС', expenses: 'Статья расхода',
-  revenue: 'Статья дохода', employee: 'Сотрудник',
 }
 
 const fmt = (n) => n == null ? '—' :
@@ -255,52 +250,78 @@ const BiSelect = ({ items = [], value, onChange, disabled, placeholder = 'Выб
 
 // ─── Форма документа ──────────────────────────────────────────────────────────
 
-// Дефолтные коды счетов по типу документа
-const DEFAULT_BI = {
-  incoming_invoice: {
-    head:     'П100',  // Поставщики
-    item:     'А200',  // Товары
-  },
-  outgoing_invoice: {
-    head:     'А405',  // Клиенты
-    item:     'А200',  // Товары
-    revenue:  'П587',  // Доходы
-    cogs:     'П588',  // Себестоимость
-  },
-}
+// Счета выручки и себестоимости нужны только расходной накладной: у неё
+// собственный движок проведения, и эти два счёта не про шапку и строки
+const OUTGOING_BI = { revenue: 'П587', cogs: 'П588' }
 
 const findBiId = (balanceItems, code) =>
   balanceItems.find(b => b.code === code)?.id ?? ''
 
+/**
+ * Пустой документ выбранного вида.
+ *
+ * Счета берутся из справочника видов: он и решает, что стоит в шапке и в
+ * строках. В самом документе их можно сменить — вид лишь подставляет начальное
+ * значение.
+ */
 const emptyDoc = (type, balanceItems = []) => {
-  const codes = DEFAULT_BI[type] || {}
+  const isOutgoing = type?.engine === 'outgoing_invoice'
   return {
     date: today(), number: '', external_number: '', external_date: '',
-    project_id: 1, type,
-    bi_id:          findBiId(balanceItems, codes.head) || '',
+    project_id: 1, type: type?.code || '',
+    bi_id:          type?.head_bi_id || '',
     info_1_id: null, info_2_id: null, info_3_id: null,
-    revenue_bi_id:   type === 'outgoing_invoice' ? findBiId(balanceItems, codes.revenue) || null : null,
-    cogs_bi_id:      type === 'outgoing_invoice' ? findBiId(balanceItems, codes.cogs)    || null : null,
+    revenue_bi_id:   isOutgoing ? findBiId(balanceItems, OUTGOING_BI.revenue) || null : null,
+    cogs_bi_id:      isOutgoing ? findBiId(balanceItems, OUTGOING_BI.cogs)    || null : null,
     revenue_item_id: null,
     note: '', items: [],
   }
 }
 
-const emptyItem = (type, balanceItems = []) => {
-  const codes = DEFAULT_BI[type] || {}
-  return {
-    _key: Math.random(),
-    bi_id:      findBiId(balanceItems, codes.item) || '',
-    info_1_id: null, info_2_id: null, info_3_id: null,
-    quantity: '', price: '', amount: '', amount_vat: '', amount_cost: '',
-    note: '',
-  }
-}
+const emptyItem = (type) => ({
+  _key: Math.random(),
+  bi_id:      type?.item_bi_id || '',
+  info_1_id: null, info_2_id: null, info_3_id: null,
+  // Корреспондирующая сторона: пусто — значит «как в шапке»
+  head_bi_id: null, head_info_1_id: null, head_info_2_id: null, head_info_3_id: null,
+  quantity: '', price: '', amount: '', amount_vat: '', amount_cost: '',
+  note: '',
+})
 
-export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, onSave, onCancel, onPost, onCancelDoc }) {
-  const isEdit      = !!doc
-  const isPosted    = doc?.status === 'posted'
-  const isCancelled = doc?.status === 'cancelled'
+/**
+ * Форма документа.
+ *
+ * `type` — строка справочника видов: из неё берутся счета по умолчанию, сторона
+ * шапки и набор колонок. Форму открывают и со стороны отчётов, где под рукой
+ * только код вида (`docType`), — тогда она подтягивает вид сама.
+ */
+export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceItems, infoCache, loadInfo, onSave, onCancel, onChanged }) {
+  // Сохранение и проведение бывают «остаться в форме»: тогда форма живёт
+  // дальше с документом, который вернул сервер, а проп остаётся позади.
+  // Родителю о каждом таком шаге сообщает onChanged — он перечитывает свои
+  // списки, не закрывая окна
+  const [savedDoc, setSavedDoc] = useState(null)
+  const doc      = savedDoc || docProp
+  const isEdit   = !!doc
+  const isPosted = doc?.status === 'posted'
+
+  const [type, setType] = useState(typeProp || null)
+  const [tab, setTab]   = useState('fields')   // 'fields' | 'changes'
+
+  useEffect(() => {
+    if (typeProp) { setType(typeProp); return }
+    if (!docType) return
+    getDocumentTypes()
+      .then(r => setType((r.data.data || []).find(t => t.code === docType) || null))
+      .catch(() => {})
+  }, [typeProp, docType])
+
+  const isOutgoing = type?.engine === 'outgoing_invoice'
+  const headSide   = type?.head_side || 'credit'
+  // Пока вид не приехал, колонки показываем: пустая таблица пугает сильнее лишнего столбца
+  const showQty    = type ? type.show_quantity : true
+  const showPrice  = type ? type.show_price    : true
+  const showVat    = type ? type.show_vat      : true
 
   const [form, setForm]     = useState(() => {
     if (doc) {
@@ -326,7 +347,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
         })),
       }
     }
-    return emptyDoc(docType, balanceItems)
+    return emptyDoc(typeProp, balanceItems)
   })
 
   const [saving, setSaving]         = useState(false)
@@ -336,7 +357,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
 
   // Рассчитать себестоимость для всех строк без amount_cost (или для всех)
   const calcCost = async (forceAll = false) => {
-    if (docType !== 'outgoing_invoice') return
+    if (!isOutgoing) return
     const itemsToCalc = form.items.filter(i =>
       i.bi_id && (forceAll || !i.amount_cost || parseFloat(i.amount_cost) === 0)
     )
@@ -390,26 +411,28 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
   // Автоматический расчёт при изменении номенклатуры или количества
   const setItemFieldWithCalc = (key, field, val) => {
     setItemField(key, field, val)
-    if (docType === 'outgoing_invoice' && (field === 'info_1_id' || field === 'quantity')) {
+    if (isOutgoing && (field === 'info_1_id' || field === 'quantity')) {
       // Небольшая задержка чтобы state обновился
       setTimeout(() => calcCost(false), 100)
     }
   }
 
-  // Если balanceItems загрузились после открытия формы создания — заполняем дефолты
+  // Если план счетов или вид приехали после открытия формы создания —
+  // подставляем счета по умолчанию, не трогая уже выбранное человеком
   useEffect(() => {
-    if (!isEdit && balanceItems.length > 0) {
+    if (!isEdit && balanceItems.length > 0 && type) {
       setForm(f => {
-        const defaults = emptyDoc(docType, balanceItems)
+        const defaults = emptyDoc(type, balanceItems)
         return {
           ...f,
+          type:          f.type          || defaults.type,
           bi_id:         f.bi_id         || defaults.bi_id,
           revenue_bi_id: f.revenue_bi_id ?? defaults.revenue_bi_id,
           cogs_bi_id:    f.cogs_bi_id    ?? defaults.cogs_bi_id,
         }
       })
     }
-  }, [balanceItems.length])
+  }, [balanceItems.length, type?.id])
 
   // Счёт шапки
   const headBi = balanceItems.find(b => b.id == form.bi_id)
@@ -422,27 +445,28 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
     })
   }, [form.bi_id])
 
-  // Загружаем аналитику для счётов строк
+  // Загружаем аналитику для счетов строк — и своих, и корреспондирующих:
+  // строка может увести корреспонденцию на счёт с другой аналитикой
   useEffect(() => {
     form.items.forEach(item => {
-      const bi = balanceItems.find(b => b.id == item.bi_id)
-      if (!bi) return
-      ;[bi.info_1_type, bi.info_2_type, bi.info_3_type].filter(Boolean).forEach(t => {
-        if (!infoCache[t]) loadInfo(t)
+      [item.bi_id, item.head_bi_id].filter(Boolean).forEach(id => {
+        const bi = balanceItems.find(b => b.id == id)
+        if (!bi) return
+        ;[bi.info_1_type, bi.info_2_type, bi.info_3_type].filter(Boolean).forEach(t => {
+          if (!infoCache[t]) loadInfo(t)
+        })
       })
     })
-  }, [form.items.map(i => i.bi_id).join(',')])
+  }, [form.items.map(i => `${i.bi_id}:${i.head_bi_id}`).join(',')])
 
   // Загружаем revenue аналитику для outgoing
   useEffect(() => {
-    if (docType === 'outgoing_invoice') {
-      if (!infoCache['revenue']) loadInfo('revenue')
-    }
-  }, [])
+    if (isOutgoing && !infoCache['revenue']) loadInfo('revenue')
+  }, [isOutgoing])
 
   const setField = (field, val) => setForm(f => ({ ...f, [field]: val }))
 
-  const addItem = () => setForm(f => ({ ...f, items: [...f.items, emptyItem(docType, balanceItems)] }))
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, emptyItem(type)] }))
 
   const removeItem = (key) => setForm(f => ({ ...f, items: f.items.filter(i => i._key !== key) }))
 
@@ -480,17 +504,36 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
     })),
   })
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  /**
+   * Одно действие на все кнопки: сохранить, при надобности провести, при
+   * надобности закрыть. Сначала всегда сохранение — проведение читает строки
+   * из базы, и себестоимость с прочими полями должны попасть туда раньше.
+   */
+  const perform = async ({ post = false, close = false } = {}) => {
     if (!form.bi_id) return setError('Укажите счёт в шапке документа')
     if (form.items.length === 0) return setError('Добавьте хотя бы одну строку')
     setSaving(true)
     setError('')
     try {
       const payload = buildPayload()
-      if (isEdit) await updateDocument(doc.id, payload)
-      else        await createDocument(payload)
-      onSave()
+      const r = isEdit
+        ? await updateDocument(doc.id, payload)
+        : await createDocument(payload)
+      let saved = r.data.data
+
+      if (post) {
+        const p = await postDocument(saved.id)
+        saved = p.data.data
+      }
+
+      if (close) {
+        onSave()
+        return
+      }
+      // Остаёмся: новый документ становится редактируемым, проведённый —
+      // проведённым, а родитель перечитывает списки за кадром
+      setSavedDoc(saved)
+      onChanged?.()
     } catch (err) {
       const errs = err.response?.data?.errors
       setError(errs ? Object.values(errs).flat().join(', ') : err.response?.data?.message || 'Ошибка сохранения')
@@ -499,74 +542,137 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
     }
   }
 
-  // Сохранить и сразу провести — нужно чтобы себестоимость и прочие поля
-  // попали в БД до вызова /post
-  const handleSaveAndPost = async () => {
-    if (!form.bi_id) return setError('Укажите счёт в шапке документа')
-    if (form.items.length === 0) return setError('Добавьте хотя бы одну строку')
+  const handleSubmit = (e) => { e.preventDefault(); perform({ close: true }) }
+
+  /** Отмена проведения — не закрывает: обычно её делают, чтобы тут же править */
+  const unpost = async () => {
     setSaving(true)
     setError('')
     try {
-      const payload = buildPayload()
-      let savedDoc
-      if (isEdit) {
-        const r = await updateDocument(doc.id, payload)
-        savedDoc = r.data.data
-      } else {
-        const r = await createDocument(payload)
-        savedDoc = r.data.data
-      }
-      // После сохранения — проводим
-      if (onPost) onPost(savedDoc)
+      await cancelDocument(doc.id)
+      const r = await getDocument(doc.id)
+      setSavedDoc(r.data.data)
+      onChanged?.()
     } catch (err) {
-      const errs = err.response?.data?.errors
-      setError(errs ? Object.values(errs).flat().join(', ') : err.response?.data?.message || 'Ошибка')
+      setError(err.response?.data?.message || 'Ошибка отмены проведения')
+    } finally {
       setSaving(false)
     }
-    // setSaving(false) не вызываем здесь — onPost закроет форму
   }
 
   const ic  = 'w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
   const lbl = 'block text-xs font-medium text-gray-500 mb-1'
 
-  // Счета шапки по умолчанию для типа
-  const headBiFilter = docType === 'incoming_invoice'
-    ? ['П100', 'П110', 'П150']
-    : ['А405']
-  const headBiOptions = balanceItems.filter(b => headBiFilter.includes(b.code) || !headBiFilter.every(c => balanceItems.some(x => x.code === c)))
-
-  // Счета строк по умолчанию для типа
-  const itemBiCodes = docType === 'incoming_invoice'
-    ? ['А200', 'А230']
-    : ['А200', 'А240']
-  const itemBiOptions = balanceItems.filter(b => itemBiCodes.includes(b.code))
-  // Все счета — для случая когда нужно выбрать другой
+  // Счета не ограничиваем списком кодов, как было раньше: вид документа
+  // подставляет свой счёт по умолчанию, а выбрать можно любой — иначе каждый
+  // новый вид требовал бы правки этого файла
   const allBiOptions = balanceItems
 
-  const isOutgoing = docType === 'outgoing_invoice'
+  const sideLabel = (side) => (side === 'debit' ? 'Дт' : 'Кт')
+
+  /**
+   * Корреспондирующая сторона в строке.
+   *
+   * Вид документа перечисляет, что выносится в строку колонкой: в авансовом
+   * отчёте это статья ДДС — касса одна на документ, а статья у каждой траты
+   * своя. Остальное правится в раскрывающейся панели строки.
+   */
+  const headBiForForm = balanceItems.find(b => b.id == form.bi_id)
+  const lineHeadFields = type?.line_head_fields || []
+
+  const headFieldLabel = (field) => {
+    if (field === 'bi') return 'Счёт корр.'
+    const infoType = headBiForForm?.[`info_${field.slice(-1)}_type`]
+    return INFO_LABELS[infoType] || 'Аналитика'
+  }
+
+  /** Строка задала это поле сама, а не взяла из шапки */
+  const headOverridden = (item, field) =>
+    !!item[field === 'bi' ? 'head_bi_id' : `head_${field}_id`]
+
+  const hasHeadOverride = (item) =>
+    ['bi', 'info_1', 'info_2', 'info_3'].some(f => headOverridden(item, f))
+
+  // Поля корреспондирующей стороны, которые есть смысл показывать: счёт всегда,
+  // аналитика — только те слоты, что заданы у счёта шапки
+  const headFieldsAvailable = ['bi', 'info_1', 'info_2', 'info_3'].filter(f =>
+    f === 'bi' || headBiForForm?.[`info_${f.slice(-1)}_type`]
+  )
+  const headFieldsInPanel = headFieldsAvailable.filter(f => !lineHeadFields.includes(f))
+
+  // Колонки строк задаёт вид документа: у начисления ЗП количества и цены нет,
+  // у накладной есть. Сумма есть всегда — без неё документ бессмыслен.
+  // Числа сидят в фиксированной ширине — им больше не нужно, — а всё
+  // освободившееся место делят аналитики: их названиям тесно в первую очередь
+  const itemGrid = [
+    '1.5fr',
+    ...lineHeadFields.map(() => '1.2fr'),   // корреспондирующая сторона по строкам
+    isOutgoing ? '100px' : null,            // себестоимость
+    showQty    ? '80px' : null,
+    showPrice  ? '90px' : null,
+    '110px',                                // сумма
+    showVat    ? '90px' : null,
+    '28px', '28px',
+  ].filter(Boolean).join(' ')
+
+  // Заголовок первой колонки — по аналитике счёта строк из вида документа:
+  // «Номенклатура» у накладной, «Сотрудник» у ЗП, «Статья расхода» у авансового
+  const typeItemBi = balanceItems.find(b => b.id == type?.item_bi_id)
+  const firstColumnLabel = INFO_LABELS[typeItemBi?.info_1_type] || 'Аналитика'
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl my-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl my-4">
 
         {/* Заголовок */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-800">
-            {isEdit ? 'Редактировать' : 'Новый'}
-            {' '}
-            {docType === 'incoming_invoice' ? 'приходную накладную' : 'расходную накладную'}
-            {isPosted && <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Проведён</span>}
-          </h2>
+          <div className="flex items-baseline gap-4 flex-wrap">
+            <h2 className="text-lg font-semibold text-gray-800">
+              {isEdit ? 'Редактировать' : 'Новый'}
+              {' '}
+              <span className="lowercase">{type?.name || 'документ'}</span>
+              {isPosted && <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Проведён</span>}
+            </h2>
+            {/* Движения есть только у сохранённого документа — их порождает
+                проведение. В операцию, созданную документом, не зайти, поэтому
+                смотрят их отсюда */}
+            {isEdit && (
+              <div className="flex items-center gap-3 text-sm">
+                <button type="button" onClick={() => setTab('fields')}
+                  className={tab === 'fields'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  Реквизиты
+                </button>
+                <button type="button" onClick={() => setTab('changes')}
+                  className={tab === 'changes'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  Движения
+                </button>
+              </div>
+            )}
+          </div>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
 
+        {tab === 'changes' ? (
+          <div className="p-6 space-y-4">
+            <OperationChanges documentId={doc.id} />
+            <div className="flex justify-end pt-2">
+              <button type="button" onClick={onCancel}
+                className="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">
+                Закрыть
+              </button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit}>
           {/* ── Шапка ── */}
           <div className="px-6 pt-5 pb-4">
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Шапка документа</div>
+            {/* Строка 1: даты и номера — свои и из исходной программы рядом */}
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-
-              {/* Дата со временем */}
               <div>
                 <label className={lbl}>Дата и время</label>
                 <input type="datetime-local" className={ic} value={form.date}
@@ -582,22 +688,8 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                   onChange={e => setField('number', e.target.value)} />
               </div>
 
-              {/* Счёт шапки */}
-              <div className="col-span-2">
-                <label className={lbl}>
-                  {docType === 'incoming_invoice' ? 'Счёт поставщика (Кт)' : 'Счёт покупателя (Дт)'}
-                </label>
-                <BiSelect items={allBiOptions} value={form.bi_id}
-                  disabled={isPosted}
-                  onChange={v => { setField('bi_id', v); setField('info_1_id', null); setField('info_2_id', null); setField('info_3_id', null) }}
-                  placeholder={docType === 'incoming_invoice' ? 'П100 Поставщики' : 'А405 Клиенты'} />
-              </div>
-            </div>
-
-            {/* Внешние реквизиты — для загрузки из 1С и других программ */}
-            <div className="grid grid-cols-2 gap-4 mt-3">
               <div>
-                <label className={lbl}>Внешний номер <span className="text-gray-300 font-normal">(из исходной программы)</span></label>
+                <label className={lbl}>Внешний номер <span className="text-gray-300 font-normal">(из источника)</span></label>
                 <input type="text" className={ic} value={form.external_number} placeholder="необязательно"
                   disabled={isPosted}
                   onChange={e => setField('external_number', e.target.value)} />
@@ -610,10 +702,20 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
               </div>
             </div>
 
-            {/* Аналитика шапки */}
-            {headBi && (
-              <div className="grid grid-cols-3 gap-4 mt-3">
-                {headBi.info_1_type && (
+            {/* Строка 2: счёт шапки вместе со своей аналитикой — это одна
+                сторона проводки, и читаться она должна одной строкой */}
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4 mt-3">
+              <div>
+                <label className={lbl}>
+                  Счёт шапки ({sideLabel(headSide)})
+                  <span className="text-gray-300 font-normal"> — строки уйдут в {sideLabel(headSide === 'debit' ? 'credit' : 'debit')}</span>
+                </label>
+                <BiSelect items={allBiOptions} value={form.bi_id}
+                  disabled={isPosted}
+                  onChange={v => { setField('bi_id', v); setField('info_1_id', null); setField('info_2_id', null); setField('info_3_id', null) }}
+                  placeholder="Выбрать счёт..." />
+              </div>
+              {headBi?.info_1_type && (
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_1_type] || headBi.info_1_type}</label>
                     <InfoSelect items={infoCache[headBi.info_1_type] || []} value={form.info_1_id}
@@ -622,7 +724,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                       placeholder={`Выбрать ${INFO_LABELS[headBi.info_1_type] || ''}...`} />
                   </div>
                 )}
-                {headBi.info_2_type && (
+                {headBi?.info_2_type && (
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_2_type] || headBi.info_2_type}</label>
                     <InfoSelect items={infoCache[headBi.info_2_type] || []} value={form.info_2_id}
@@ -631,7 +733,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                       placeholder={`Выбрать...`} />
                   </div>
                 )}
-                {headBi.info_3_type && (
+                {headBi?.info_3_type && (
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_3_type] || headBi.info_3_type}</label>
                     <InfoSelect items={infoCache[headBi.info_3_type] || []} value={form.info_3_id}
@@ -640,8 +742,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                       placeholder={`Выбрать...`} />
                   </div>
                 )}
-              </div>
-            )}
+            </div>
 
             {/* Поля outgoing_invoice */}
             {isOutgoing && (
@@ -670,13 +771,6 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
               </div>
             )}
 
-            {/* Комментарий */}
-            <div className="mt-3">
-              <label className={lbl}>Комментарий</label>
-              <input type="text" className={ic} value={form.note} placeholder="необязательно"
-                disabled={isPosted}
-                onChange={e => setField('note', e.target.value)} />
-            </div>
           </div>
 
           {/* ── Табличная часть ── */}
@@ -713,19 +807,24 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
               <>
                 {/* Заголовок колонок */}
                 <div className="grid gap-2 mb-1 px-2 text-xs text-gray-400"
-                  style={{ gridTemplateColumns: isOutgoing ? '2fr 1fr 1fr 1fr 1fr 1fr 28px 28px' : '2fr 1fr 1fr 1fr 1fr 28px 28px' }}>
-                  <div>Номенклатура</div>
+                  style={{ gridTemplateColumns: itemGrid }}>
+                  <div>{firstColumnLabel}</div>
+                  {lineHeadFields.map(f => <div key={f}>{headFieldLabel(f)}</div>)}
                   {isOutgoing && <div className="text-right">Себест.</div>}
-                  <div className="text-right">Кол-во</div>
-                  <div className="text-right">Цена</div>
+                  {showQty   && <div className="text-right">Кол-во</div>}
+                  {showPrice && <div className="text-right">Цена</div>}
                   <div className="text-right">Сумма</div>
-                  <div className="text-right">НДС</div>
+                  {showVat   && <div className="text-right">НДС</div>}
                   <div /><div />
                 </div>
 
                 <div className="space-y-1">
                   {form.items.map((item, idx) => {
                     const itemBi   = balanceItems.find(b => b.id == item.bi_id)
+                    // Аналитика корреспондирующей стороны берётся у того счёта,
+                    // который в этой строке и стоит: строка могла его переопределить
+                    const lineHeadBi = balanceItems.find(b => b.id == (item.head_bi_id || form.bi_id))
+                    const headInfoItems = (f) => infoCache[lineHeadBi?.[`info_${f.slice(-1)}_type`]] || []
                     const expanded = item._expanded || false
                     const toggleExp = () => setForm(f => ({
                       ...f,
@@ -737,9 +836,9 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
 
                         {/* ── Основная строка ── */}
                         <div className="grid gap-2 items-center px-2 py-1.5"
-                          style={{ gridTemplateColumns: isOutgoing ? '2fr 1fr 1fr 1fr 1fr 1fr 28px 28px' : '2fr 1fr 1fr 1fr 1fr 28px 28px' }}>
+                          style={{ gridTemplateColumns: itemGrid }}>
 
-                          {/* Номенклатура */}
+                          {/* Аналитика строки — номенклатура, сотрудник, статья: что у счёта */}
                           <div className="min-w-0">
                             {itemBi?.info_1_type ? (
                               <InfoSelect
@@ -747,7 +846,7 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                                 value={item.info_1_id}
                                 disabled={isPosted}
                                 onChange={v => setItemFieldWithCalc(item._key, 'info_1_id', v)}
-                                placeholder="Номенклатура..." />
+                                placeholder={`${INFO_LABELS[itemBi.info_1_type] || 'Значение'}...`} />
                             ) : (
                               <span className="text-xs text-gray-400 px-2">
                                 {itemBi ? `${itemBi.code} ${itemBi.name}` : 'Выберите счёт →'}
@@ -755,33 +854,74 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                             )}
                           </div>
 
+                          {/* Корреспондирующая сторона по строкам: пусто — как
+                              в шапке. Своё значение обводим янтарным: в списке
+                              одинаковых строк должно быть видно, какая уходит
+                              не туда, куда все остальные */}
+                          {lineHeadFields.map(f => (
+                            // Рамке нужен зазор вокруг контрола (p-1/-m-1):
+                            // селект внутри непрозрачный и вплотную — янтарную
+                            // подложку было просто не видно
+                            <div key={f}
+                              className={`min-w-0 rounded-lg ${
+                                headOverridden(item, f) ? 'ring-1 ring-amber-300 bg-amber-50/60 p-1 -m-1' : ''
+                              }`}
+                              title={headOverridden(item, f) ? 'Переопределено в строке' : 'Берётся из шапки'}>
+                              {f === 'bi' ? (
+                                <BiSelect items={allBiOptions} value={item.head_bi_id}
+                                  disabled={isPosted}
+                                  onChange={v => setItemField(item._key, 'head_bi_id', v)}
+                                  placeholder="как в шапке" />
+                              ) : (
+                                <InfoSelect
+                                  items={headInfoItems(f)}
+                                  value={item[`head_${f}_id`]}
+                                  disabled={isPosted}
+                                  onChange={v => setItemField(item._key, `head_${f}_id`, v)}
+                                  placeholder="как в шапке" />
+                              )}
+                            </div>
+                          ))}
+
                           {isOutgoing && (
                             <NumInput value={item.amount_cost} disabled={isPosted}
                               placeholder="—" step="0.01" className={ic + ' text-right'}
                               onChange={v => setItemField(item._key, 'amount_cost', v)} />
                           )}
 
-                          <NumInput value={item.quantity} disabled={isPosted}
-                            placeholder="0" step="0.001" className={ic + ' text-right'}
-                            onChange={v => setItemFieldWithCalc(item._key, 'quantity', v)} />
+                          {showQty && (
+                            <NumInput value={item.quantity} disabled={isPosted}
+                              placeholder="0" step="0.001" className={ic + ' text-right'}
+                              onChange={v => setItemFieldWithCalc(item._key, 'quantity', v)} />
+                          )}
 
-                          <NumInput value={item.price} disabled={isPosted}
-                            placeholder="0.00" step="0.0001" className={ic + ' text-right'}
-                            onChange={v => setItemField(item._key, 'price', v)} />
+                          {showPrice && (
+                            <NumInput value={item.price} disabled={isPosted}
+                              placeholder="0.00" step="0.0001" className={ic + ' text-right'}
+                              onChange={v => setItemField(item._key, 'price', v)} />
+                          )}
 
                           <NumInput value={item.amount} disabled={isPosted}
                             placeholder="0.00" step="0.01" className={ic + ' text-right font-medium'}
                             onChange={v => setItemField(item._key, 'amount', v)} />
 
-                          <NumInput value={item.amount_vat} disabled={isPosted}
-                            placeholder="—" step="0.01" className={ic + ' text-right'}
-                            onChange={v => setItemField(item._key, 'amount_vat', v)} />
+                          {showVat && (
+                            <NumInput value={item.amount_vat} disabled={isPosted}
+                              placeholder="—" step="0.01" className={ic + ' text-right'}
+                              onChange={v => setItemField(item._key, 'amount_vat', v)} />
+                          )}
 
-                          {/* Раскрыть */}
+                          {/* Раскрыть. Точка сбоку — в строке есть своя
+                              корреспонденция, спрятанная под кнопкой */}
                           <button type="button" onClick={toggleExp}
-                            title="Счёт, склад, примечание"
-                            className={`w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-colors ${expanded ? 'bg-blue-100 text-blue-600' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
+                            title={hasHeadOverride(item)
+                              ? 'В строке своя корреспонденция'
+                              : 'Счёт, аналитика, примечание'}
+                            className={`relative w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-colors ${expanded ? 'bg-blue-100 text-blue-600' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-100'}`}>
                             ···
+                            {hasHeadOverride(item) && !expanded && (
+                              <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            )}
                           </button>
 
                           {/* Удалить */}
@@ -802,16 +942,14 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                               {/* Счёт строки */}
                               <div>
                                 <div className="text-xs text-gray-400 mb-1">
-                                  {docType === 'incoming_invoice' ? 'Счёт прихода (Дт)' : 'Счёт расхода (Кт)'}
+                                  Счёт строки ({sideLabel(headSide === 'debit' ? 'credit' : 'debit')})
                                 </div>
                                 <BiSelect
-                                  items={itemBiCodes.length
-                                    ? [...itemBiOptions, ...allBiOptions.filter(b => !itemBiCodes.includes(b.code))]
-                                    : allBiOptions}
+                                  items={allBiOptions}
                                   value={item.bi_id}
                                   disabled={isPosted}
                                   onChange={v => setItemField(item._key, 'bi_id', v)}
-                                  placeholder={docType === 'incoming_invoice' ? 'А200/А230' : 'А200/А240'} />
+                                  placeholder="Выбрать счёт..." />
                               </div>
 
                               {itemBi?.info_2_type && (
@@ -831,6 +969,48 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                                     disabled={isPosted}
                                     onChange={v => setItemField(item._key, 'info_3_id', v)}
                                     placeholder="Выбрать..." />
+                                </div>
+                              )}
+
+                              {/* Корреспондирующая сторона: то, что не вынесено
+                                  колонкой. Пустое поле значит «как в шапке» —
+                                  поэтому подставленное значение здесь не
+                                  показывается, чтобы его не приняли за своё */}
+                              {headFieldsInPanel.length > 0 && (
+                                <div style={{ gridColumn: '1 / -1' }}
+                                  className="border-t border-blue-100 pt-2 mt-1">
+                                  <div className="text-xs text-gray-400 mb-1.5">
+                                    Корреспондирующая сторона ({sideLabel(headSide)})
+                                    <span className="text-gray-300"> — пусто значит «как в шапке»</span>
+                                  </div>
+                                  <div className="grid gap-3" style={{
+                                    gridTemplateColumns: `repeat(${Math.min(headFieldsInPanel.length, 3)}, 1fr)`,
+                                  }}>
+                                    {headFieldsInPanel.map(f => (
+                                      <div key={f} className={headOverridden(item, f)
+                                        ? 'rounded-lg ring-1 ring-amber-300 bg-amber-50/40 p-1.5 -m-1.5' : ''}>
+                                        <div className="text-xs text-gray-400 mb-1">
+                                          {headFieldLabel(f)}
+                                          {headOverridden(item, f) && (
+                                            <span className="ml-1 text-amber-600">· своё</span>
+                                          )}
+                                        </div>
+                                        {f === 'bi' ? (
+                                          <BiSelect items={allBiOptions} value={item.head_bi_id}
+                                            disabled={isPosted}
+                                            onChange={v => setItemField(item._key, 'head_bi_id', v)}
+                                            placeholder="как в шапке" />
+                                        ) : (
+                                          <InfoSelect
+                                            items={headInfoItems(f)}
+                                            value={item[`head_${f}_id`]}
+                                            disabled={isPosted}
+                                            onChange={v => setItemField(item._key, `head_${f}_id`, v)}
+                                            placeholder="как в шапке" />
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
 
@@ -860,51 +1040,60 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
                 </div>
               </div>
             )}
+
+            {/* Комментарий — в самом низу: он про документ целиком и пишется
+                последним, когда цифры уже сошлись */}
+            <div className="mt-3">
+              <label className={lbl}>Комментарий</label>
+              <input type="text" className={ic} value={form.note} placeholder="необязательно"
+                disabled={isPosted}
+                onChange={e => setField('note', e.target.value)} />
+            </div>
           </div>
 
           {/* ── Футер ── */}
           {error && <div className="mx-6 mb-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</div>}
-          <div className="flex gap-2 justify-end px-6 py-4 border-t border-gray-100">
+          <div className="flex gap-2 items-center px-6 py-4 border-t border-gray-100 flex-wrap">
 
-            {/* Всегда: Отмена/Закрыть */}
             <button type="button" onClick={onCancel}
               className="px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
-              Отмена
+              {isPosted ? 'Закрыть' : 'Отмена'}
             </button>
 
-            {/* Сохранить — для draft (редактирование и создание) */}
+            {/* Черновик: пары «остаться» и «закрыть». Остаться — когда вводят
+                несколько документов подряд или хотят увидеть движения */}
             {!isPosted && (
-              <button type="submit" disabled={saving}
-                className="px-4 py-2 text-sm text-white bg-blue-900 hover:bg-blue-800 rounded-lg transition-colors disabled:opacity-50">
-                {saving ? 'Сохранение...' : 'Сохранить'}
-              </button>
+              <div className="flex gap-2 ml-auto flex-wrap">
+                <button type="button" onClick={() => perform({})} disabled={saving}
+                  className="px-4 py-2 text-sm text-blue-900 border border-blue-200 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50">
+                  Сохранить
+                </button>
+                <button type="button" onClick={() => perform({ post: true })} disabled={saving}
+                  className="px-4 py-2 text-sm text-green-700 border border-green-300 hover:bg-green-50 rounded-lg transition-colors disabled:opacity-50">
+                  ✓ Провести
+                </button>
+                <button type="submit" disabled={saving}
+                  className="px-4 py-2 text-sm text-white bg-blue-900 hover:bg-blue-800 rounded-lg transition-colors disabled:opacity-50">
+                  {saving ? 'Сохранение...' : 'Сохранить и закрыть'}
+                </button>
+                <button type="button" onClick={() => perform({ post: true, close: true })} disabled={saving}
+                  className="px-4 py-2 text-sm text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors font-medium disabled:opacity-50">
+                  {saving ? 'Сохранение...' : '✓ Провести и закрыть'}
+                </button>
+              </div>
             )}
 
-            {/* Провести — для черновика (нового и существующего): сначала сохраняет, потом проводит */}
-            {!isPosted && onPost && (
-              <button type="button" onClick={handleSaveAndPost} disabled={saving}
-                className="px-4 py-2 text-sm text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors font-medium disabled:opacity-50">
-                {saving ? 'Сохранение...' : '✓ Провести'}
-              </button>
-            )}
-
-            {/* Отменить проведение — только posted, не закрывает */}
-            {isEdit && isPosted && onCancelDoc && (
-              <button type="button" onClick={() => onCancelDoc(doc)}
-                className="px-4 py-2 text-sm text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg transition-colors font-medium">
-                ↩ Отменить проведение
-              </button>
-            )}
-
-            {/* Закрыть — только posted */}
-            {isPosted && (
-              <button type="button" onClick={onCancel}
-                className="px-4 py-2 text-sm text-white bg-blue-900 hover:bg-blue-800 rounded-lg transition-colors">
-                Закрыть
+            {/* Проведённый: снять проведение — не закрывает, обычно её делают,
+                чтобы тут же поправить и провести заново */}
+            {isEdit && isPosted && (
+              <button type="button" onClick={unpost} disabled={saving}
+                className="ml-auto px-4 py-2 text-sm text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg transition-colors font-medium disabled:opacity-50">
+                {saving ? '...' : '↩ Отменить проведение'}
               </button>
             )}
           </div>
         </form>
+        )}
       </div>
     </div>
   )
@@ -915,7 +1104,10 @@ export function DocumentForm({ docType, doc, balanceItems, infoCache, loadInfo, 
 export default function DocumentsPage() {
   const navigate  = useNavigate()
   const location  = useLocation()
-  const [tab, setTab]               = useState('incoming_invoice')
+  // Вкладки — виды документов из справочника. Пока он не приехал, вкладки нет:
+  // выбирать не из чего, и запрашивать документы «вида null» незачем
+  const [types, setTypes]           = useState(null)
+  const [tab, setTab]               = useState('')
   const [docs, setDocs]             = useState([])
   const [loading, setLoading]       = useState(false)
   const [balanceItems, setBalanceItems] = useState([])
@@ -928,9 +1120,16 @@ export default function DocumentsPage() {
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
     getBalanceItems().then(r => setBalanceItems(r.data.data))
+    getDocumentTypes({ active: 1 }).then(r => {
+      const list = r.data.data || []
+      setTypes(list)
+      setTab(t => t || list[0]?.code || '')
+    })
   }, [])
 
-  useEffect(() => { loadDocs() }, [tab])
+  useEffect(() => { if (tab) loadDocs() }, [tab])
+
+  const activeType = types?.find(t => t.code === tab) || null
 
   // Открываем конкретный документ если в URL есть ?open=ID
   useEffect(() => {
@@ -1032,31 +1231,34 @@ export default function DocumentsPage() {
     }
   }
 
-  const currentTab = TABS.find(t => t.type === tab)
-
   return (
     <Layout>
       {/* Заголовок */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-800">Документы</h1>
-        <button onClick={openCreate}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors">
-          + Создать {tab === 'incoming_invoice' ? 'приходную' : 'расходную'}
+        <button onClick={openCreate} disabled={!activeType}
+          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors disabled:opacity-50">
+          + Создать {activeType ? activeType.name.toLowerCase() : ''}
         </button>
       </div>
 
-      {/* Вкладки */}
-      <div className="flex gap-1 mb-6 border-b border-gray-200">
-        {TABS.map(t => (
-          <button key={t.type} onClick={() => setTab(t.type)}
+      {/* Вкладки — виды документов из справочника */}
+      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap">
+        {(types || []).map(t => (
+          <button key={t.code} onClick={() => setTab(t.code)}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              tab === t.type
+              tab === t.code
                 ? 'border-blue-900 text-blue-900'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}>
-            {t.label}
+            {t.name}
           </button>
         ))}
+        {types !== null && types.length === 0 && (
+          <div className="px-1 py-2.5 text-sm text-gray-400">
+            Ни одного вида документа не заведено — они настраиваются в разделе «Настройки → Виды документов»
+          </div>
+        )}
       </div>
 
       {/* Тост ошибки */}
@@ -1068,8 +1270,8 @@ export default function DocumentsPage() {
       )}
 
       {/* Список документов */}
-      {loading ? (
-        <div className="text-center py-12 text-gray-400">Загрузка...</div>
+      {loading || types === null ? (
+        <SkeletonRows rows={5} height="h-12" />
       ) : docs.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <div className="text-5xl mb-4">📄</div>
@@ -1085,7 +1287,8 @@ export default function DocumentsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Дата</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Номер</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  {tab === 'incoming_invoice' ? 'Поставщик' : 'Покупатель'}
+                  {/* Кто в шапке — контрагент, сотрудник или статья: зависит от счёта вида */}
+                  {INFO_LABELS[balanceItems.find(b => b.id == activeType?.head_bi_id)?.info_1_type] || 'Аналитика'}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Статус</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Сумма</th>
@@ -1180,14 +1383,14 @@ export default function DocumentsPage() {
       {showForm && (
         <DocumentForm
           docType={tab}
+          type={editDoc ? types?.find(t => t.code === editDoc.type) || activeType : activeType}
           doc={editDoc}
           balanceItems={balanceItems}
           infoCache={infoCache}
           loadInfo={loadInfo}
           onSave={handleSaved}
-          onCancel={() => setShowForm(false)}
-          onPost={handlePost}
-          onCancelDoc={handleCancel}
+          onCancel={() => { setShowForm(false); loadDocs() }}
+          onChanged={loadDocs}
         />
       )}
     </Layout>
