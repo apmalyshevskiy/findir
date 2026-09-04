@@ -297,6 +297,23 @@ export default function BalanceSheetPage() {
   })
 
   // --- ИСПРАВЛЕННЫЙ МЕТОД DRILL-DOWN ---
+  /**
+   * Количество в расшифровке — со стороны того счёта, по которому расшифровка.
+   *
+   * У операции их два: in_quantity уходит в дебетовую строку, out_quantity —
+   * в кредитовую, и в обороте счёта участвует только своя. Общая колонка
+   * quantity осталась от старой схемы и у операций из документов пустая —
+   * она годится лишь как запасной вариант для давних записей.
+   */
+  const drillQty = (op) => {
+    if (!drillModal) return op.quantity
+    if (drillModal.direction === 'debit')  return op.in_quantity  ?? op.quantity
+    if (drillModal.direction === 'credit') return op.out_quantity ?? op.quantity
+    if (op.in_bi_id  === drillModal.biId)  return op.in_quantity  ?? op.quantity
+    if (op.out_bi_id === drillModal.biId)  return op.out_quantity ?? op.quantity
+    return op.quantity
+  }
+
   const openDrill = async (title, biId, direction, infoId = null) => {
     setDrillLoading(true)
     setDrillModal({ title, ops: [], posted: [], unposted: [], biId, direction, infoId })
@@ -1114,7 +1131,7 @@ export default function BalanceSheetPage() {
                           op.is_posted === false ? 'text-gray-400' : 'text-gray-800'
                         }`}>{fmt(op.amount)}</td>
                         <td className="px-4 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
-                          {op.quantity ? fmtQty(op.quantity) : '—'}
+                          {drillQty(op) ? fmtQty(drillQty(op)) : '—'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-500">{op.note || op.content || '—'}</td>
                         <td className="px-4 py-3 text-right">

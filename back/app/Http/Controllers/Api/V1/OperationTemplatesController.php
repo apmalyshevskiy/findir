@@ -13,7 +13,9 @@ class OperationTemplatesController extends TenantController
 {
     /** Поля операции, которые имеет смысл сохранять в шаблоне (без даты и сумм-однодневок). */
     private const FIELDS = [
-        'project_id', 'amount', 'quantity',
+        // quantity оставлен ради шаблонов, сохранённых до разделения
+        // количества по сторонам, — форма разложит его на обе
+        'project_id', 'amount', 'quantity', 'in_quantity', 'out_quantity',
         'in_bi_id', 'out_bi_id',
         'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
         'out_info_1_id', 'out_info_2_id', 'out_info_3_id',

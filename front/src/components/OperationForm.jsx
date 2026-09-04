@@ -457,6 +457,11 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     // на чужом счёте
     in_info_3_id:  src?.in_info_3_id ?? '',
     out_info_3_id: src?.out_info_3_id ?? '',
+    // Количество — своё у каждой стороны: в отчёты оно попадает только со
+    // счёта, у которого включён количественный учёт. Копия старой операции
+    // приходит с общим quantity — раскладываем его на обе стороны
+    in_quantity:   src?.in_quantity  ?? src?.quantity ?? '',
+    out_quantity:  src?.out_quantity ?? src?.quantity ?? '',
     content:       src?.content ?? '',
     note:          src?.note ?? '',
     // Новая операция проводится сразу — иначе её пришлось бы проводить
@@ -527,12 +532,44 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
   const inBi  = balanceItems.find(b => b.id == form.in_bi_id)
   const outBi = balanceItems.find(b => b.id == form.out_bi_id)
 
+  /**
+   * Ввод количества.
+   *
+   * Когда количественный учёт с обеих сторон (передача между сотрудниками,
+   * перемещение между складами), количество почти всегда одно и то же —
+   * поэтому вторая сторона повторяет первую, пока её не правили руками.
+   * Тронули вторую отдельно — она отвязывается и живёт своей жизнью:
+   * бывает и так, что списывают 10, а приходуют 9.
+   */
+  const bothHaveQty = !!(inBi?.has_quantity && outBi?.has_quantity)
+
+  const setQuantity = (side, value) => setForm(f => {
+    const mine  = side === 'in' ? 'in_quantity'  : 'out_quantity'
+    const other = side === 'in' ? 'out_quantity' : 'in_quantity'
+    const linked = bothHaveQty && (f[other] === '' || f[other] === f[mine])
+    return { ...f, [mine]: value, ...(linked ? { [other]: value } : {}) }
+  })
+
+  const quantityField = (side, bi) => bi?.has_quantity && (
+    <div>
+      <label className={lc}>Количество ({bi.code})</label>
+      <AmountInput
+        value={side === 'in' ? form.in_quantity : form.out_quantity}
+        onChange={(v) => setQuantity(side, v)}
+        placeholder="0" className={`${ic} text-right`} />
+    </div>
+  )
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
       const payload = { ...form }
+      // Пустое поле количества — это ноль, а не «не трогать»: иначе снятое
+      // количество осталось бы в базе от прошлой правки
+      payload.in_quantity  = parseFloat(payload.in_quantity)  || 0
+      payload.out_quantity = parseFloat(payload.out_quantity) || 0
       if (payload.date) {
         // Дата операции хранится и сравнивается как локальная «настенная»:
         // такой её пишет импорт выписки, по такой фильтрует список и по такой
@@ -579,6 +616,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           onChange={(val) => setForm({...form, in_info_2_id: val})}
           label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`} infoType={inBi.info_2_type} onItemCreated={handleItemCreated} />
       )}
+      {quantityField('in', inBi)}
     </>
   )
 
@@ -606,6 +644,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
           onChange={(val) => setForm({...form, out_info_2_id: val})}
           label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`} infoType={outBi.info_2_type} onItemCreated={handleItemCreated} />
       )}
+      {quantityField('out', outBi)}
     </>
   )
 
@@ -641,6 +680,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel 
     out_info_1_id: f.in_info_1_id,
     out_info_2_id: f.in_info_2_id,
     out_info_3_id: f.in_info_3_id,
+    // Количество едет за своей стороной вместе со счётом и аналитикой
+    in_quantity:   f.out_quantity,
+    out_quantity:  f.in_quantity,
   }))
 
   const swapButton = (

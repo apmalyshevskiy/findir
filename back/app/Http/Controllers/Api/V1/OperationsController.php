@@ -74,6 +74,8 @@ class OperationsController extends TenantController
             'project_id'    => 'required|integer',
             'amount'        => 'required|numeric',
             'quantity'      => 'nullable|numeric',
+            'in_quantity'   => 'nullable|numeric',
+            'out_quantity'  => 'nullable|numeric',
             'in_bi_id'      => 'required|integer',
             'out_bi_id'     => 'required|integer',
             'in_info_1_id'  => 'nullable|integer',
@@ -95,8 +97,7 @@ class OperationsController extends TenantController
         // is_posted задаём явно, а не полагаемся на умолчание схемы: после
         // create() модель не перечитывается, и в ответе оказалось бы false,
         // хотя в базе операция проведена
-        $op = $this->model()->newQuery()->create(array_merge($data, [
-            'quantity'  => $data['quantity'] ?? 0,
+        $op = $this->model()->newQuery()->create(array_merge($data, $this->quantities($data), [
             'source'    => $data['source'] ?? 'manual',
             'is_posted' => $data['is_posted'] ?? true,
         ]));
@@ -128,6 +129,8 @@ class OperationsController extends TenantController
             'project_id'    => 'required|integer',
             'amount'        => 'required|numeric',
             'quantity'      => 'nullable|numeric',
+            'in_quantity'   => 'nullable|numeric',
+            'out_quantity'  => 'nullable|numeric',
             'in_bi_id'      => 'required|integer',
             'out_bi_id'     => 'required|integer',
             'in_info_1_id'  => 'nullable|integer',
@@ -147,7 +150,7 @@ class OperationsController extends TenantController
         // Нельзя переносить операцию в закрытый период
         if ($resp = $this->lockError($data['date'])) return $resp;
 
-        $op->update(array_merge($data, ['quantity' => $data['quantity'] ?? 0]));
+        $op->update(array_merge($data, $this->quantities($data)));
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
 
         return response()->json(['data' => $this->formatOperation($op)]);
@@ -242,6 +245,33 @@ class OperationsController extends TenantController
         ]);
     }
 
+    /**
+     * Количество по сторонам операции.
+     *
+     * В balance_changes его кладёт триггер: in_quantity — в дебетовую строку,
+     * out_quantity — в кредитовую, и каждую сторону он берёт только если у её
+     * счёта поднят has_quantity. Общая колонка quantity осталась от первой
+     * схемы; её по-прежнему принимаем — так шлют старые вызовы, где количество
+     * одно на обе стороны, — но в отчёты попадают именно сторонние.
+     *
+     * null трактуем как «не передали»: иначе вызов со старым полем quantity
+     * обнулил бы обе стороны.
+     */
+    private function quantities(array $data): array
+    {
+        $legacy = (float) ($data['quantity'] ?? 0);
+        $in     = (float) ($data['in_quantity']  ?? $legacy);
+        $out    = (float) ($data['out_quantity'] ?? $legacy);
+
+        return [
+            'in_quantity'  => $in,
+            'out_quantity' => $out,
+            // Легаси-колонку держим равной той стороне, где количество есть:
+            // на неё смотрит расшифровка и копирование старых операций
+            'quantity'     => $in ?: $out,
+        ];
+    }
+
     private function formatOperation(Operation $op): array
     {
         return [
@@ -259,6 +289,8 @@ class OperationsController extends TenantController
             'date'            => $op->date?->format('Y-m-d\TH:i:s'),
             'amount'          => $op->amount,
             'quantity'        => $op->quantity,
+            'in_quantity'     => (float) $op->in_quantity,
+            'out_quantity'    => (float) $op->out_quantity,
             'content'         => $op->content,
             'note'            => $op->note,
             'source'          => $op->source,

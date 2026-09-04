@@ -188,7 +188,8 @@ export default function OperationsPage() {
   }
 
   const templateFromOp = (op) => saveTemplate({
-    project_id: op.project_id, amount: op.amount, quantity: op.quantity,
+    project_id: op.project_id, amount: op.amount,
+    in_quantity: op.in_quantity, out_quantity: op.out_quantity,
     in_bi_id: op.in_bi_id, out_bi_id: op.out_bi_id,
     in_info_1_id: op.in_info_1_id, in_info_2_id: op.in_info_2_id, in_info_3_id: op.in_info_3_id,
     out_info_1_id: op.out_info_1_id, out_info_2_id: op.out_info_2_id, out_info_3_id: op.out_info_3_id,
@@ -208,7 +209,8 @@ export default function OperationsPage() {
     handleUseDraft({
       project_id:    op.project_id,
       amount:        op.amount,
-      quantity:      op.quantity,
+      in_quantity:   op.in_quantity,
+      out_quantity:  op.out_quantity,
       in_bi_id:      op.in_bi_id,
       out_bi_id:     op.out_bi_id,
       in_info_1_id:  op.in_info_1_id,
@@ -295,7 +297,8 @@ export default function OperationsPage() {
           date: copyDate,
           project_id: op.project_id,
           amount: op.amount,
-          quantity: op.quantity,
+          in_quantity: op.in_quantity,
+          out_quantity: op.out_quantity,
           in_bi_id: op.in_bi_id,
           in_info_1_id: op.in_info_1_id,
           in_info_2_id: op.in_info_2_id,

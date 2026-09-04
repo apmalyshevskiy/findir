@@ -13,6 +13,10 @@ class Operation extends Model
 
     protected $fillable = [
     'date', 'project_id', 'amount', 'quantity',
+    // Количество ведётся по сторонам: в дебетовую строку идёт in_quantity,
+    // в кредитовую — out_quantity. Общая колонка quantity осталась от
+    // первой схемы, триггер её больше не читает
+    'in_quantity', 'out_quantity',
     'in_bi_id', 'out_bi_id',
     'in_info_1_id', 'in_info_2_id', 'in_info_3_id',
     'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
