@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
  * Расходная накладная — outgoing_invoice
  *
  * Шапка:
- *   bi_id          = А405 Клиенты
+ *   bi_id          = А300 Клиенты
  *   info_1_id      = Покупатель (partner)
  *   revenue_bi_id  = П587 Доходы     ← скопировано из project при создании
  *   cogs_bi_id     = П588 Себестоимость ← скопировано из project при создании
@@ -26,7 +26,7 @@ use Illuminate\Support\Facades\DB;
  * Проводки на каждую строку (2 операции):
  *
  * Операция №1 — Выручка (на сумму item.amount):
- *   Дт  doc.bi_id (А405)      + doc.info_1_id (покупатель)
+ *   Дт  doc.bi_id (А300)      + doc.info_1_id (покупатель)
  *   Кт  doc.revenue_bi_id (П587)
  *       info_1 = doc.revenue_item_id  (статья дохода,  П587.info_1_type = revenue)
  *       info_2 = item.info_1_id       (номенклатура,   П587.info_2_type = product)

@@ -178,12 +178,12 @@ class BenchmarkCommand extends Command
             $this->line("  → Создан проект id={$projectId}");
         }
 
-        $accounts = DB::table('balance_items')->whereIn('code', ['А200', 'А405', 'П100', 'П587', 'П588'])
+        $accounts = DB::table('balance_items')->whereIn('code', ['А200', 'А300', 'П100', 'П587', 'П588'])
             ->pluck('id', 'code')->toArray();
 
-        if (empty($accounts['А200']) || empty($accounts['А405']) || empty($accounts['П100'])) {
+        if (empty($accounts['А200']) || empty($accounts['А300']) || empty($accounts['П100'])) {
             throw new \RuntimeException(
-                'Нет ключевых счетов (А200/А405/П100) в balance_items. Сидер не отработал?'
+                'Нет ключевых счетов (А200/А300/П100) в balance_items. Сидер не отработал?'
             );
         }
 
@@ -216,7 +216,7 @@ class BenchmarkCommand extends Command
         return [
             'project_id' => $projectId,
             'A200'       => $accounts['А200'] ?? null,
-            'A405'       => $accounts['А405'] ?? null,
+            'A300'       => $accounts['А300'] ?? null,
             'P100'       => $accounts['П100'] ?? null,
             'P587'       => $accounts['П587'] ?? null,
             'P588'       => $accounts['П588'] ?? null,
@@ -263,7 +263,7 @@ class BenchmarkCommand extends Command
             'project_id'      => $ctx['project_id'],
             'type'            => 'outgoing_invoice',
             'status'          => 'draft',
-            'bi_id'           => $ctx['A405'],
+            'bi_id'           => $ctx['A300'],
             'info_1_id'       => $ctx['partners'][array_rand($ctx['partners'])],
             'revenue_bi_id'   => $ctx['P587'],
             'cogs_bi_id'      => $ctx['P588'],

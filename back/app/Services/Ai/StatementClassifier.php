@@ -25,6 +25,7 @@ class StatementClassifier
 
     public function __construct(private RouterAiClient $ai) {}
 
+
     public function classify(string $db, array $rows, ?string $model = null): array
     {
         $rows = array_slice(array_values($rows), 0, self::MAX_ROWS);
@@ -46,6 +47,9 @@ class StatementClassifier
             $this->schema(array_keys($postings)),
             $model
         );
+
+        AiUsage::record($db, 'statement', $model ?: config('services.routerai.model'),
+            $result['_usage'] ?? []);
 
         $out = [];
         foreach (($result['rows'] ?? []) as $r) {

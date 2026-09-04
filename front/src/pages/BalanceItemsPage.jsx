@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import Layout from '../components/Layout'
+import ChartOfAccountsPicker from '../components/ChartOfAccountsPicker'
 import { getBalanceItemsList, createBalanceItem, updateBalanceItem, deleteBalanceItem } from '../api/balanceItems'
 
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -48,6 +49,7 @@ export default function BalanceItemsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [showCatalog, setShowCatalog] = useState(false)
 
   const load = () => getBalanceItemsList()
     .then(r => setItems(r.data.data || []))
@@ -91,9 +93,9 @@ export default function BalanceItemsPage() {
     if (!confirm(`Удалить счёт «${i.code} ${i.name}»?`)) return
     setError(''); setNotice('')
     try {
-      await deleteBalanceItem(i.id)
+      const r = await deleteBalanceItem(i.id)
       await load()
-      setNotice('Счёт удалён')
+      setNotice(r?.data?.message || 'Счёт удалён')
     } catch (e) {
       setError(e?.response?.data?.message || 'Не удалось удалить')
     }
@@ -113,10 +115,16 @@ export default function BalanceItemsPage() {
               выписки — менять его у задействованных счетов нельзя.
             </p>
           </div>
-          <button onClick={startNew}
-            className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
-            + Счёт
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowCatalog(true)}
+              className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
+              Добавить из списка
+            </button>
+            <button onClick={startNew}
+              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
+              + Счёт
+            </button>
+          </div>
         </div>
 
         {error &&  <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>}
@@ -137,7 +145,8 @@ export default function BalanceItemsPage() {
 
             {form.is_system && (
               <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-                Системный счёт: удалить нельзя, механизмы учёта на него опираются.
+                Счёт из стандартного списка. Менять реквизиты можно, но код участвует
+                в карте разноски и разборе выписки — у задействованных счетов его не сменить.
                 {form.operations_count > 0 && <> По счёту уже {form.operations_count} операций.</>}
               </p>
             )}
@@ -243,10 +252,10 @@ export default function BalanceItemsPage() {
                           className="text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100">
                           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
                         </button>
-                        {!i.is_system && (
-                          <button onClick={() => remove(i)} title="Удалить"
-                            className="text-gray-300 hover:text-red-500 p-1 rounded hover:bg-red-50 text-base leading-none">×</button>
-                        )}
+                        {/* Удалять можно и счёт из списка: что мешает — скажет
+                            сервер, а вернуть его можно кнопкой «Добавить из списка» */}
+                        <button onClick={() => remove(i)} title="Удалить"
+                          className="text-gray-300 hover:text-red-500 p-1 rounded hover:bg-red-50 text-base leading-none">×</button>
                       </div>
                     </td>
                   </tr>
@@ -256,6 +265,20 @@ export default function BalanceItemsPage() {
           )}
         </div>
       </div>
+
+      {showCatalog && (
+        <ChartOfAccountsPicker
+          onClose={() => setShowCatalog(false)}
+          onAdded={(created) => {
+            setShowCatalog(false)
+            setError('')
+            setNotice(created.length
+              ? `Добавлено счетов: ${created.length} — ${created.join(', ')}`
+              : 'Все выбранные счета уже были в плане')
+            load()
+          }}
+        />
+      )}
     </Layout>
   )
 }

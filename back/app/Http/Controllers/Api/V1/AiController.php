@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Services\Ai\AiUsage;
 use App\Services\Ai\OperationDraftService;
 use App\Services\Ai\RouterAiClient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -47,6 +49,9 @@ class AiController extends TenantController
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        // Цена запроса — чтобы в чате было видно, во что обошёлся ответ
+        $res['charge'] = AiUsage::charge($res['usage'] ?? []);
+
         return response()->json($res);
     }
 
@@ -79,6 +84,8 @@ class AiController extends TenantController
             Log::warning('AI parse-file failed: ' . $e->getMessage());
             return response()->json(['message' => $e->getMessage()], 422);
         }
+
+        $res['charge'] = AiUsage::charge($res['usage'] ?? []);
 
         return response()->json($res);
     }
@@ -263,6 +270,61 @@ class AiController extends TenantController
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        // Расшифровка речи считается не токенами, а секундами звука, и usage
+        // шлюз по ней обычно не возвращает. Строку всё равно пишем: без неё
+        // расход на голос выпал бы из отчёта совсем
+        AiUsage::record($this->dbName, 'transcribe', config('services.routerai.model_stt'), [
+            'audio_bytes' => $request->file('audio')->getSize(),
+        ]);
+
         return response()->json(['text' => $text]);
+    }
+
+    /**
+     * GET /ai/usage — расход на ИИ за период.
+     *
+     * Показываем себестоимость с наценкой из настройки: сейчас она нулевая,
+     * то есть ровно то, что стоил шлюз.
+     */
+    public function usage(Request $request)
+    {
+        $this->initTenant($request);
+
+        $from = $request->date_from ?: now()->startOfMonth()->format('Y-m-d');
+        $to   = $request->date_to   ?: now()->endOfMonth()->format('Y-m-d');
+
+        $rows = DB::connection($this->dbName)->table('ai_usage')
+            ->whereBetween('created_at', [$from . ' 00:00:00', $to . ' 23:59:59']);
+
+        $byFeature = (clone $rows)
+            ->selectRaw('feature, model, count(*) calls,
+                         sum(input_tokens) input_tokens, sum(output_tokens) output_tokens,
+                         sum(total_tokens) total_tokens, sum(cost) cost,
+                         sum(cost is null) without_cost')
+            ->groupBy('feature', 'model')
+            ->orderByDesc('calls')
+            ->get();
+
+        $markup = (float) config('services.routerai.markup', 0);
+
+        return response()->json([
+            'from'   => $from,
+            'to'     => $to,
+            'markup' => $markup,
+            'labels' => AiUsage::FEATURES,
+            'totals' => [
+                'calls'        => (int) (clone $rows)->count(),
+                'total_tokens' => (int) (clone $rows)->sum('total_tokens'),
+                'cost'         => (float) (clone $rows)->sum('cost'),
+                'without_cost' => (int) (clone $rows)->whereNull('cost')->count(),
+                // Шлюз валюту не присылает — берём из настройки
+                'currency'     => (clone $rows)->whereNotNull('currency')->value('currency')
+                    ?: config('services.routerai.currency'),
+            ],
+            'data'   => $byFeature,
+            // Последние вызовы — по ним видно, что именно шлюз вернул
+            'recent' => (clone $rows)->orderByDesc('id')->limit(20)
+                ->get(['id', 'created_at', 'feature', 'model', 'input_tokens', 'output_tokens', 'cost', 'currency']),
+        ]);
     }
 }

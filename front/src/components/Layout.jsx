@@ -82,6 +82,7 @@ export default function Layout({ children }) {
         { path: '/acquiring-fee-rules', label: 'Эквайринг' },
         { path: '/edit-lock-date',       label: 'Дата запрета' },
         // «Интеграции» переехали в «Обмен данными» — там же, где сама загрузка
+        { path: '/ai-usage',             label: 'Расход на ИИ' },
         { path: '/backup',               label: 'Архивная копия' },
       ],
     },

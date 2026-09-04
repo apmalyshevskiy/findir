@@ -57,7 +57,7 @@ class DocumentTypesSeeder extends Seeder
             ],
             [
                 'code' => 'outgoing_invoice', 'name' => 'Расходная накладная',
-                'head_bi_code' => 'А405', 'head_side' => 'debit', 'item_bi_code' => 'А200',
+                'head_bi_code' => 'А300', 'head_side' => 'debit', 'item_bi_code' => 'А200',
                 'show_quantity' => 1, 'show_price' => 1, 'show_vat' => 1,
                 'engine' => 'outgoing_invoice', 'is_system' => 1, 'sort_order' => 40,
             ],

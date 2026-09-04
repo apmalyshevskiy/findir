@@ -67,6 +67,9 @@ Route::prefix('v1')->group(function () {
     Route::post('/projects',          [ProjectsController::class, 'store']);
     Route::put('/projects/{id}',      [ProjectsController::class, 'update']);
     Route::delete('/projects/{id}',   [ProjectsController::class, 'destroy']);
+    // Каталог системных счетов — до /{id}, иначе «catalog» примут за номер
+    Route::get ('/balance-items/catalog', [BalanceItemsController::class, 'catalog']);
+    Route::post('/balance-items/catalog', [BalanceItemsController::class, 'addFromCatalog']);
     Route::get('/balance-items',         [BalanceItemsController::class, 'index']);
     Route::post('/balance-items',        [BalanceItemsController::class, 'store']);
     Route::put('/balance-items/{id}',    [BalanceItemsController::class, 'update']);
@@ -173,6 +176,7 @@ Route::prefix('v1')->group(function () {
 
     // ИИ-ввод операций (текст/голос → черновик)
     Route::get('/ai/status',           [AiController::class, 'status']);
+    Route::get('/ai/usage',            [AiController::class, 'usage']);
     Route::post('/ai/parse-operation', [AiController::class, 'parseOperation']);
     Route::post('/ai/parse-file',      [AiController::class, 'parseFile']);
     Route::post('/ai/apply-links',     [AiController::class, 'applyLinks']);

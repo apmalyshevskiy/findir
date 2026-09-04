@@ -3,8 +3,58 @@ import { getAiStatus, parseOperation, parseFile, transcribeAudio, applyBulk, rev
 import AiNewItems from './AiNewItems'
 import AiLinks from './AiLinks'
 import ReportChart from './ReportChart'
+import useElapsed from '../hooks/useElapsed'
 
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(v || 0)
+
+/**
+ * Ожидание ответа ИИ.
+ *
+ * Пузырь на месте будущего ответа с бегущими точками — так ждут в любом чате,
+ * и видно, что вопрос принят. Секундомер появляется через три секунды: модель
+ * думает от пяти до тридцати, и без счётчика начинает казаться, что зависло.
+ *
+ * Верхнюю полоску загрузки для этого не используем — она у края окна, далеко
+ * от того места, куда смотрит человек.
+ */
+function ThinkingBubble({ label }) {
+  const { seconds } = useElapsed(true, 0)
+
+  return (
+    <div className="flex justify-start">
+      <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2.5 flex items-center gap-2">
+        <span className="flex gap-1">
+          {[0, 150, 300].map(delay => (
+            <span key={delay}
+              className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+              style={{ animationDelay: `${delay}ms` }} />
+          ))}
+        </span>
+        <span className="text-xs text-gray-500">{label}</span>
+        {seconds >= 3 && (
+          <span className="text-[11px] text-gray-400 tabular-nums">
+            {seconds.toFixed(0)} с
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Цена одного обращения к ИИ.
+ *
+ * Копейки, поэтому знаков после запятой больше обычного: округление до копейки
+ * превратило бы почти каждый ответ в ноль. Наценку применил сервер — здесь
+ * только показ.
+ */
+const chargeLabel = (charge) => {
+  const cost = Number(charge.cost || 0)
+  const sum = cost.toLocaleString('ru-RU', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+  const unit = charge.currency === 'RUB' ? '₽' : (charge.currency || '')
+  const tokens = Number(charge.total_tokens || 0).toLocaleString('ru-RU')
+  return `${sum} ${unit} · ${tokens} токенов`
+}
 
 // Диалог переживает переход между разделами и перезагрузку вкладки.
 // Ключ привязан к тенанту, чтобы чужой диалог не всплыл после смены компании.
@@ -139,7 +189,9 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
   }, [])
 
   useEffect(() => { if (resetKey) reset() }, [resetKey])
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [turns])
+  // Прокручиваем и на начало ожидания: пузырь «думаю» должен быть виден,
+  // иначе он появится ниже края ленты и человек его не заметит
+  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [turns, busy])
 
   // Сохраняем диалог, чтобы он не терялся при уходе на другую вкладку
   useEffect(() => {
@@ -150,6 +202,13 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
   }, [turns, history])
 
   const reset = () => { setTurns([]); setHistory([]); setText(''); setError('') }
+
+  // Сколько стоил весь диалог: складываем цену ответов текущей ленты
+  const dialogCost = turns.reduce((acc, t) => t.charge?.cost == null ? acc : {
+    cost:         acc.cost + Number(t.charge.cost),
+    total_tokens: acc.total_tokens + Number(t.charge.total_tokens || 0),
+    currency:     t.charge.currency || acc.currency,
+  }, { cost: 0, total_tokens: 0, currency: 'RUB' })
 
   if (!enabled) return null
 
@@ -174,7 +233,7 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
     const bulk = r.data.bulk || []
     const reports = r.data.reports || []
     const reply = r.data.reply || ''
-    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links, bulk, reports }])
+    setTurns(prev => [...prev, { role: 'ai', reply, drafts, newItems, links, bulk, reports, charge: r.data.charge }])
     setHistory(prev => [...prev, { role: 'user', content: userContent }, { role: 'assistant', content: r.data.assistant || '' }])
     if (!reply && drafts.length === 0 && newItems.length === 0 && links.length === 0 && bulk.length === 0 && reports.length === 0) {
       setError('Не удалось распознать — опишите подробнее.')
@@ -311,8 +370,9 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
         )}
       </div>
 
-      {/* Лента диалога */}
-      {turns.length > 0 && (
+      {/* Лента диалога. Показываем и когда она пуста, но ИИ уже думает:
+          первый вопрос иначе уходил бы в тишину */}
+      {(turns.length > 0 || busy) && (
         <div className="max-h-[420px] overflow-y-auto space-y-2 mb-3 pr-1">
           {turns.map((t, i) => {
             if (t.role === 'user') {
@@ -331,6 +391,13 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
                 {t.reply && (
                   <div className="flex justify-start">
                     <div className="bg-gray-100 text-gray-800 text-sm rounded-2xl rounded-bl-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap">{t.reply}</div>
+                  </div>
+                )}
+                {/* Во что обошёлся ответ. Мелким и серым: цифра нужна для
+                    контроля расхода, а не для чтения диалога */}
+                {t.charge?.cost != null && (
+                  <div className="text-[10px] text-gray-400 pl-1">
+                    {chargeLabel(t.charge)}
                   </div>
                 )}
                 {/* Показатели: цифры посчитал сервер по базе, не модель */}
@@ -451,6 +518,7 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
               </div>
             )
           })}
+          {busy && <ThinkingBubble label={busyLabel} />}
           <div ref={endRef} />
         </div>
       )}
@@ -500,9 +568,13 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
         </button>
       </div>
 
-      {/* Подсказка про перенос строки — иначе о Shift+Enter не догадаться */}
+      {/* Подсказка про перенос строки — иначе о Shift+Enter не догадаться.
+          Рядом — сколько стоил весь диалог: расход виден, не отходя от чата */}
       <p className="text-[11px] text-gray-400 mt-1.5">
         Enter — отправить · Shift+Enter — новая строка
+        {dialogCost.cost > 0 && (
+          <> · за диалог: {chargeLabel({ ...dialogCost, currency: dialogCost.currency })}</>
+        )}
       </p>
 
       {recording && <p className="text-xs text-red-600 mt-2">● Идёт запись — нажмите на микрофон, чтобы остановить</p>}

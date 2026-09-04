@@ -2,49 +2,50 @@
 
 namespace Database\Seeders;
 
+use App\Services\ChartOfAccounts;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Стартовый план счетов тенанта.
+ *
+ * Создаём не весь каталог, а только заводские счета — те, без которых учёт не
+ * начать. Остальное тенант добавляет из списка по мере надобности:
+ * см. App\Services\ChartOfAccounts и «План счетов → Добавить из списка».
+ *
+ * Идентификаторы задаём явно и теми же, что в каталоге: по ним счета совпадают
+ * между базами, а добавление из списка потом кладёт счёт на его законное место.
+ */
 class BalanceItemsSeeder extends Seeder
 {
     public function run(): void
     {
-        $items = [
-            // АКТИВЫ
-            ['id' => 100,  'parent_id' => null, 'name' => 'ДЕНЕЖНЫЕ СРЕДСТВА',             'code' => 'А100', 'info_1_type' => 'cash',     'info_2_type' => 'flow',       'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 200,  'parent_id' => null, 'name' => 'ТОВАРЫ',                        'code' => 'А200', 'info_1_type' => 'product',  'info_2_type' => 'department', 'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 1],
-            ['id' => 230,  'parent_id' => null, 'name' => 'МАТЕРИАЛЫ ДЛЯ ПРОИЗВОДСТВА',    'code' => 'А230', 'info_1_type' => 'product',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 1],
-            ['id' => 240,  'parent_id' => null, 'name' => 'ПРОДУКТЫ',                      'code' => 'А240', 'info_1_type' => 'product',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 1],
-            ['id' => 300,  'parent_id' => null, 'name' => 'КЛИЕНТЫ',                       'code' => 'А405', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 410,  'parent_id' => null, 'name' => 'АВАНСЫ ПОСТАВЩИКАМ',            'code' => 'А410', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 430,  'parent_id' => null, 'name' => 'ЗАЙМЫ ВЫДАННЫЕ',                'code' => 'А430', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            // ПАССИВЫ
-            ['id' => 600,  'parent_id' => null, 'name' => 'ПОСТАВЩИКИ',                    'code' => 'П100', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 610,  'parent_id' => null, 'name' => 'ПОСТАВЩИКИ ПРЯМЫХ РАСХОДОВ',    'code' => 'П110', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 650,  'parent_id' => null, 'name' => 'ПОСТАВЩИКИ КОСВЕННЫХ РАСХОДОВ', 'code' => 'П150', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 660,  'parent_id' => null, 'name' => 'КРЕДИТОРЫ ПРОЧИЕ',              'code' => 'П300', 'info_1_type' => null,       'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 670,  'parent_id' => null, 'name' => 'АВАНСЫ ПОКУПАТЕЛЕЙ',            'code' => 'П310', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 680,  'parent_id' => null, 'name' => 'ЗАЙМЫ ПОЛУЧЕННЫЕ',              'code' => 'П320', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 700,  'parent_id' => null, 'name' => 'СОТРУДНИКИ',                    'code' => 'П335', 'info_1_type' => 'employee', 'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 800,  'parent_id' => null, 'name' => 'ГОСУДАРСТВО',                   'code' => 'П340', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            // КАПИТАЛ
-            ['id' => 900,  'parent_id' => null, 'name' => 'КАПИТАЛ',                       'code' => 'П500', 'info_1_type' => null,       'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 905,  'parent_id' => 900,  'name' => 'ИНВЕСТИЦИОННЫЙ КАПИТАЛ',        'code' => 'П505', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 950,  'parent_id' => 900,  'name' => 'ОПЕРАЦИОННЫЙ КАПИТАЛ',          'code' => 'П550', 'info_1_type' => 'revenue',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 955,  'parent_id' => 900,  'name' => 'ВЫВЕДЕННЫЙ КАПИТАЛ',            'code' => 'П555', 'info_1_type' => 'partner',  'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            // ПРИБЫЛЬ
-            ['id' => 985,  'parent_id' => null, 'name' => 'ТЕКУЩАЯ ЧИСТАЯ ПРИБЫЛЬ',       'code' => 'П585', 'info_1_type' => null,       'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 987,  'parent_id' => 985,  'name' => 'ДОХОДЫ',                       'code' => 'П587', 'info_1_type' => 'revenue',  'info_2_type' => 'product',    'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 988,  'parent_id' => 985,  'name' => 'СЕБЕСТОИМОСТЬ',                'code' => 'П588', 'info_1_type' => 'revenue',  'info_2_type' => 'product',    'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-            ['id' => 989,  'parent_id' => 985,  'name' => 'РАСХОДЫ',                      'code' => 'П589', 'info_1_type' => 'expenses', 'info_2_type' => null,         'info_3_type' => null, 'is_system' => 1, 'has_quantity' => 0],
-        ];
+        $now  = now();
+        $rows = [];
 
-        $now = now();
-        foreach ($items as &$item) {
-            $item['created_at'] = $now;
-            $item['updated_at'] = $now;
+        foreach (ChartOfAccounts::defaults() as $account) {
+            $rows[] = ChartOfAccounts::toRow($account, self::defaultIdsByCode()) + [
+                'id'         => $account['id'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
         }
 
-        DB::table('balance_items')->insertOrIgnore($items);
+        DB::table('balance_items')->insertOrIgnore($rows);
+    }
+
+    /**
+     * Коды → id для разрешения родителей.
+     *
+     * На пустой базе id заводских счетов известны заранее, поэтому родителя
+     * можно проставить сразу, одной вставкой.
+     */
+    private static function defaultIdsByCode(): array
+    {
+        $map = [];
+        foreach (ChartOfAccounts::defaults() as $account) {
+            $map[$account['code']] = $account['id'];
+        }
+        return $map;
     }
 }

@@ -20,22 +20,26 @@ api.interceptors.request.use((config) => {
   }
   // Считаем запросы «в полёте» — по этому счётчику живёт полоска загрузки
   // вверху экрана. Ждём ответ сервера, а не отрисовку, поэтому место одно
-  // на всё приложение: страницам об индикации думать не нужно
-  requestStarted()
+  // на всё приложение: страницам об индикации думать не нужно.
+  //
+  // Кроме тех, кто просит не считать (noProgress): ИИ думает десятками секунд,
+  // и ползущая всё это время полоска у края окна только отвлекает — у таких
+  // запросов ожидание показывается там, где человек его ждёт
+  if (!config.noProgress) requestStarted()
   return config
 }, (error) => {
-  requestFinished()
+  if (!error.config?.noProgress) requestFinished()
   return Promise.reject(error)
 })
 
 // Обработка 401
 api.interceptors.response.use(
   (response) => {
-    requestFinished()
+    if (!response.config?.noProgress) requestFinished()
     return response
   },
   (error) => {
-    requestFinished()
+    if (!error.config?.noProgress) requestFinished()
     if (error.response?.status === 401) {
       // Выбывает конкретная сессия, а не все сразу: у финдиректора в книжке
       // несколько компаний, и протухший токен одной не повод разлогинивать

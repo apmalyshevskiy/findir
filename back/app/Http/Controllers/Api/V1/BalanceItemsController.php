@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\BalanceItem;
+use App\Services\ChartOfAccounts;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -99,27 +100,177 @@ class BalanceItemsController extends TenantController
         $this->initTenant($request);
         $item = $this->model()->newQuery()->findOrFail($id);
 
-        if ($item->is_system) {
-            return response()->json(['message' => 'Системный счёт удалить нельзя — он используется механизмами учёта'], 422);
-        }
-
-        $ops = $this->db()->table('operations')->whereNull('deleted_at')
-            ->where(fn($q) => $q->where('in_bi_id', $id)->orWhere('out_bi_id', $id))->count();
-        if ($ops > 0) {
-            return response()->json(['message' => "По счёту есть операции ({$ops}) — удаление заблокировано"], 422);
-        }
-
-        if ($this->model()->newQuery()->where('parent_id', $id)->exists()) {
-            return response()->json(['message' => 'У счёта есть подчинённые — сначала перенесите или удалите их'], 422);
-        }
-
-        if ($this->db()->table('category_postings')->where('counter_account_code', $item->code)->exists()) {
-            return response()->json(['message' => 'Счёт указан в карте разноски — сначала измените её'], 422);
+        // Системность больше не запрещает удаление: счета добавляются из
+        // каталога по надобности, значит и убирать лишние логично. Держит счёт
+        // не флаг, а то, что на него ссылается
+        if ($blocker = $this->deleteBlocker($item)) {
+            return response()->json(['message' => $blocker], 422);
         }
 
         $item->delete();
 
-        return response()->json(['message' => 'Счёт удалён']);
+        return response()->json([
+            'message' => $item->is_system
+                ? 'Счёт удалён — вернуть его можно кнопкой «Добавить из списка»'
+                : 'Счёт удалён',
+        ]);
+    }
+
+    /**
+     * Что мешает удалить счёт, если мешает.
+     *
+     * Проверяем всё, что ссылается на счёт: по id — операции, документы и виды
+     * документов, по коду — карта разноски. Пропустить ссылку означало бы
+     * оставить механизм с дырой на месте счёта, и вылезло бы это в самый
+     * неподходящий момент — при проведении или разборе выписки.
+     */
+    private function deleteBlocker($item): ?string
+    {
+        $id = $item->id;
+
+        $ops = $this->db()->table('operations')->whereNull('deleted_at')
+            ->where(fn($q) => $q->where('in_bi_id', $id)->orWhere('out_bi_id', $id))->count();
+        if ($ops > 0) {
+            return "По счёту есть операции ({$ops}) — удаление заблокировано";
+        }
+
+        if ($this->model()->newQuery()->where('parent_id', $id)->exists()) {
+            return 'У счёта есть подчинённые — сначала перенесите или удалите их';
+        }
+
+        if ($this->db()->table('category_postings')->where('counter_account_code', $item->code)->exists()) {
+            return 'Счёт указан в карте разноски — сначала измените её';
+        }
+
+        $type = $this->db()->table('document_types')
+            ->where(fn($q) => $q->where('head_bi_id', $id)->orWhere('item_bi_id', $id))
+            ->value('name');
+        if ($type) {
+            return "Счёт задан в виде документа «{$type}» — сначала измените его настройку";
+        }
+
+        $docs = $this->db()->table('documents')->whereNull('deleted_at')->where('bi_id', $id)->count();
+        if ($docs > 0) {
+            return "Счёт стоит в шапке документов ({$docs}) — удаление заблокировано";
+        }
+
+        $lines = $this->db()->table('document_items as di')
+            ->join('documents as d', 'd.id', '=', 'di.document_id')
+            ->whereNull('d.deleted_at')
+            ->where(fn($q) => $q->where('di.bi_id', $id)->orWhere('di.head_bi_id', $id))
+            ->count();
+        if ($lines > 0) {
+            return "Счёт стоит в строках документов ({$lines}) — удаление заблокировано";
+        }
+
+        $project = $this->db()->table('projects')
+            ->where(fn($q) => $q->where('outgoing_revenue_bi_id', $id)->orWhere('outgoing_cogs_bi_id', $id))
+            ->value('name');
+        if ($project) {
+            return "Счёт указан в настройках проекта «{$project}» — сначала измените их";
+        }
+
+        return null;
+    }
+
+    // ── Каталог системных счетов ──────────────────────────────────────────────
+
+    /** GET /balance-items/catalog — что можно добавить и что уже есть */
+    public function catalog(Request $request)
+    {
+        $this->initTenant($request);
+
+        $existing = $this->model()->newQuery()->pluck('code')->all();
+
+        return response()->json([
+            'groups' => ChartOfAccounts::groups(),
+            'data'   => array_map(fn($a) => [
+                'code'         => $a['code'],
+                'name'         => $a['name'],
+                'group'        => $a['group'],
+                'parent_code'  => $a['parent_code'] ?? null,
+                'info_1_type'  => $a['info_1_type'] ?? null,
+                'info_2_type'  => $a['info_2_type'] ?? null,
+                'has_quantity' => (bool) ($a['has_quantity'] ?? 0),
+                'is_default'   => (bool) $a['default'],
+                'hint'         => $a['hint'] ?? null,
+                'exists'       => in_array($a['code'], $existing, true),
+            ], ChartOfAccounts::all()),
+        ]);
+    }
+
+    /** POST /balance-items/catalog — добавить выбранные счета */
+    public function addFromCatalog(Request $request)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'codes'   => 'required|array|min:1',
+            'codes.*' => 'string',
+        ]);
+
+        $idsByCode = $this->model()->newQuery()->pluck('id', 'code')->all();
+        $created   = [];
+
+        foreach ($data['codes'] as $code) {
+            $account = ChartOfAccounts::byCode($code);
+            if (!$account || isset($idsByCode[$code])) continue;
+
+            // Родитель приезжает вместе с ребёнком: счёт без своей группы
+            // повис бы в плане счетов сиротой
+            $parentCode = $account['parent_code'] ?? null;
+            if ($parentCode && !isset($idsByCode[$parentCode])) {
+                $parent = ChartOfAccounts::byCode($parentCode);
+                if ($parent) {
+                    $idsByCode[$parentCode] = $this->insertFromCatalog($parent, $idsByCode);
+                    $created[] = $parent['code'];
+                }
+            }
+
+            $idsByCode[$code] = $this->insertFromCatalog($account, $idsByCode);
+            $created[] = $code;
+        }
+
+        return response()->json([
+            'message' => $created ? 'Счета добавлены' : 'Всё выбранное уже есть в плане счетов',
+            'created' => $created,
+        ]);
+    }
+
+    /**
+     * Вставка счёта из каталога.
+     *
+     * Удаление счёта мягкое, поэтому сначала ищем удалённый с таким кодом и
+     * поднимаем его: у него свой id, на который могли ссылаться документы и
+     * виды, — новая строка оставила бы эти ссылки висеть на удалённой.
+     *
+     * Иначе вставляем с каталожным id, чтобы счета совпадали между базами.
+     * Если id занят (счёт удалили, а номер достался другому) — вставляем без
+     * него: одинаковость id приятна, но не обязательна.
+     */
+    private function insertFromCatalog(array $account, array $idsByCode): int
+    {
+        $trashed = $this->model()->newQuery()->onlyTrashed()
+            ->where('code', $account['code'])->first();
+
+        if ($trashed) {
+            $trashed->restore();
+            // Реквизиты возвращаем каталожные: счёт мог быть удалён как раз
+            // потому, что его настроили неудачно
+            $trashed->update(ChartOfAccounts::toRow($account, $idsByCode));
+            return (int) $trashed->id;
+        }
+
+        $now = now();
+        $row = ChartOfAccounts::toRow($account, $idsByCode) + [
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+
+        $idTaken = $this->db()->table('balance_items')->where('id', $account['id'])->exists();
+
+        return (int) $this->db()->table('balance_items')
+            ->insertGetId($idTaken ? $row : $row + ['id' => $account['id']]);
     }
 
     // ── Вспомогательное ───────────────────────────────────────────────────────
