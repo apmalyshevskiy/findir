@@ -10,6 +10,7 @@ import BankStatementPage from './pages/BankStatementPage'
 import DocumentsPage from './pages/DocumentsPage'
 import DocumentTypesPage from './pages/DocumentTypesPage'
 import AiUsagePage from './pages/AiUsagePage'
+import AiAssistantPage from './pages/AiAssistantPage'
 import BudgetPage from './pages/BudgetPage'
 import PaymentCalendarPage from './pages/PaymentCalendarPage'
 import ClassificationRulesPage from './pages/ClassificationRulesPage'
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/balance-items"        element={<PrivateRoute><BalanceItemsPage /></PrivateRoute>} />
         <Route path="/document-types"       element={<PrivateRoute><DocumentTypesPage /></PrivateRoute>} />
         <Route path="/ai-usage"             element={<PrivateRoute><AiUsagePage /></PrivateRoute>} />
+        <Route path="/ai"                   element={<PrivateRoute><AiAssistantPage /></PrivateRoute>} />
         <Route path="/edit-lock-date"       element={<PrivateRoute><EditLockDatePage /></PrivateRoute>} />
         <Route path="/backup"               element={<PrivateRoute><BackupPage /></PrivateRoute>} />
         <Route path="/integrations"         element={<PrivateRoute><IntegrationsPage /></PrivateRoute>} />

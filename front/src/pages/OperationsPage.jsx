@@ -4,7 +4,6 @@ import api from '../api/client'
 import { getOperations, deleteOperation, getBalanceItems, createOperation, setOperationPosting } from '../api/operations'
 import { getProjects } from '../api/projects'
 import OperationForm from '../components/OperationForm'
-import AiQuickEntry from '../components/AiQuickEntry'
 import OperationTemplates from '../components/OperationTemplates'
 import { createTemplate } from '../api/operationTemplates'
 import Layout from '../components/Layout'
@@ -92,7 +91,6 @@ export default function OperationsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editOperation, setEditOperation] = useState(null)
   const [draftOperation, setDraftOperation] = useState(null)   // черновик от ИИ
-  const [aiResetKey, setAiResetKey] = useState(0)              // сброс панели ИИ после сохранения
   const [tplKey, setTplKey] = useState(0)                      // перезагрузка списка шаблонов
   const [loading, setLoading] = useState(true)
   // Период запоминается между заходами и хранится отдельно от прочих фильтров
@@ -376,9 +374,8 @@ export default function OperationsPage() {
       {/* Шаблоны регулярных операций */}
       <OperationTemplates onUse={handleUseDraft} refreshKey={tplKey} />
 
-      {/* Быстрый ввод через ИИ (скрыт, если ключ не настроен) */}
-      <AiQuickEntry onUseDraft={handleUseDraft} onSaveTemplate={saveTemplate}
-        onChanged={loadOperations} resetKey={aiResetKey} />
+      {/* Диалог с ИИ переехал в свой раздел — «AI-помощник» в меню:
+          он длинный, и списку операций под ним было тесно */}
 
       {/* Таблица операций */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
@@ -734,7 +731,7 @@ export default function OperationsPage() {
           operation={editOperation}
           initial={draftOperation}
           onOpenDocument={(id) => { handleFormClose(); openDocument(id) }}
-          onSuccess={() => { if (draftOperation) setAiResetKey(k => k + 1); handleFormClose(); loadOperations() }}
+          onSuccess={() => { handleFormClose(); loadOperations() }}
           onCancel={handleFormClose}
         />
       )}

@@ -48,6 +48,8 @@ export default function Layout({ children }) {
 
   const nav = [
     { path: '/dashboard',        label: 'Дашборд' },
+    // Помощник рядом с операциями: чаще всего им и заводят операцию
+    { path: '/ai',               label: 'AI-помощник' },
     { path: '/operations',       label: 'Операции' },
     { path: '/documents',        label: 'Документы' },
     { path: '/balance-sheet',    label: 'Оборотка' },
