@@ -46,7 +46,7 @@ class EnsurePermission
 
         $user = DB::connection($db)->table('users')->where('id', $row->tokenable_id)->first();
 
-        // Выключенный сотрудник теряет доступ немедленно, не дожидаясь, пока
+        // Выключенный пользователь теряет доступ немедленно, не дожидаясь, пока
         // протухнет выданный ему токен
         if (!$user || !$user->is_active) {
             return response()->json(['message' => 'Доступ отключён администратором'], 403);

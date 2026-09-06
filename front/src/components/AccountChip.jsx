@@ -9,6 +9,8 @@
  * Дебет зелёный, кредит красный — как во всём остальном приложении.
  */
 
+import LockIcon from './LockIcon'
+
 const TONE = {
   debit:  'bg-green-50 text-green-700',
   credit: 'bg-red-50 text-red-700',
@@ -20,9 +22,10 @@ const stripCode = (name) => name?.replace(/^[А-ЯA-Z]\d+\s/, '')
 export default function AccountChip({ code, name, hidden, side = 'debit', size = 'text-xs' }) {
   if (hidden) {
     return (
-      <span className={`${size} bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium`}
+      <span className={`${size} inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium`}
         title="Счёт закрыт для вашей должности">
-        🔒 Скрыто
+        <LockIcon className="w-3 h-3" />
+        Скрыто
       </span>
     )
   }

@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useState, useRef, useEffect } from 'react'
+import { Fragment, useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
 import { TopProgress } from './Busy'
 import api from '../api/client'
@@ -79,12 +79,37 @@ export default function Layout({ children }) {
   // У пунктов меню указан раздел прав: закрытые не показываем. Настоящая
   // проверка — на сервере, здесь лишь бы не звать человека в закрытую дверь
   const nav = [
-    { path: '/dashboard',        label: 'Дашборд',      section: 'dashboard' },
-    // Помощник рядом с операциями: чаще всего им и заводят операцию
-    { path: '/ai',               label: 'AI-помощник',  section: 'ai' },
-    { path: '/operations',       label: 'Операции',     section: 'operations' },
-    { path: '/documents',        label: 'Документы',    section: 'documents' },
-    { path: '/balance-sheet',    label: 'Оборотка',     section: 'reports' },
+    // Помощник первым и сам по себе: с него часто начинают ввод
+    { path: '/ai', label: 'AI-помощник', section: 'ai' },
+    // Меню собрано по тому, что человек делает: сначала вводят, потом смотрят,
+    // потом планируют. Раньше эти же семь пунктов лежали в ряд, и разница между
+    // «завести операцию» и «посмотреть оборотку» ничем не показывалась
+    {
+      label: 'Учёт',
+      children: [
+        { path: '/operations', label: 'Операции',    section: 'operations' },
+        { path: '/documents',  label: 'Документы',   section: 'documents' },
+        // Контрагенты, статьи, сотрудники, кассы — это содержимое операций и
+        // документов, а не настройка системы: заводят их по ходу работы
+        { path: '/info',       label: 'Справочники', section: 'dictionaries' },
+      ],
+    },
+    {
+      label: 'Отчётность',
+      children: [
+        { path: '/dashboard',     label: 'Дашборд',  section: 'dashboard' },
+        { path: '/balance-sheet', label: 'Оборотка', section: 'reports' },
+      ],
+    },
+    {
+      label: 'Планирование',
+      children: [
+        { path: '/budget',           label: 'Бюджет',               section: 'budget' },
+        { path: '/payment-calendar', label: 'Платёжный календарь',  section: 'budget' },
+        { path: '/fund-planning',    label: 'Фонды',                section: 'budget' },
+        { path: '/fund-schemes',     label: 'Модели распределения', section: 'budget' },
+      ],
+    },
     // Всё, что приходит в базу извне, — в одном разделе: и разовая загрузка
     // файла выписки, и обмен с учётной системой вместе с его настройкой.
     // Порознь это выглядело как разные умения, хотя задача одна
@@ -96,30 +121,27 @@ export default function Layout({ children }) {
         { path: '/integrations',   label: 'Настройка интеграций',       section: 'exchange' },
       ],
     },
-    { path: '/budget',           label: 'Бюджет',    section: 'budget' },
-    { path: '/payment-calendar', label: 'Календарь', section: 'budget' },
-    {
-      label: 'Фонды',
-      children: [
-        { path: '/fund-planning', label: 'Планирование',          section: 'budget' },
-        { path: '/fund-schemes',  label: 'Модели распределения',  section: 'budget' },
-      ],
-    },
+    // Настройки разбиты подзаголовками внутри самого списка: пунктов набралось
+    // на десяток, и сплошным столбцом в них уже приходилось вчитываться.
+    // Подзаголовок показывается, только если в группе уцелел хоть один пункт
+    // после проверки прав
     {
       label: 'Настройки',
       children: [
-        { path: '/projects',             label: 'Проекты',           section: 'dictionaries' },
-        { path: '/balance-items',        label: 'План счетов',       section: 'dictionaries' },
-        { path: '/document-types',       label: 'Виды документов',   section: 'dictionaries' },
-        { path: '/info',                 label: 'Справочники',       section: 'dictionaries' },
-        { path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries' },
-        { path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings' },
-        { path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings' },
+        { path: '/projects',             label: 'Проекты',           section: 'dictionaries', group: 'Справочники' },
+        { path: '/balance-items',        label: 'План счетов',       section: 'dictionaries', group: 'Справочники' },
+        { path: '/document-types',       label: 'Виды документов',   section: 'dictionaries', group: 'Справочники' },
+
+        { path: '/users',                label: 'Пользователи',      section: 'users',    group: 'Доступ' },
+        { path: '/roles',                label: 'Должности',         section: 'users',    group: 'Доступ' },
+        // Дата запрета — тоже про доступ, только не «кому», а «до какого числа»
+        { path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings', group: 'Доступ' },
+
+        { path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries', group: 'Прочее' },
+        { path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings',     group: 'Прочее' },
         // «Интеграции» переехали в «Обмен данными» — там же, где сама загрузка
-        { path: '/ai-usage',             label: 'Расход на ИИ',      section: 'settings' },
-        { path: '/users',                label: 'Сотрудники',        section: 'users' },
-        { path: '/roles',                label: 'Должности',         section: 'users' },
-        { path: '/backup',               label: 'Архивная копия',    section: 'backup' },
+        { path: '/ai-usage',             label: 'Расход на ИИ',      section: 'settings',     group: 'Прочее' },
+        { path: '/backup',               label: 'Архивная копия',    section: 'backup',       group: 'Прочее' },
       ],
     },
   ].map(item => item.children
@@ -168,18 +190,30 @@ export default function Layout({ children }) {
                         списке читался бы как два разных пункта */}
                     {openMenu === n.label && (
                       <div className="absolute left-0 mt-1 w-max min-w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
-                        {n.children.map(c => (
-                          <button
-                            key={c.path}
-                            onClick={() => { setOpenMenu(null); navigate(c.path) }}
-                            className={
-                              location.pathname === c.path
-                                ? 'block w-full text-left px-4 py-2 text-sm font-medium bg-blue-50 text-blue-900'
-                                : 'block w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50'
-                            }
-                          >
-                            {c.label}
-                          </button>
+                        {n.children.map((c, i) => (
+                          <Fragment key={c.path}>
+                            {/* Подзаголовок — у первого уцелевшего пункта группы.
+                                Считаем по уже отфильтрованному списку, поэтому
+                                группа, из которой правами вычистили всё,
+                                не оставляет висящего заголовка */}
+                            {c.group && c.group !== n.children[i - 1]?.group && (
+                              <div className={`px-4 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-400 ${
+                                i === 0 ? 'pt-1' : 'pt-2.5 mt-1 border-t border-gray-100'
+                              }`}>
+                                {c.group}
+                              </div>
+                            )}
+                            <button
+                              onClick={() => { setOpenMenu(null); navigate(c.path) }}
+                              className={
+                                location.pathname === c.path
+                                  ? 'block w-full text-left px-4 py-2 text-sm font-medium bg-blue-50 text-blue-900'
+                                  : 'block w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50'
+                              }
+                            >
+                              {c.label}
+                            </button>
+                          </Fragment>
                         ))}
                       </div>
                     )}

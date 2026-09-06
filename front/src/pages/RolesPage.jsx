@@ -3,6 +3,7 @@ import Layout from '../components/Layout'
 import { SkeletonRows } from '../components/Busy'
 import { getRoles, createRole, updateRole, deleteRole } from '../api/users'
 import { getBalanceItemsList } from '../api/balanceItems'
+import LockIcon from '../components/LockIcon'
 
 /**
  * Должности — наборы прав по разделам.
@@ -260,7 +261,7 @@ export default function RolesPage() {
               <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 uppercase tracking-wide">
                 <th className="text-left px-5 py-2">Должность</th>
                 <th className="text-left px-5 py-2">Права</th>
-                <th className="text-right px-5 py-2">Сотрудников</th>
+                <th className="text-right px-5 py-2">Пользователей</th>
                 <th className="px-5 py-2"></th>
               </tr>
             </thead>
@@ -290,8 +291,9 @@ export default function RolesPage() {
                       )}
                     </div>
                     {r.denied_accounts?.length > 0 && (
-                      <div className="text-[11px] text-gray-500 mt-1">
-                        🔒 закрыто счетов: {r.denied_accounts.length}
+                      <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-1.5">
+                        <LockIcon className="w-3 h-3 text-gray-400" />
+                        закрыто счетов: {r.denied_accounts.length}
                       </div>
                     )}
                   </td>

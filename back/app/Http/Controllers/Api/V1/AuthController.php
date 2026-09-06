@@ -206,7 +206,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // Выключенного сотрудника не пускаем — и говорим почему, чтобы он не
+        // Выключенного пользователя не пускаем — и говорим почему, чтобы он не
         // считал, что забыл пароль
         if (!$user->is_active) {
             throw ValidationException::withMessages([

@@ -5,6 +5,7 @@ import { getProjects } from '../api/projects'
 import AmountInput from './AmountInput'
 import OperationChanges from './OperationChanges'
 import { BusyLabel } from './Busy'
+import LockIcon from './LockIcon'
 
 const INFO_LABELS = {
   partner:    'Контрагент',
@@ -798,7 +799,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
 
           {hasHidden && (
             <div className="bg-gray-50 border border-gray-200 text-gray-700 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
-              <span className="text-base leading-none">🔒</span>
+              <LockIcon className="w-4 h-4 mt-0.5 text-gray-400" />
               <span>
                 В операции есть счёт, закрытый для вашей должности — она доступна только для чтения.
                 <span className="block text-[11px] text-gray-500 mt-0.5">

@@ -14,6 +14,8 @@ import usePersistedState from '../hooks/usePersistedState'
 import { BusyLabel, BusyOverlay, SkeletonRows, Spinner } from '../components/Busy'
 import { presetRange } from '../utils/period'
 import AccountChip from '../components/AccountChip'
+import LockIcon from '../components/LockIcon'
+import { calcNet, flattenServerTree, flattenAccountTree, osvSheet } from '../utils/osv'
 
 // Хранение Set в localStorage — через массив
 const SET_CODEC = { serialize: (s) => [...s], deserialize: (a) => new Set(a) }
@@ -30,14 +32,33 @@ const INFO_TYPES = [
   { value: 'flow',       label: 'Статьи движения' },
 ]
 
+// ─── Шапка таблицы ────────────────────────────────────────────────────────────
+// Обе строки заданной высоты: только так вторая встаёт ровно под первой при
+// липкой шапке (top-0 и top-8 — те же 32 пикселя, что даёт h-8).
+// Выравнивание в этих наборах не задаём: две противоположные утилиты на одной
+// ячейке (text-center и text-left) разрешаются порядком в готовом CSS, а не
+// порядком в строке класса — победитель был бы случайным
+const thGroup    = 'h-8 px-4 text-[11px] font-medium text-gray-500 uppercase tracking-wide'
+const thCol      = 'h-8 px-3 text-right text-[11px] font-medium'
+const thStick    = 'sticky top-0 z-20 bg-gray-50'
+// Нижнюю границу шапки вешаем на ячейки второго ряда: граница строки осталась
+// бы за непрозрачным фоном липких ячеек.
+// Цвет задаём стороной (border-b-gray-200), а не общим border-gray-200: у
+// ячейки с двумя границами общий цвет перебил бы цвет соседней стороны
+const thStickSub = 'sticky top-8 z-20 bg-gray-50 border-b border-b-gray-200'
+
+// «Итого» липнет к низу экрана: на длинной оборотке итог иначе приходится
+// искать прокруткой. Границу вешаем на ячейки, а не на строку: под липкими
+// ячейками граница строки не видна
+const tfBase = 'sticky bottom-0 z-20 bg-gray-50 border-t-2 border-t-gray-200 py-2.5 text-[13px] font-bold'
+const tfCell = `${tfBase} px-3 text-right`
+
 const fmt = (amount) => amount === 0 ? '—' :
   new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(amount)
 
 const fmtQty = (qty) => qty === 0 ? '—' :
   new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 3 }).format(qty)
 
-// Остаток со знаком: debit - credit
-const calcNet = (debit, credit) => (debit || 0) - (credit || 0)
 const fmtNet  = (val) => {
   if (val === 0) return null
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(val)
@@ -48,34 +69,6 @@ const formatDate = (date) =>
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
   })
-
-// Бэкенд возвращает готовое дерево children[].children[].
-// Разворачиваем его в плоский список с depth и признаком раскрытия.
-const flattenServerTree = (nodes, expandedSet, biId, depth = 0) => {
-  let result = []
-  nodes.forEach(node => {
-    const nodeKey = `${biId}-${node.info_id}-${node.info_type}`
-    const isExp   = expandedSet.has(nodeKey)
-    result.push({ ...node, depth, _key: nodeKey, _expanded: isExp })
-    if (node.children?.length > 0 && isExp) {
-      result = result.concat(flattenServerTree(node.children, expandedSet, biId, depth + 1))
-    }
-  })
-  return result
-}
-
-// Разворачиваем дерево счетов (account_children) в плоский список
-const flattenAccountTree = (nodes, expandedSet, depth = 0) => {
-  let result = []
-  nodes.forEach(node => {
-    const isExp = expandedSet.has(node.bi_id)
-    result.push({ ...node, _depth: depth, _expanded: isExp })
-    if (node.account_children?.length > 0 && isExp) {
-      result = result.concat(flattenAccountTree(node.account_children, expandedSet, depth + 1))
-    }
-  })
-  return result
-}
 
 // Собираем все bi_id из дерева (для expandAll)
 const collectAccountIds = (nodes) => {
@@ -208,59 +201,27 @@ export default function BalanceSheetPage() {
   }
   const handleDragEnd = () => { dragIdx.current = null }
 
+  /**
+   * Экспорт повторяет то, что на экране.
+   *
+   * Раньше выгрузка всегда шла колонками Дт/Кт и всегда со всей аналитикой,
+   * каким бы ни был выбранный вид: человек смотрел на остаток со знаком, а в
+   * файле получал дебет с кредитом и лишние строки. Теперь переключатели
+   * ±/Дт-Кт и Σ/#/Σ+# задают состав колонок, а раскрытые счета и аналитики —
+   * состав строк.
+   */
   const exportToExcel = () => {
-    const rows = [];
-    const numFmt = '#,##0.00 "₽"';
+    const { rows, widths } = osvSheet({
+      data, totals, balanceMode, displayMode,
+      hierarchyAccounts, expandedAccounts, expanded, expandedInfo,
+    })
 
-    rows.push([
-      "Счёт",
-      "Сальдо нач. (Дт)", "Сальдо нач. (Кт)",
-      "Обороты (Дт)", "Обороты (Кт)",
-      "Сальдо кон. (Дт)", "Сальдо кон. (Кт)"
-    ]);
-
-    const n = (val) => ({ v: val || 0, t: 'n', z: numFmt });
-
-    const addChildRows = (nodes, depth = 0) => {
-      nodes.forEach(child => {
-        const indent = "    ".repeat(depth);
-        const dash = { v: '—', t: 's' }
-        rows.push([
-          `${indent}  └ ${child.info_name}`,
-          child.turnover_only ? dash : n(child.opening_debit),
-          child.turnover_only ? dash : n(child.opening_credit),
-          n(child.debit), n(child.credit),
-          child.turnover_only ? dash : n(child.closing_debit),
-          child.turnover_only ? dash : n(child.closing_credit),
-        ]);
-        if (child.children?.length > 0) addChildRows(child.children, depth + 1)
-      })
-    }
-
-    data.forEach(row => {
-      rows.push([
-        `${row.code} ${row.name}`,
-        n(row.opening_debit), n(row.opening_credit),
-        n(row.debit), n(row.credit),
-        n(row.closing_debit), n(row.closing_credit)
-      ]);
-      if (row.children?.length > 0) addChildRows(row.children, 0)
-    });
-
-    rows.push([]); 
-    rows.push([
-      "ИТОГО",
-      n(totals.opening_debit), n(totals.opening_credit),
-      n(totals.debit), n(totals.credit),
-      n(totals.closing_debit), n(totals.closing_credit)
-    ]);
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 40 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ОСВ");
-    XLSX.writeFile(wb, `OSV_${filter.from}_to_${filter.to}.xlsx`);
-  };
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = widths
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'ОСВ')
+    XLSX.writeFile(wb, `OSV_${filter.from}_to_${filter.to}.xlsx`)
+  }
 
   const toggleExpand = (biId) => {
     setExpanded(prev => {
@@ -449,7 +410,9 @@ export default function BalanceSheetPage() {
   // Отрицательный оборот бывает только от сторно; помечаем его отдельно,
   // иначе минус в зелёной колонке «Дт» читается как ошибка
   const AmtCell = ({ val, onClick, extra = '' }) => (
-    <td className={`px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap ${extra}`}>
+    // Суммы крупнее названий: в отчёте глаз идёт по цифрам, и им нужен
+    // собственный уровень, иначе всё читается одной серой массой
+    <td className={`px-3 py-2.5 text-right text-[13px] font-medium whitespace-nowrap ${extra}`}>
       {val === 0 ? <span className="text-gray-300">—</span> : (
         <button onClick={onClick}
           title={val < 0 ? 'Отрицательный оборот — сторно за период превысило обычные проводки' : undefined}
@@ -464,7 +427,7 @@ export default function BalanceSheetPage() {
 
   // Ячейка количества — кликабельна если есть onClick
   const QtyCell = ({ val, onClick, extra = '' }) => (
-    <td className={`px-3 py-2.5 text-right text-xs whitespace-nowrap text-blue-600 ${extra}`}>
+    <td className={`px-3 py-2.5 text-right text-[13px] whitespace-nowrap text-blue-600 ${extra}`}>
       {val === 0 ? <span className="text-gray-200">—</span> : onClick ? (
         <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
           {fmtQty(val)}
@@ -475,7 +438,7 @@ export default function BalanceSheetPage() {
 
   // Ячейка-прочерк для сальдо при turnover_only — сальдо не имеет смысла
   const DashCell = ({ borderLeft = false }) => (
-    <td className={`px-3 py-2.5 text-right text-xs text-gray-300 whitespace-nowrap ${borderLeft ? 'border-l border-gray-100' : ''}`}>
+    <td className={`px-3 py-2.5 text-right text-[13px] text-gray-300 whitespace-nowrap ${borderLeft ? 'border-l border-gray-100' : ''}`}>
       —
     </td>
   )
@@ -499,7 +462,7 @@ export default function BalanceSheetPage() {
     const mainColor = mainVal > 0 ? 'text-green-700' : mainVal < 0 ? 'text-red-600' : 'text-gray-300'
 
     return (
-      <td className={`px-3 py-2.5 text-right text-xs font-medium whitespace-nowrap ${mainColor} ${bl}`}>
+      <td className={`px-3 py-2.5 text-right text-[13px] font-medium whitespace-nowrap ${mainColor} ${bl}`}>
         {mainFmt === null ? <span className="text-gray-300">—</span> : (
           <button onClick={onClick} className="hover:underline hover:opacity-75 transition-opacity cursor-pointer">
             {mainFmt}
@@ -536,11 +499,11 @@ export default function BalanceSheetPage() {
           <QtyCell val={hasQty ? (row.qty_debit  ?? 0) : 0} extra={`text-green-600 ${bl}`} onClick={hasQty ? onClickDt : undefined} />
           <QtyCell val={hasQty ? (row.qty_credit ?? 0) : 0} extra="text-red-500"            onClick={hasQty ? onClickKt : undefined} />
         </> : displayMode === 'both' ? <>
-          <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+          <td className={`px-3 py-2 text-right text-[13px] whitespace-nowrap text-green-700 ${bl}`}>
             <button onClick={onClickDt} className="hover:underline block w-full">{row.debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.debit)}</button>
             {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_debit ?? 0)}</span>}
           </td>
-          <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+          <td className="px-3 py-2 text-right text-[13px] whitespace-nowrap text-red-600">
             <button onClick={onClickKt} className="hover:underline block w-full">{row.credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.credit)}</button>
             {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_credit ?? 0)}</span>}
           </td>
@@ -581,33 +544,33 @@ export default function BalanceSheetPage() {
     // both — два ряда в одной ячейке
     return <>
       {isTO ? <DashCell /> : (
-        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-green-700">
+        <td className="px-3 py-2 text-right text-[13px] whitespace-nowrap text-green-700">
           <button onClick={onClickDt} className="hover:underline block w-full">{row.opening_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_debit)}</button>
           {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening ?? 0)}</span>}
         </td>
       )}
       {isTO ? <DashCell /> : (
-        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+        <td className="px-3 py-2 text-right text-[13px] whitespace-nowrap text-red-600">
           <button onClick={onClickKt} className="hover:underline block w-full">{row.opening_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.opening_credit)}</button>
           {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_opening_neg ?? 0)}</span>}
         </td>
       )}
-      <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+      <td className={`px-3 py-2 text-right text-[13px] whitespace-nowrap text-green-700 ${bl}`}>
         <button onClick={onClickDt} className="hover:underline block w-full">{row.debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.debit)}</button>
         {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_debit ?? 0)}</span>}
       </td>
-      <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+      <td className="px-3 py-2 text-right text-[13px] whitespace-nowrap text-red-600">
         <button onClick={onClickKt} className="hover:underline block w-full">{row.credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.credit)}</button>
         {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_credit ?? 0)}</span>}
       </td>
       {isTO ? <DashCell borderLeft /> : (
-        <td className={`px-3 py-2 text-right text-xs whitespace-nowrap text-green-700 ${bl}`}>
+        <td className={`px-3 py-2 text-right text-[13px] whitespace-nowrap text-green-700 ${bl}`}>
           <button onClick={onClickDt} className="hover:underline block w-full">{row.closing_debit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_debit)}</button>
           {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing ?? 0)}</span>}
         </td>
       )}
       {isTO ? <DashCell /> : (
-        <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-red-600">
+        <td className="px-3 py-2 text-right text-[13px] whitespace-nowrap text-red-600">
           <button onClick={onClickKt} className="hover:underline block w-full">{row.closing_credit === 0 ? <span className="text-gray-300">—</span> : fmt(row.closing_credit)}</button>
           {hasQty && <span className="text-blue-500 text-[10px]">{fmtQty(row.qty_closing_neg ?? 0)}</span>}
         </td>
@@ -623,8 +586,9 @@ export default function BalanceSheetPage() {
           {/* Молча показать несходящийся баланс нельзя: человек пойдёт искать
               ошибку в учёте там, где её нет */}
           {accountsHidden && (
-            <p className="text-xs text-amber-700 mt-1">
-              🔒 Часть счетов закрыта вашей должностью — итог не является балансом
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+              <LockIcon className="w-3.5 h-3.5 text-gray-400" />
+              Часть счетов закрыта вашей должностью — итог не является балансом
             </p>
           )}
         </div>
@@ -846,46 +810,53 @@ export default function BalanceSheetPage() {
         )}
       </div>
 
-      <div className="relative bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      {/* overflow-clip, а не hidden: hidden делает карточку контейнером
+          прокрутки, и липкие шапка с итогом перестают липнуть к экрану.
+          Углы clip скругляет так же */}
+      <div className="relative bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
         {/* Пока идёт пересчёт, на экране остаются цифры прошлого периода —
             плашка не даёт принять их за новые */}
         <BusyOverlay active={loading && data.length > 0}
           label="Пересчитываю обороты"
           hint="Долго — обычно из-за длинного периода или нескольких аналитик сразу" />
         <table className="w-full text-sm">
+          {/* Шапка липнет к верху экрана: на длинной оборотке иначе не видно,
+              где дебет, а где кредит. Обе строки заданной высоты, чтобы вторая
+              вставала ровно под первой (top-0 и top-8); фон нужен на каждой
+              ячейке — сквозь прозрачную было бы видно уезжающие строки */}
           <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-r border-gray-200" rowSpan={2}>Счёт</th>
+            <tr>
+              <th className={`${thGroup} ${thStick} text-left border-r border-r-gray-100 border-b border-b-gray-200`} rowSpan={2}>Счёт</th>
               {balanceMode === 'net' ? <>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100">Остаток нач.</th>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Обороты за период</th>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200">Остаток кон.</th>
+                <th className={`${thGroup} ${thStick} text-center`}>Остаток нач.</th>
+                <th className={`${thGroup} ${thStick} text-center border-l border-gray-100`} colSpan={2}>Обороты за период</th>
+                <th className={`${thGroup} ${thStick} text-center border-l border-gray-100`}>Остаток кон.</th>
               </> : <>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100" colSpan={2}>Сальдо начальное</th>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Обороты за период</th>
-                <th className="text-center px-4 py-2 text-xs text-gray-500 uppercase tracking-wide border-b border-gray-100 border-l border-gray-200" colSpan={2}>Сальдо конечное</th>
+                <th className={`${thGroup} ${thStick} text-center`} colSpan={2}>Сальдо начальное</th>
+                <th className={`${thGroup} ${thStick} text-center border-l border-gray-100`} colSpan={2}>Обороты за период</th>
+                <th className={`${thGroup} ${thStick} text-center border-l border-gray-100`} colSpan={2}>Сальдо конечное</th>
               </>}
             </tr>
-            <tr className="bg-gray-50 border-b border-gray-200">
+            <tr>
               {balanceMode === 'net' ? <>
-                <th className="text-right px-3 py-2 text-xs text-gray-500 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# ±' : '±'}</th>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# Дт' : 'Дт'}</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">{displayMode === 'qty' ? '# Кт' : 'Кт'}</th>
-                <th className="text-right px-3 py-2 text-xs text-gray-500 font-medium border-l border-gray-200">{displayMode === 'qty' ? '# ±' : '±'}</th>
+                <th className={`${thCol} ${thStickSub} text-gray-500 border-l border-l-gray-100`}>{displayMode === 'qty' ? '# ±' : '±'}</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}>{displayMode === 'qty' ? '# Дт' : 'Дт'}</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}>{displayMode === 'qty' ? '# Кт' : 'Кт'}</th>
+                <th className={`${thCol} ${thStickSub} text-gray-500 border-l border-l-gray-100`}>{displayMode === 'qty' ? '# ±' : '±'}</th>
               </> : displayMode === 'qty' ? <>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200"># Дт</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium"># Кт</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}># Дт</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}># Кт</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}># Дт</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}># Кт</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}># Дт</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}># Кт</th>
               </> : <>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
-                <th className="text-right px-3 py-2 text-xs text-green-600 font-medium border-l border-gray-200">Дебет</th>
-                <th className="text-right px-3 py-2 text-xs text-red-500 font-medium">Кредит</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}>Дебет</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}>Кредит</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}>Дебет</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}>Кредит</th>
+                <th className={`${thCol} ${thStickSub} text-green-600 border-l border-l-gray-100`}>Дебет</th>
+                <th className={`${thCol} ${thStickSub} text-red-500`}>Кредит</th>
               </>}
             </tr>
           </thead>
@@ -911,7 +882,7 @@ export default function BalanceSheetPage() {
                 <tr key={`acc-${row.bi_id}`}
                   className={`border-b border-gray-100 transition-colors hover:bg-gray-50 ${isAggregate ? 'bg-gray-50/60' : ''} ${isExpanded ? 'bg-blue-50' : ''}`}
                 >
-                  <td className="px-4 py-2.5 border-r border-gray-200">
+                  <td className="px-4 py-3 border-r border-gray-100">
                     <div className="flex items-center gap-1" style={{ paddingLeft: depth * 20 }}>
                       {/* Кнопка раскрытия дочерних счетов */}
                       <div className="w-4 flex items-center justify-center flex-shrink-0">
@@ -939,7 +910,11 @@ export default function BalanceSheetPage() {
                           </button>
                         )}
                       </div>
-                      <span className={`font-mono text-xs font-semibold ${isAggregate ? 'text-gray-500' : 'text-gray-700'}`}>
+                      {/* Код — обычным шрифтом, а не моноширинным: системный
+                          моноширинный рисует кириллическую букву другим кеглем,
+                          чем цифры, и «А100» выглядело сломанным. Столбиком
+                          коды всё равно встают — цифры в таблицах табличные */}
+                      <span className={`text-xs font-semibold tracking-wide ${isAggregate ? 'text-gray-500' : 'text-gray-700'}`}>
                         {row.code}
                       </span>
                       <span className={`text-xs ml-1 ${isAggregate ? 'text-gray-400 font-medium' : 'text-gray-500'}`}>
@@ -967,7 +942,7 @@ export default function BalanceSheetPage() {
                           return next
                         })}
                     >
-                      <td className="px-4 py-2 border-r border-gray-200">
+                      <td className="px-4 py-2 border-r border-gray-100">
                         <div className="flex items-center gap-2" style={{ paddingLeft: 32 + child.depth * 20 }}>
                           {hasInnerChildren ? (
                             <button type="button" className="text-gray-400 hover:text-gray-600 w-4 h-4 flex items-center justify-center rounded">
@@ -1008,8 +983,8 @@ export default function BalanceSheetPage() {
           </tbody>
           {data.length > 0 && (
             <tfoot>
-              <tr className="bg-gray-50 border-t-2 border-gray-200">
-                <td className="px-4 py-2.5 text-xs font-bold text-gray-700 pl-9 border-r border-gray-200">Итого</td>
+              <tr>
+                <td className={`${tfBase} pl-9 pr-4 text-left text-xs text-gray-700 border-r border-r-gray-100`}>Итого</td>
                 {balanceMode === 'net' ? <>
                   {(() => {
                     const net    = calcNet(totals.opening_debit, totals.opening_credit)
@@ -1017,26 +992,26 @@ export default function BalanceSheetPage() {
                     const netE   = calcNet(totals.closing_debit, totals.closing_credit)
                     const netECls= netE > 0 ? 'text-green-700' : netE < 0 ? 'text-red-600' : 'text-gray-400'
                     return <>
-                      <td className={`px-3 py-2.5 text-right text-xs font-bold ${netCls}`}>{fmtNet(net) ?? '—'}</td>
-                      <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.debit)}</td>
-                      <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.credit)}</td>
-                      <td className={`px-3 py-2.5 text-right text-xs font-bold ${netECls} border-l border-gray-100`}>{fmtNet(netE) ?? '—'}</td>
+                      <td className={`${tfCell} ${netCls}`}>{fmtNet(net) ?? '—'}</td>
+                      <td className={`${tfCell} text-green-700 border-l border-l-gray-100`}>{fmt(totals.debit)}</td>
+                      <td className={`${tfCell} text-red-600`}>{fmt(totals.credit)}</td>
+                      <td className={`${tfCell} ${netECls} border-l border-l-gray-100`}>{fmtNet(netE) ?? '—'}</td>
                     </>
                   })()}
                 </> : displayMode === 'qty' ? <>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700">—</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">—</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">—</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">—</td>
+                  <td className={`${tfCell} text-green-700`}>—</td>
+                  <td className={`${tfCell} text-red-600`}>—</td>
+                  <td className={`${tfCell} text-green-700 border-l border-l-gray-100`}>—</td>
+                  <td className={`${tfCell} text-red-600`}>—</td>
+                  <td className={`${tfCell} text-green-700 border-l border-l-gray-100`}>—</td>
+                  <td className={`${tfCell} text-red-600`}>—</td>
                 </> : <>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700">{fmt(totals.opening_debit)}</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.opening_credit)}</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.debit)}</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.credit)}</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-green-700 border-l border-gray-100">{fmt(totals.closing_debit)}</td>
-                  <td className="px-3 py-2.5 text-right text-xs font-bold text-red-600">{fmt(totals.closing_credit)}</td>
+                  <td className={`${tfCell} text-green-700`}>{fmt(totals.opening_debit)}</td>
+                  <td className={`${tfCell} text-red-600`}>{fmt(totals.opening_credit)}</td>
+                  <td className={`${tfCell} text-green-700 border-l border-l-gray-100`}>{fmt(totals.debit)}</td>
+                  <td className={`${tfCell} text-red-600`}>{fmt(totals.credit)}</td>
+                  <td className={`${tfCell} text-green-700 border-l border-l-gray-100`}>{fmt(totals.closing_debit)}</td>
+                  <td className={`${tfCell} text-red-600`}>{fmt(totals.closing_credit)}</td>
                 </>}
               </tr>
             </tfoot>

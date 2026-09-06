@@ -9,13 +9,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 /**
- * Сотрудники компании и их должности.
+ * Пользователи компании и их должности.
+ *
+ * Не путать со справочником «Сотрудники» (аналитика employee): там люди, на
+ * которых начисляют зарплату, здесь — те, кто входит в систему.
  *
  * Пароль задаёт администратор и передаёт человеку — почта не настроена, и
- * приглашение письмом сейчас никуда бы не ушло. Свой пароль сотрудник меняет
+ * приглашение письмом сейчас никуда бы не ушло. Свой пароль пользователь меняет
  * сам в профиле.
  *
- * Уволенных не удаляем, а выключаем: их операции остаются в учёте, и автор
+ * Ушедших не удаляем, а выключаем: их операции остаются в учёте, и автор
  * должен читаться. Удаление оставлено на случай ошибочно заведённой учётки.
  */
 class UsersController extends TenantController
@@ -48,7 +51,7 @@ class UsersController extends TenantController
         ]);
 
         if ($this->emailTaken($data['email'])) {
-            return response()->json(['message' => 'Сотрудник с такой почтой уже заведён'], 422);
+            return response()->json(['message' => 'Пользователь с такой почтой уже заведён'], 422);
         }
 
         if (!$this->roleExists($data['role_id'])) {
@@ -65,7 +68,7 @@ class UsersController extends TenantController
             'updated_at' => now(),
         ]);
 
-        return response()->json(['data' => ['id' => $id], 'message' => 'Сотрудник заведён'], 201);
+        return response()->json(['data' => ['id' => $id], 'message' => 'Пользователь заведён'], 201);
     }
 
     public function update(Request $request, int $id): JsonResponse
@@ -80,7 +83,7 @@ class UsersController extends TenantController
         ]);
 
         $user = DB::connection($this->dbName)->table('users')->where('id', $id)->first();
-        if (!$user) return response()->json(['message' => 'Сотрудник не найден'], 404);
+        if (!$user) return response()->json(['message' => 'Пользователь не найден'], 404);
 
         if (isset($data['email']) && $this->emailTaken($data['email'], $id)) {
             return response()->json(['message' => 'Такая почта уже занята'], 422);
@@ -106,7 +109,7 @@ class UsersController extends TenantController
 
         DB::connection($this->dbName)->table('users')->where('id', $id)->update($update);
 
-        // Выключенному сотруднику гасим и действующие сессии: иначе он
+        // Выключенному пользователю гасим и действующие сессии: иначе он
         // продолжил бы работать по выданному токену до самого выхода
         if (isset($data['is_active']) && !$data['is_active']) {
             $this->revokeTokens($id);
@@ -115,7 +118,7 @@ class UsersController extends TenantController
         return response()->json(['message' => 'Сохранено']);
     }
 
-    /** Администратор задаёт новый пароль сотруднику */
+    /** Администратор задаёт новый пароль пользователю */
     public function password(Request $request, int $id): JsonResponse
     {
         $this->initTenant($request);
@@ -123,7 +126,7 @@ class UsersController extends TenantController
         $data = $request->validate(['password' => 'required|string|min:8']);
 
         $exists = DB::connection($this->dbName)->table('users')->where('id', $id)->exists();
-        if (!$exists) return response()->json(['message' => 'Сотрудник не найден'], 404);
+        if (!$exists) return response()->json(['message' => 'Пользователь не найден'], 404);
 
         DB::connection($this->dbName)->table('users')->where('id', $id)->update([
             'password'   => Hash::make($data['password']),
@@ -151,14 +154,14 @@ class UsersController extends TenantController
         $ops = DB::connection($this->dbName)->table('documents')->where('created_by', $id)->count();
         if ($ops > 0) {
             return response()->json([
-                'message' => "Сотрудник значится автором документов ({$ops}) — его можно выключить, но не удалить",
+                'message' => "Пользователь значится автором документов ({$ops}) — его можно выключить, но не удалить",
             ], 422);
         }
 
         DB::connection($this->dbName)->table('users')->where('id', $id)->delete();
         $this->revokeTokens($id);
 
-        return response()->json(['message' => 'Сотрудник удалён']);
+        return response()->json(['message' => 'Пользователь удалён']);
     }
 
     // ── Вспомогательное ───────────────────────────────────────────────────────
@@ -198,7 +201,7 @@ class UsersController extends TenantController
         return $others === 0;
     }
 
-    /** Погасить сессии сотрудника, кроме текущей (если меняем пароль себе) */
+    /** Погасить сессии пользователя, кроме текущей (если меняем пароль себе) */
     private function revokeTokens(int $userId, ?string $keepPlainToken = null): void
     {
         $query = DB::table('personal_access_tokens')

@@ -116,7 +116,7 @@ class RolesController extends TenantController
         $used = DB::connection($this->dbName)->table('users')->where('role_id', $id)->count();
         if ($used > 0) {
             return response()->json([
-                'message' => "Должность занята сотрудниками ({$used}) — сначала переведите их на другую",
+                'message' => "Должность занята пользователями ({$used}) — сначала переведите их на другую",
             ], 422);
         }
 

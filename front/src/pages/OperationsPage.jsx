@@ -16,6 +16,7 @@ import { getDocument } from '../api/documents'
 import { getInfo } from '../api/info'
 import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
 import AccountChip from '../components/AccountChip'
+import LockIcon from '../components/LockIcon'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -701,7 +702,7 @@ export default function OperationsPage() {
                   <tr key={acc.code} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="px-6 py-2">
                       {acc.hidden
-                        ? <span className="text-xs text-gray-400">🔒 Счета, закрытые для вашей должности</span>
+                        ? <span className="text-xs text-gray-400 inline-flex items-center gap-1.5"><LockIcon className="w-3 h-3" />Счета, закрытые для вашей должности</span>
                         : <>
                             <span className="text-xs font-mono font-medium text-gray-700 mr-2">{acc.code}</span>
                             <span className="text-xs text-gray-400">{acc.name}</span>

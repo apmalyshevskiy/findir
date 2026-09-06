@@ -6,13 +6,17 @@ import {
 } from '../api/users'
 
 /**
- * Сотрудники компании.
+ * Пользователи компании — те, кто входит в систему.
+ *
+ * Не путать со справочником «Сотрудники» (тип аналитики employee): там люди, на
+ * которых начисляют зарплату, здесь — те, у кого есть доступ. Пересекаются они
+ * не всегда, поэтому и называются по-разному.
  *
  * Пароль задаёт администратор и передаёт человеку — почта не настроена, и
- * приглашение письмом сейчас никуда бы не ушло. Свой пароль сотрудник меняет
+ * приглашение письмом сейчас никуда бы не ушло. Свой пароль пользователь меняет
  * здесь же, в блоке «Мой доступ».
  *
- * Уволенных выключают, а не удаляют: их документы остаются в учёте, и автор
+ * Ушедших выключают, а не удаляют: их документы остаются в учёте, и автор
  * должен читаться.
  */
 
@@ -60,7 +64,7 @@ export default function UsersPage() {
       else         await createUser(form)
       setForm(null)
       await load()
-      say(form.id ? 'Сохранено' : 'Сотрудник заведён — передайте ему пароль')
+      say(form.id ? 'Сохранено' : 'Пользователь заведён — передайте ему пароль')
     } catch (e) { fail(e, 'Не удалось сохранить') } finally { setSaving(false) }
   }
 
@@ -77,16 +81,16 @@ export default function UsersPage() {
     if (!password) return
     try {
       await setUserPassword(u.id, password)
-      say('Пароль изменён — передайте его сотруднику')
+      say('Пароль изменён — передайте его пользователю')
     } catch (e) { fail(e, 'Не удалось сменить пароль') }
   }
 
   const remove = async (u) => {
-    if (!confirm(`Удалить сотрудника «${u.name}»? Обычно достаточно выключить доступ.`)) return
+    if (!confirm(`Удалить пользователя «${u.name}»? Обычно достаточно выключить доступ.`)) return
     try {
       await deleteUser(u.id)
       await load()
-      say('Сотрудник удалён')
+      say('Пользователь удалён')
     } catch (e) { fail(e, 'Не удалось удалить') }
   }
 
@@ -106,14 +110,14 @@ export default function UsersPage() {
     <Layout>
       <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Сотрудники</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Пользователи</h1>
           <p className="text-sm text-gray-500 mt-1">
             Кто имеет доступ к компании и что каждому позволено. Набор прав задаётся должностью.
           </p>
         </div>
         <button onClick={() => { setForm({ ...EMPTY, role_id: roles[0]?.id || '' }); setError('') }}
           className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800">
-          + Добавить сотрудника
+          + Добавить пользователя
         </button>
       </div>
 
@@ -146,7 +150,7 @@ export default function UsersPage() {
                 <input className={ic} value={form.password} type="text"
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                   placeholder="не короче 8 символов" />
-                <p className="text-[11px] text-gray-400 mt-1">Передайте сотруднику — он сменит его сам</p>
+                <p className="text-[11px] text-gray-400 mt-1">Передайте пользователю — он сменит его сам</p>
               </div>
             )}
           </div>
@@ -170,7 +174,7 @@ export default function UsersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500 uppercase tracking-wide">
-                <th className="text-left px-5 py-2">Сотрудник</th>
+                <th className="text-left px-5 py-2">Пользователь</th>
                 <th className="text-left px-5 py-2">Должность</th>
                 <th className="text-left px-5 py-2">Последний вход</th>
                 <th className="text-left px-5 py-2">Доступ</th>
@@ -213,7 +217,7 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* Свой пароль меняет сам сотрудник: выданный администратором иначе
+      {/* Свой пароль меняет сам пользователь: выданный администратором иначе
           останется у него навсегда */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 max-w-xl">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Мой доступ</h2>
