@@ -117,6 +117,7 @@ export default function Layout({ children }) {
       label: 'Обмен данными',
       children: [
         { path: '/bank-statement', label: 'Банковская выписка',        section: 'exchange' },
+        { path: '/onec-postings',  label: 'Проводки из 1С',            section: 'exchange' },
         { path: '/data-import',    label: 'Загрузка из учётных систем', section: 'exchange' },
         { path: '/integrations',   label: 'Настройка интеграций',       section: 'exchange' },
       ],

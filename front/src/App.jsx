@@ -23,6 +23,7 @@ import EditLockDatePage from './pages/EditLockDatePage'
 import BackupPage from './pages/BackupPage'
 import IntegrationsPage from './pages/IntegrationsPage'
 import DataImportPage from './pages/DataImportPage'
+import OneCPostingsPage from './pages/OneCPostingsPage'
 import FundPlanningPage from './pages/FundPlanningPage'
 import FundSchemesPage from './pages/FundSchemesPage'
 
@@ -60,6 +61,7 @@ export default function App() {
         <Route path="/backup"               element={<PrivateRoute><BackupPage /></PrivateRoute>} />
         <Route path="/integrations"         element={<PrivateRoute><IntegrationsPage /></PrivateRoute>} />
         <Route path="/data-import"          element={<PrivateRoute><DataImportPage /></PrivateRoute>} />
+        <Route path="/onec-postings"        element={<PrivateRoute><OneCPostingsPage /></PrivateRoute>} />
         <Route path="/fund-planning"        element={<PrivateRoute><FundPlanningPage /></PrivateRoute>} />
         <Route path="/fund-schemes"         element={<PrivateRoute><FundSchemesPage /></PrivateRoute>} />
       </Routes>

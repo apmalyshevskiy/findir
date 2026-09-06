@@ -70,6 +70,7 @@ class Access
 
             'bank-statements'        => 'exchange',
             'integrations'           => 'exchange',
+            'onec'                   => 'exchange',
 
             'budget-documents'       => 'budget',
             'budget-items'           => 'budget',
@@ -110,6 +111,7 @@ class Access
             'documents/calculate-cost',
             'backup/inspect',
             'bank-statements/parse',
+            'onec/postings/preview',
         ];
     }
 

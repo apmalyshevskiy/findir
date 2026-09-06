@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
 use App\Http\Controllers\Api\V1\BackupController;
 use App\Http\Controllers\Api\V1\IntegrationsController;
+use App\Http\Controllers\Api\V1\OneCController;
 use App\Http\Controllers\Api\V1\UsersController;
 use App\Http\Controllers\Api\V1\RolesController;
 
@@ -76,6 +77,12 @@ Route::prefix('v1')->group(function () {
 
     // Банковская выписка
     Route::post('/bank-statements/parse', [BankStatementController::class, 'parse']);
+
+    // Проводки из 1С:Бухгалтерии — файл выгружает обработка из папки 1c/
+    Route::get ('/onec/settings',         [OneCController::class, 'settings']);
+    Route::put ('/onec/settings',         [OneCController::class, 'saveSettings']);
+    Route::post('/onec/postings/preview', [OneCController::class, 'preview']);
+    Route::post('/onec/postings/import',  [OneCController::class, 'import']);
 
     // Справочники
     Route::get('/projects',           [ProjectsController::class, 'index']);
