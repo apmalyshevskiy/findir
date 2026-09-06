@@ -15,6 +15,7 @@ import { DocumentForm } from './DocumentsPage'
 import { getDocument } from '../api/documents'
 import { getInfo } from '../api/info'
 import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
+import AccountChip from '../components/AccountChip'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -269,13 +270,22 @@ export default function OperationsPage() {
 
   const accountTotals = useMemo(() => {
     const map = {}
+    // Закрытые счета сходятся в одну строку «Скрыто» и уходят в конец списка:
+    // без общего ключа они склеились бы в безымянную строку сами, но случайно
+    const key  = (op, side) => op[`${side}_hidden`] ? 'hidden' : op[`${side}_bi_id`]
+    const cell = (op, side) => op[`${side}_hidden`]
+      ? { code: '', name: 'Скрыто', hidden: true, debit: 0, credit: 0 }
+      : { code: op[`${side}_bi_code`], name: op[`${side}_bi_name`]?.replace(/^[А-ЯA-Z]\d+\s/, ''), debit: 0, credit: 0 }
+
     operations.forEach(op => {
-      if (!map[op.in_bi_id])  map[op.in_bi_id]  = { code: op.in_bi_code,  name: op.in_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, ''),  debit: 0, credit: 0 }
-      if (!map[op.out_bi_id]) map[op.out_bi_id] = { code: op.out_bi_code, name: op.out_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, ''), debit: 0, credit: 0 }
-      map[op.in_bi_id].debit   += parseFloat(op.amount)
-      map[op.out_bi_id].credit += parseFloat(op.amount)
+      const inKey = key(op, 'in'), outKey = key(op, 'out')
+      if (!map[inKey])  map[inKey]  = cell(op, 'in')
+      if (!map[outKey]) map[outKey] = cell(op, 'out')
+      map[inKey].debit   += parseFloat(op.amount)
+      map[outKey].credit += parseFloat(op.amount)
     })
-    return Object.values(map).sort((a, b) => a.code?.localeCompare(b.code))
+    return Object.values(map).sort((a, b) =>
+      (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0) || (a.code || '').localeCompare(b.code || ''))
   }, [operations])
 
   const formatAmount = (amount) =>
@@ -585,16 +595,14 @@ export default function OperationsPage() {
                     <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
-                        <span className="text-xs text-gray-600">{op.in_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
+                        <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" />
                       </div>
                       {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_1_name}</span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
                       {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_2_name}</span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
-                        <span className="text-xs text-gray-600">{op.out_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
+                        <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" />
                       </div>
                       {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_1_name}</span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
                       {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_2_name}</span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
@@ -692,8 +700,12 @@ export default function OperationsPage() {
                 {accountTotals.map(acc => (
                   <tr key={acc.code} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="px-6 py-2">
-                      <span className="text-xs font-mono font-medium text-gray-700 mr-2">{acc.code}</span>
-                      <span className="text-xs text-gray-400">{acc.name}</span>
+                      {acc.hidden
+                        ? <span className="text-xs text-gray-400">🔒 Счета, закрытые для вашей должности</span>
+                        : <>
+                            <span className="text-xs font-mono font-medium text-gray-700 mr-2">{acc.code}</span>
+                            <span className="text-xs text-gray-400">{acc.name}</span>
+                          </>}
                     </td>
                     <td className="px-6 py-2 text-right text-xs font-medium text-green-600 whitespace-nowrap">
                       {acc.debit > 0 ? formatAmount(acc.debit) : '—'}

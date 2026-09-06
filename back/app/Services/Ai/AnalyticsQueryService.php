@@ -39,8 +39,10 @@ final class AnalyticsQueryService
      * @param  array $spec  ['title','date_from','date_to','account_code','side','group_by']
      * @return array|null   null — спецификация непригодна (нет периода и т.п.)
      */
-    public function run(string $db, array $spec, $accounts): ?array
+    public function run(string $db, array $spec, $accounts, ?\App\Services\AccountScope $scope = null): ?array
     {
+        $scope ??= \App\Services\AccountScope::unrestricted();
+
         $from = $this->dateOrNull($spec['date_from'] ?? null);
         $to   = $this->dateOrNull($spec['date_to'] ?? null);
         if (!$from || !$to) return null;              // без периода показатель бессмысленен
@@ -74,7 +76,9 @@ final class AnalyticsQueryService
             ];
         }
 
-        $q = DB::connection($db)->table('balance_changes')
+        // Счёт, закрытый должностью, не опознан выше (его нет в $accounts), но
+        // запрос без счёта прошёл бы по всей таблице — вырезаем закрытое здесь
+        $q = $scope->exclude(DB::connection($db)->table('balance_changes'))
             ->whereBetween('date', [$from . ' 00:00:00', $to . ' 23:59:59']);
 
         if ($acc) $q->where('bi_id', $acc->id);

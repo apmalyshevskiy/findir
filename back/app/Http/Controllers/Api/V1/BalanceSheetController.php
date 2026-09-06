@@ -52,10 +52,11 @@ class BalanceSheetController extends TenantController
                 : array_values(array_filter(explode(',', (string) $raw)));
         }
 
-        // Загружаем все balance_items
-        $balanceItems = (new BalanceItem)
-            ->setConnection($this->dbName)
-            ->newQuery()
+        // Загружаем все balance_items, кроме закрытых для этого человека
+        $balanceItems = $this->scope->exclude(
+                (new BalanceItem)->setConnection($this->dbName)->newQuery(),
+                'id'
+            )
             ->orderBy('code')
             ->get()
             ->keyBy('id');
@@ -85,8 +86,8 @@ class BalanceSheetController extends TenantController
 
         // ── Загружаем данные из balance_changes ──────────────────────────────
 
-        $openingRows = DB::connection($this->dbName)
-            ->table('balance_changes')
+        $openingRows = $this->scope
+            ->exclude(DB::connection($this->dbName)->table('balance_changes'))
             ->where('date', '<', $dateFrom)
             ->when($biFilter,      fn($q) => $q->where('bi_id',      $biFilter))
             ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
@@ -96,8 +97,8 @@ class BalanceSheetController extends TenantController
             ->groupBy('bi_id', 'info_1_id', 'info_2_id', 'info_3_id')
             ->get();
 
-        $turnoversRows = DB::connection($this->dbName)
-            ->table('balance_changes')
+        $turnoversRows = $this->scope
+            ->exclude(DB::connection($this->dbName)->table('balance_changes'))
             ->where('date', '>=', $dateFrom)
             ->when($biFilter,      fn($q) => $q->where('bi_id',      $biFilter))
             ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
@@ -246,6 +247,10 @@ class BalanceSheetController extends TenantController
             'info_types'        => $infoTypes,
             'hierarchy_types'   => $hierarchyTypes,
             'hierarchy_accounts'=> $hierarchyAccounts,
+            // Часть счетов закрыта должностью — отчёт перестаёт быть балансом,
+            // и об этом надо сказать в шапке: иначе человек пойдёт искать
+            // ошибку в учёте там, где её нет
+            'accounts_hidden'   => !$this->scope->isEmpty(),
         ]);
     }
 

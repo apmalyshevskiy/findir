@@ -13,6 +13,7 @@ import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
 import { BusyLabel, BusyOverlay, SkeletonRows, Spinner } from '../components/Busy'
 import { presetRange } from '../utils/period'
+import AccountChip from '../components/AccountChip'
 
 // Хранение Set в localStorage — через массив
 const SET_CODEC = { serialize: (s) => [...s], deserialize: (a) => new Set(a) }
@@ -92,6 +93,8 @@ const collectAccountIds = (nodes) => {
 export default function BalanceSheetPage() {
   const navigate = useNavigate()
   const [data, setData]               = useState([])
+  // Должность закрывает часть счетов — итог перестаёт быть балансом
+  const [accountsHidden, setAccountsHidden] = useState(false)
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects]         = useState([])
   const [infoDictionaries, setInfoDictionaries] = useState({})
@@ -161,7 +164,7 @@ export default function BalanceSheetPage() {
     if (projectFilter)       params.project_id          = projectFilter
     if (hierarchyAccounts)   params.hierarchy_accounts  = 1
     getBalanceSheet(params)
-      .then(res => setData(res.data.data))
+      .then(res => { setData(res.data.data); setAccountsHidden(!!res.data.accounts_hidden) })
       .catch(() => setData([]))
       .finally(() => setLoading(false))
   }
@@ -615,7 +618,16 @@ export default function BalanceSheetPage() {
   return (
     <Layout>
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Оборотно-сальдовая ведомость</h2>
+        <div>
+          <h2 className="text-xl font-semibold text-gray-800">Оборотно-сальдовая ведомость</h2>
+          {/* Молча показать несходящийся баланс нельзя: человек пойдёт искать
+              ошибку в учёте там, где её нет */}
+          {accountsHidden && (
+            <p className="text-xs text-amber-700 mt-1">
+              🔒 Часть счетов закрыта вашей должностью — итог не является балансом
+            </p>
+          )}
+        </div>
 
         <div className="flex items-center gap-3">
           {/* Переключатель остаток/Дт+Кт */}
@@ -1082,16 +1094,14 @@ export default function BalanceSheetPage() {
                         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(op.date)}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-xs bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
-                            <span className="text-xs text-gray-500">{op.in_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
+                            <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" />
                           </div>
                           {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_1_name}</div>}
                           {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_2_name}</div>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
-                            <span className="text-xs bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
-                            <span className="text-xs text-gray-500">{op.out_bi_name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
+                            <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" />
                           </div>
                           {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_1_name}</div>}
                           {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_2_name}</div>}

@@ -40,6 +40,15 @@ api.interceptors.response.use(
   },
   (error) => {
     if (!error.config?.noProgress) requestFinished()
+
+    // Не хватило прав. Показываем причину сразу: страницы обрабатывают свои
+    // ошибки по-разному, и без этого человек увидел бы пустой экран или
+    // невнятное «ошибка сохранения» вместо «вам это не разрешено»
+    if (error.response?.status === 403) {
+      const message = error.response?.data?.message || 'Недостаточно прав для этого действия'
+      window.dispatchEvent(new CustomEvent('findir:forbidden', { detail: message }))
+    }
+
     if (error.response?.status === 401) {
       // Выбывает конкретная сессия, а не все сразу: у финдиректора в книжке
       // несколько компаний, и протухший токен одной не повод разлогинивать

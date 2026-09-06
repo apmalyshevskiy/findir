@@ -39,6 +39,14 @@ class DocumentTypesController extends TenantController
             $query->where('is_active', true);
         }
 
+        // Вид, у которого счёт шапки или строк закрыт, для этого человека
+        // бесполезен: документ по нему всё равно не сохранится
+        if (!$this->scope->isEmpty()) {
+            $hidden = $this->scope->hiddenIds();
+            $query->where(fn($q) => $q->whereNull('head_bi_id')->orWhereNotIn('head_bi_id', $hidden))
+                ->where(fn($q) => $q->whereNull('item_bi_id')->orWhereNotIn('item_bi_id', $hidden));
+        }
+
         $used = DB::connection($this->dbName)->table('documents')
             ->whereNull('deleted_at')
             ->selectRaw('type, COUNT(*) c')->groupBy('type')->pluck('c', 'type');

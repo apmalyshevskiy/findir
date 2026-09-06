@@ -34,7 +34,9 @@ class BalanceItemsController extends TenantController
     {
         $this->initTenant($request);
 
-        $items = $this->model()->newQuery()->orderBy('code')->get();
+        // Закрытых счетов нет ни в плане счетов, ни в выпадающих списках:
+        // этот же список наполняет выбор счёта в операциях и документах
+        $items = $this->scope->exclude($this->model()->newQuery(), 'id')->orderBy('code')->get();
 
         // Счётчик использования — фронт показывает, что счёт нельзя удалить.
         // Дебет и кредит объединяем, фильтр по deleted_at — внутри подзапроса.
@@ -68,6 +70,12 @@ class BalanceItemsController extends TenantController
     {
         $this->initTenant($request);
         $item = $this->model()->newQuery()->findOrFail($id);
+
+        // Закрытого счёта для человека не существует — значит и править нечего
+        if ($this->scope->hides($item->id)) {
+            return response()->json(['message' => 'Счёт не найден'], 404);
+        }
+
         $data = $this->validated($request, $id);
 
         if ($data['code'] !== $item->code) {
@@ -99,6 +107,10 @@ class BalanceItemsController extends TenantController
     {
         $this->initTenant($request);
         $item = $this->model()->newQuery()->findOrFail($id);
+
+        if ($this->scope->hides($item->id)) {
+            return response()->json(['message' => 'Счёт не найден'], 404);
+        }
 
         // Системность больше не запрещает удаление: счета добавляются из
         // каталога по надобности, значит и убирать лишние логично. Держит счёт
@@ -182,6 +194,16 @@ class BalanceItemsController extends TenantController
 
         $existing = $this->model()->newQuery()->pluck('code')->all();
 
+        // Коды закрытых счетов из каталога убираем: строка «уже заведён»
+        // сама по себе рассказала бы, что такой счёт в компании есть
+        $hiddenCodes = $this->scope->isEmpty() ? [] : $this->model()->newQuery()
+            ->whereIn('id', $this->scope->hiddenIds())->pluck('code')->all();
+
+        $catalog = array_filter(
+            ChartOfAccounts::all(),
+            fn($a) => !in_array($a['code'], $hiddenCodes, true)
+        );
+
         return response()->json([
             'groups' => ChartOfAccounts::groups(),
             'data'   => array_map(fn($a) => [
@@ -195,7 +217,7 @@ class BalanceItemsController extends TenantController
                 'is_default'   => (bool) $a['default'],
                 'hint'         => $a['hint'] ?? null,
                 'exists'       => in_array($a['code'], $existing, true),
-            ], ChartOfAccounts::all()),
+            ], array_values($catalog)),
         ]);
     }
 

@@ -507,6 +507,10 @@ class BudgetController extends TenantController
 
         if (!$a100) return [];
 
+        // Счёт денег закрыт должностью — факта по ДДС для этого человека нет.
+        // План при этом виден: он не содержит движений по счетам
+        if ($this->scope->hides($a100->id)) return [];
+
         // Для подневной гранулярности диапазон дат берём день-в-день,
         // для месячной — расширяем до полных месяцев.
         if ($granularity === 'day') {
@@ -587,7 +591,11 @@ class BudgetController extends TenantController
             ->where('date', '<', $dateFrom);
 
         $autoBalances = [];
-        if ($byCash) {
+        // Счёт денег закрыт — авто-остаток не считаем: он тот же факт по
+        // движениям, только накопленный
+        if ($this->scope->hides($a100->id ?? null)) {
+            $autoBalances[0] = 0.0;
+        } elseif ($byCash) {
             $rows = $autoQuery
                 ->select('info_1_id as cash_id', DB::raw('SUM(amount) as balance'))
                 ->groupBy('info_1_id')
@@ -690,6 +698,10 @@ class BudgetController extends TenantController
         foreach ($biConfig as $code => $cfg) {
             $bi = $balanceItems->get($code);
             if (!$bi) continue;
+
+            // Закрытый счёт не даёт факта: закрыли расходы — раздел расходов
+            // остаётся с планом, но без цифр по факту
+            if ($this->scope->hides($bi->id)) continue;
 
             $infoField = $cfg['field'];
             $sign = $cfg['sign'];

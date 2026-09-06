@@ -38,7 +38,10 @@ class FundPlanDocController extends TenantController
         $start     = $scheme->start_date ? Carbon::parse($scheme->start_date)->startOfDay() : $weekStart->copy();
         $priorEnd  = $weekStart->copy()->subDay();
 
-        $cashBiIds  = $this->db()->table('balance_items')->where('info_1_type', 'cash')->pluck('id')->all();
+        // Закрытые счета в расчёт фондов не входят — см. FundsController
+        $cashBiIds  = $this->scope
+            ->exclude($this->db()->table('balance_items')->where('info_1_type', 'cash'), 'id')
+            ->pluck('id')->all();
         $incomeArts = array_map('intval', json_decode($scheme->income_flow_ids ?? '[]', true) ?: []);
 
         $incomePrior = $this->flow($cashBiIds, $incomeArts, $start, $priorEnd, 'in');

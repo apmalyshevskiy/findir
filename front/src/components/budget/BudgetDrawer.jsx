@@ -619,13 +619,17 @@ function FactTab({ articleId, periodDate, docType, descendantAllMap, factDrillCo
                 <td className="px-2 py-2 align-top">
                   <div className="flex items-start gap-1.5">
                     <div className="flex-1 min-w-0">
-                      <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>
+                      {op.in_hidden
+                        ? <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium" title="Счёт закрыт для вашей должности">🔒 Скрыто</span>
+                        : <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>}
                       {op.in_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_1_name}</div>}
                       {op.in_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_2_name}</div>}
                     </div>
                     <span className="text-[9px] text-gray-300 mt-1 flex-shrink-0">→</span>
                     <div className="flex-1 min-w-0">
-                      <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>
+                      {op.out_hidden
+                        ? <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium" title="Счёт закрыт для вашей должности">🔒 Скрыто</span>
+                        : <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>}
                       {op.out_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_1_name}</div>}
                       {op.out_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_2_name}</div>}
                     </div>

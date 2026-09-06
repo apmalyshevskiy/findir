@@ -37,7 +37,14 @@ class OperationTemplatesController extends TenantController
             ->orderByDesc('use_count')->orderByDesc('last_used_at')->orderBy('id')
             ->get();
 
-        return response()->json(['data' => $rows->map(fn($r) => [
+        // Шаблон с закрытым счётом не показываем: он и подставиться не сможет —
+        // сохранение такой операции отклоняется
+        $visible = $rows->filter(function ($r) {
+            $p = json_decode($r->payload, true) ?: [];
+            return !$this->scope->hidesAny([$p['in_bi_id'] ?? null, $p['out_bi_id'] ?? null]);
+        });
+
+        return response()->json(['data' => $visible->map(fn($r) => [
             'id'           => $r->id,
             'name'         => $r->name,
             'payload'      => json_decode($r->payload, true) ?: [],

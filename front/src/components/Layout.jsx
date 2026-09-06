@@ -2,7 +2,9 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
 import { TopProgress } from './Busy'
+import api from '../api/client'
 import { listAccounts, clearAccounts } from '../utils/accounts'
+import { canView, roleName } from '../utils/permissions'
 
 /**
  * Общая сетка шапки и страницы. Ширина и поля заданы в одном месте: пока они
@@ -13,10 +15,38 @@ const SHELL = 'max-w-[1400px] mx-auto px-4 md:px-6'
 export default function Layout({ children }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const user = JSON.parse(localStorage.getItem('user') || '{}')
+
+  // Пользователь с правами лежит в localStorage с момента входа. Освежаем его
+  // при каждом заходе на страницу: администратор мог сменить должность, и
+  // человек не должен ради этого перелогиниваться
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('user') || '{}') } catch { return {} }
+  })
+
+  useEffect(() => {
+    api.get('/me')
+      .then(r => {
+        if (!r.data?.user) return
+        localStorage.setItem('user', JSON.stringify(r.data.user))
+        setUser(r.data.user)
+      })
+      .catch(() => { /* 401 обработает перехватчик, остальное не мешает работать */ })
+  }, [location.pathname])
 
   const [openMenu, setOpenMenu] = useState(null)   // label открытого выпадающего раздела
   const navRef = useRef(null)
+
+  // Отказ по правам — плашкой поверх страницы. Ловим событие от axios: так
+  // сообщение появится с любой страницы, не требуя от каждой своей обработки
+  const [forbidden, setForbidden] = useState('')
+  useEffect(() => {
+    const onForbidden = (e) => {
+      setForbidden(e.detail)
+      setTimeout(() => setForbidden(''), 6000)
+    }
+    window.addEventListener('findir:forbidden', onForbidden)
+    return () => window.removeEventListener('findir:forbidden', onForbidden)
+  }, [])
 
   // Закрытие выпадающего раздела по клику вне навигации
   useEffect(() => {
@@ -46,49 +76,56 @@ export default function Layout({ children }) {
     })
   }
 
+  // У пунктов меню указан раздел прав: закрытые не показываем. Настоящая
+  // проверка — на сервере, здесь лишь бы не звать человека в закрытую дверь
   const nav = [
-    { path: '/dashboard',        label: 'Дашборд' },
+    { path: '/dashboard',        label: 'Дашборд',      section: 'dashboard' },
     // Помощник рядом с операциями: чаще всего им и заводят операцию
-    { path: '/ai',               label: 'AI-помощник' },
-    { path: '/operations',       label: 'Операции' },
-    { path: '/documents',        label: 'Документы' },
-    { path: '/balance-sheet',    label: 'Оборотка' },
+    { path: '/ai',               label: 'AI-помощник',  section: 'ai' },
+    { path: '/operations',       label: 'Операции',     section: 'operations' },
+    { path: '/documents',        label: 'Документы',    section: 'documents' },
+    { path: '/balance-sheet',    label: 'Оборотка',     section: 'reports' },
     // Всё, что приходит в базу извне, — в одном разделе: и разовая загрузка
     // файла выписки, и обмен с учётной системой вместе с его настройкой.
     // Порознь это выглядело как разные умения, хотя задача одна
     {
       label: 'Обмен данными',
       children: [
-        { path: '/bank-statement', label: 'Банковская выписка' },
-        { path: '/data-import',    label: 'Загрузка из учётных систем' },
-        { path: '/integrations',   label: 'Настройка интеграций' },
+        { path: '/bank-statement', label: 'Банковская выписка',        section: 'exchange' },
+        { path: '/data-import',    label: 'Загрузка из учётных систем', section: 'exchange' },
+        { path: '/integrations',   label: 'Настройка интеграций',       section: 'exchange' },
       ],
     },
-    { path: '/budget',           label: 'Бюджет' },
-    { path: '/payment-calendar', label: 'Календарь' },
+    { path: '/budget',           label: 'Бюджет',    section: 'budget' },
+    { path: '/payment-calendar', label: 'Календарь', section: 'budget' },
     {
       label: 'Фонды',
       children: [
-        { path: '/fund-planning', label: 'Планирование' },
-        { path: '/fund-schemes',  label: 'Модели распределения' },
+        { path: '/fund-planning', label: 'Планирование',          section: 'budget' },
+        { path: '/fund-schemes',  label: 'Модели распределения',  section: 'budget' },
       ],
     },
     {
       label: 'Настройки',
       children: [
-        { path: '/projects',             label: 'Проекты' },
-        { path: '/balance-items',        label: 'План счетов' },
-        { path: '/document-types',       label: 'Виды документов' },
-        { path: '/info',                 label: 'Справочники' },
-        { path: '/classification-rules', label: 'Настройка правил' },
-        { path: '/acquiring-fee-rules', label: 'Эквайринг' },
-        { path: '/edit-lock-date',       label: 'Дата запрета' },
+        { path: '/projects',             label: 'Проекты',           section: 'dictionaries' },
+        { path: '/balance-items',        label: 'План счетов',       section: 'dictionaries' },
+        { path: '/document-types',       label: 'Виды документов',   section: 'dictionaries' },
+        { path: '/info',                 label: 'Справочники',       section: 'dictionaries' },
+        { path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries' },
+        { path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings' },
+        { path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings' },
         // «Интеграции» переехали в «Обмен данными» — там же, где сама загрузка
-        { path: '/ai-usage',             label: 'Расход на ИИ' },
-        { path: '/backup',               label: 'Архивная копия' },
+        { path: '/ai-usage',             label: 'Расход на ИИ',      section: 'settings' },
+        { path: '/users',                label: 'Сотрудники',        section: 'users' },
+        { path: '/roles',                label: 'Должности',         section: 'users' },
+        { path: '/backup',               label: 'Архивная копия',    section: 'backup' },
       ],
     },
-  ]
+  ].map(item => item.children
+    ? { ...item, children: item.children.filter(c => canView(c.section)) }
+    : item
+  ).filter(item => item.children ? item.children.length > 0 : canView(item.section))
 
   // активен ли раздел с подпунктами (для подсветки)
   const isGroupActive = (item) =>
@@ -165,13 +202,25 @@ export default function Layout({ children }) {
           </div>
 
           <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500">{user.name}</span>
+            <span className="text-sm text-gray-500">
+              {user.name}
+              {/* Должность рядом с именем: человек должен понимать, почему
+                  часть разделов ему не видна */}
+              {roleName() && <span className="text-gray-400"> · {roleName()}</span>}
+            </span>
             <button onClick={logout} className="text-sm text-gray-400 hover:text-red-600 transition-colors">
               Выйти
             </button>
           </div>
         </div>
       </header>
+
+      {forbidden && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] max-w-lg px-4 py-3 bg-amber-50 border border-amber-300 text-amber-900 text-sm rounded-lg shadow-lg flex items-start gap-3">
+          <span>{forbidden}</span>
+          <button onClick={() => setForbidden('')} className="text-amber-400 hover:text-amber-700">✕</button>
+        </div>
+      )}
 
       <main className={`${SHELL} py-4 md:py-6`}>{children}</main>
     </div>

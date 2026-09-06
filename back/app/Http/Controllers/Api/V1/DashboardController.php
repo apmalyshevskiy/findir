@@ -40,12 +40,7 @@ class DashboardController extends TenantController
             ? Carbon::parse($request->date)->startOfDay()
             : Carbon::yesterday();
 
-        $biIds = DB::connection($this->dbName)
-            ->table('balance_items')
-            ->whereIn('code', [self::REVENUE_CODE, self::COGS_CODE])
-            ->pluck('id', 'code');
-        $revenueBiId = $biIds[self::REVENUE_CODE] ?? null;
-        $cogsBiId    = $biIds[self::COGS_CODE] ?? null;
+        $acc = $this->metricAccounts();
 
         $projectNames = DB::connection($this->dbName)
             ->table('projects')
@@ -63,7 +58,7 @@ class DashboardController extends TenantController
         foreach ($windows as $key => $w) {
             $periods[$key] = array_merge(
                 ['label' => $w['label'], 'date_from' => $w['from']->toDateString(), 'date_to' => $anchor->toDateString()],
-                $this->buildMetrics($revenueBiId, $cogsBiId, $w['from'], $anchor, $projectFilter, $projectNames)
+                $this->buildMetrics($acc, $w['from'], $anchor, $projectFilter, $projectNames)
             );
         }
 
@@ -92,27 +87,55 @@ class DashboardController extends TenantController
         $to   = Carbon::parse($data['date_to'])->startOfDay();
         if ($to->lt($from)) { [$from, $to] = [$to, $from]; }  // перепутаны местами — меняем
 
-        $biIds = DB::connection($this->dbName)
-            ->table('balance_items')
-            ->whereIn('code', [self::REVENUE_CODE, self::COGS_CODE])
-            ->pluck('id', 'code');
-
         $projectNames = DB::connection($this->dbName)
             ->table('projects')->whereNull('deleted_at')->pluck('name', 'id');
 
         return response()->json(array_merge(
             ['date_from' => $from->toDateString(), 'date_to' => $to->toDateString()],
-            $this->buildMetrics($biIds[self::REVENUE_CODE] ?? null, $biIds[self::COGS_CODE] ?? null, $from, $to, $projectFilter, $projectNames)
+            $this->buildMetrics($this->metricAccounts(), $from, $to, $projectFilter, $projectNames)
         ));
     }
 
-    /** Построить {total, by_project} по показателям за период. */
-    private function buildMetrics(?int $revBi, ?int $cogsBi, Carbon $from, Carbon $to, ?int $projectFilter, $projectNames): array
+    /**
+     * Счета показателей с оглядкой на закрытые.
+     *
+     * Закрытый счёт не превращается в ноль: ноль — это утверждение «выручки не
+     * было», и человек начнёт его проверять. Закрытый показатель отдаём как
+     * null, плитка покажет прочерк.
+     */
+    private function metricAccounts(): array
     {
+        $biIds = DB::connection($this->dbName)
+            ->table('balance_items')
+            ->whereIn('code', [self::REVENUE_CODE, self::COGS_CODE])
+            ->pluck('id', 'code');
+
+        $rev  = isset($biIds[self::REVENUE_CODE]) ? (int) $biIds[self::REVENUE_CODE] : null;
+        $cogs = isset($biIds[self::COGS_CODE])    ? (int) $biIds[self::COGS_CODE]    : null;
+
+        $revHidden  = $this->scope->hides($rev);
+        $cogsHidden = $this->scope->hides($cogs);
+
+        return [
+            'rev'         => $revHidden  ? null : $rev,
+            'cogs'        => $cogsHidden ? null : $cogs,
+            'rev_hidden'  => $revHidden,
+            'cogs_hidden' => $cogsHidden,
+        ];
+    }
+
+    /** Построить {total, by_project} по показателям за период. */
+    private function buildMetrics(array $acc, Carbon $from, Carbon $to, ?int $projectFilter, $projectNames): array
+    {
+        [$revBi, $cogsBi] = [$acc['rev'], $acc['cogs']];
+
         $metrics = [];
         foreach ($this->metricsByProject($revBi, $cogsBi, $from, $to, $projectFilter) as $r) {
             $metrics[(int) $r->project_id] = ['revenue' => (float) $r->revenue, 'cogs' => (float) $r->cogs];
         }
+
+        $revHidden  = $acc['rev_hidden'];
+        $cogsHidden = $acc['cogs_hidden'];
 
         $byProject = [];
         $totRevenue = 0.0;
@@ -123,23 +146,25 @@ class DashboardController extends TenantController
             $byProject[] = [
                 'project_id' => $pid,
                 'name'       => $projectNames[$pid] ?? ('#' . $pid),
-                'revenue'    => $revenue,
-                'cogs'       => $cogs,
-                'foodcost'   => $this->foodcost($cogs, $revenue),
+                'revenue'    => $revHidden  ? null : $revenue,
+                'cogs'       => $cogsHidden ? null : $cogs,
+                'foodcost'   => ($revHidden || $cogsHidden) ? null : $this->foodcost($cogs, $revenue),
             ];
             $totRevenue += $revenue;
             $totCogs    += $cogs;
         }
 
-        usort($byProject, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+        usort($byProject, fn($a, $b) => ($b['revenue'] ?? 0) <=> ($a['revenue'] ?? 0));
 
         return [
             'total' => [
-                'revenue'  => round($totRevenue, 2),
-                'cogs'     => round($totCogs, 2),
-                'foodcost' => $this->foodcost($totCogs, $totRevenue),
+                'revenue'  => $revHidden  ? null : round($totRevenue, 2),
+                'cogs'     => $cogsHidden ? null : round($totCogs, 2),
+                'foodcost' => ($revHidden || $cogsHidden) ? null : $this->foodcost($totCogs, $totRevenue),
             ],
-            'by_project' => $byProject,
+            'revenue_hidden' => $revHidden,
+            'cogs_hidden'    => $cogsHidden,
+            'by_project'     => $byProject,
         ];
     }
 
@@ -169,10 +194,7 @@ class DashboardController extends TenantController
         // Ограничение числа точек графика
         if ($from->diffInDays($anchor) > 400) { $from = $anchor->copy()->subDays(400); }
 
-        $revenueBiId = DB::connection($this->dbName)
-            ->table('balance_items')
-            ->where('code', self::REVENUE_CODE)
-            ->value('id');
+        $revenueBiId = $this->metricAccounts()['rev'];
 
         // Список всех дней периода (для выравнивания и нулей)
         $dayList = [];
@@ -233,6 +255,8 @@ class DashboardController extends TenantController
             'days'      => $dayList,
             'projects'  => $projects,
             'series'    => $seriesOut,
+            // Счёт выручки закрыт — график пуст не потому, что продаж не было
+            'revenue_hidden' => $this->metricAccounts()['rev_hidden'],
         ]);
     }
 

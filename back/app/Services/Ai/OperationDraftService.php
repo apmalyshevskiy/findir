@@ -24,6 +24,28 @@ class OperationDraftService
         private AnalyticsQueryService $analytics,
     ) {}
 
+    /** Закрытые для текущего человека счета. Ставится контроллером после initTenant. */
+    private ?\App\Services\AccountScope $scope = null;
+
+    /**
+     * Закрытые счета не попадают даже в промпт.
+     *
+     * Это сильнее, чем фильтр на выдаче: модель просто не знает, что счёт
+     * существует, — не назовёт его в проводке, не сошлётся на него в отчёте
+     * и не проговорится о нём в ответе.
+     */
+    public function withScope(\App\Services\AccountScope $scope): self
+    {
+        $this->scope = $scope;
+
+        return $this;
+    }
+
+    private function scope(): \App\Services\AccountScope
+    {
+        return $this->scope ??= \App\Services\AccountScope::unrestricted();
+    }
+
     /** Что делать с приложенным файлом, если пользователь не написал ничего своего. */
     private const FILE_INSTRUCTION = 'Распознай приложенный документ (чек, счёт, накладную, выписку) '
         . 'и сформируй по нему операции. Если документов/строк несколько — верни несколько операций. '
@@ -133,7 +155,8 @@ class OperationDraftService
      */
     private function run(string $db, string|array $userContent, ?string $model, array $history, array $extra = []): array
     {
-        $accounts = DB::connection($db)->table('balance_items')
+        $accounts = $this->scope()
+            ->exclude(DB::connection($db)->table('balance_items'), 'id')
             ->orderBy('code')->get(['id', 'code', 'name', 'info_1_type', 'info_2_type']);
 
         $projects = DB::connection($db)->table('projects')
@@ -168,7 +191,7 @@ class OperationDraftService
         // Показатели считаем сами: модель отдала только описание выборки
         $reports = [];
         foreach (($result['reports'] ?? []) as $spec) {
-            $r = $this->analytics->run($db, is_array($spec) ? $spec : [], $accounts);
+            $r = $this->analytics->run($db, is_array($spec) ? $spec : [], $accounts, $this->scope());
             if ($r) $reports[] = $r;
         }
 
@@ -247,6 +270,13 @@ class OperationDraftService
     private function bulkQuery(string $db, array $f)
     {
         $q = DB::connection($db)->table('operations')->whereNull('deleted_at');
+
+        // Операции с закрытым счётом массовая правка не трогает: править то,
+        // чего не видел, нельзя — ни руками, ни через помощника
+        if (!$this->scope()->isEmpty()) {
+            $hidden = $this->scope()->hiddenIds();
+            $q->whereNotIn('in_bi_id', $hidden)->whereNotIn('out_bi_id', $hidden);
+        }
 
         if ($f['date_from']) $q->where('date', '>=', $f['date_from'] . ' 00:00:00');
         if ($f['date_to'])   $q->where('date', '<=', $f['date_to'] . ' 23:59:59');
@@ -338,6 +368,15 @@ class OperationDraftService
      */
     public function revertBulk(string $db, int $logId, ?string $lockDate = null): array
     {
+        // Откат возвращает пачку целиком, а в ней могли быть операции с
+        // закрытыми счетами — разбирать её наполовину нельзя
+        if (!$this->scope()->isEmpty()) {
+            return [
+                'ok'      => false,
+                'message' => 'Откат массовой правки доступен только должности без закрытых счетов.',
+            ];
+        }
+
         return app(\App\Services\BulkOperationEditor::class)->revert($db, $logId, $lockDate);
     }
 

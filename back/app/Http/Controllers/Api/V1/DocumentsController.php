@@ -54,6 +54,8 @@ class DocumentsController extends TenantController
         if ($request->date_from)  $query->where('date', '>=', $request->date_from);
         if ($request->date_to)    $query->where('date', '<=', $request->date_to);
 
+        $this->excludeHidden($query);
+
         $perPage = $request->per_page ?? 50;
         $page    = $request->page ?? 1;
         $total   = $query->count();
@@ -64,6 +66,55 @@ class DocumentsController extends TenantController
             'total' => $total,
             'page'  => (int) $page,
         ]);
+    }
+
+    /**
+     * Документы с закрытыми счетами — вон из выборки.
+     *
+     * Правило другое, чем у операций, и намеренно: документ — это бумага, сумма
+     * которой обязана сходиться со строками. Показать авансовый отчёт без двух
+     * строк хуже, чем не показать его вовсе, а ведомость начисления зарплаты
+     * «наполовину» не должна существовать в принципе.
+     */
+    private function excludeHidden($query): void
+    {
+        if ($this->scope->isEmpty()) return;
+
+        $hidden = $this->scope->hiddenIds();
+
+        $query->whereNotIn('bi_id', $hidden)
+            ->whereNotExists(function ($q) use ($hidden) {
+                $q->from('document_items as di')
+                    ->whereColumn('di.document_id', 'documents.id')
+                    ->where(fn($w) => $w->whereIn('di.bi_id', $hidden)
+                        ->orWhereIn('di.head_bi_id', $hidden));
+            });
+    }
+
+    /** Виден ли документ этому человеку. */
+    private function docHidden($doc): bool
+    {
+        if ($this->scope->isEmpty()) return false;
+
+        if ($this->scope->hides($doc->bi_id)) return true;
+
+        $hidden = $this->scope->hiddenIds();
+
+        return DB::connection($this->dbName)->table('document_items')
+            ->where('document_id', $doc->id)
+            ->where(fn($q) => $q->whereIn('bi_id', $hidden)->orWhereIn('head_bi_id', $hidden))
+            ->exists();
+    }
+
+    /**
+     * Скрытого документа для человека не существует — отвечаем «не найден».
+     *
+     * Не «нет прав»: отказ подтвердил бы, что документ с таким номером есть,
+     * а по номеру и дате уже можно многое понять.
+     */
+    private function docNotFound(): JsonResponse
+    {
+        return response()->json(['message' => 'Документ не найден'], 404);
     }
 
     // ─── GET /documents/{id} ──────────────────────────────────
@@ -81,6 +132,8 @@ class DocumentsController extends TenantController
             ])
             ->findOrFail($id);
 
+        if ($this->docHidden($doc)) return $this->docNotFound();
+
         return response()->json(['data' => $this->formatDocument($doc, withItems: true)]);
     }
 
@@ -93,6 +146,8 @@ class DocumentsController extends TenantController
         $data = $request->validate($this->rules());
 
         if ($resp = $this->lockError($data['date'])) return $resp;
+
+        if ($this->payloadHasHidden($data)) return $this->hiddenAccountError('документе');
 
         $doc = $this->model()->newQuery()->make();
         $doc->fill($this->docData($data));
@@ -127,6 +182,8 @@ class DocumentsController extends TenantController
 
         $doc = $this->model()->newQuery()->findOrFail($id);
 
+        if ($this->docHidden($doc)) return $this->docNotFound();
+
         // Нельзя трогать документ в закрытом периоде
         if ($resp = $this->lockError($doc->date)) return $resp;
 
@@ -140,6 +197,8 @@ class DocumentsController extends TenantController
 
         // Нельзя переносить документ в закрытый период
         if ($resp = $this->lockError($data['date'])) return $resp;
+
+        if ($this->payloadHasHidden($data)) return $this->hiddenAccountError('документе');
 
         $doc->fill($this->docData($data));
         $doc->save();
@@ -169,6 +228,8 @@ class DocumentsController extends TenantController
             ->with('items')
             ->findOrFail($id);
 
+        if ($this->docHidden($doc)) return $this->docNotFound();
+
         // Проведение создаёт операции в периоде документа — запрещаем в закрытом периоде
         if ($resp = $this->lockError($doc->date)) return $resp;
 
@@ -195,6 +256,8 @@ class DocumentsController extends TenantController
         $this->initTenant($request);
 
         $doc = $this->model()->newQuery()->findOrFail($id);
+
+        if ($this->docHidden($doc)) return $this->docNotFound();
 
         // Отмена проведения удаляет операции в периоде документа — запрещаем в закрытом периоде
         if ($resp = $this->lockError($doc->date)) return $resp;
@@ -223,6 +286,8 @@ class DocumentsController extends TenantController
         $this->initTenant($request);
 
         $doc = $this->model()->newQuery()->findOrFail($id);
+
+        if ($this->docHidden($doc)) return $this->docNotFound();
 
         $rows = DB::connection($this->dbName)->table('balance_changes as bc')
             ->join('operations as o', 'o.id', '=', 'bc.operation_id')
@@ -257,6 +322,8 @@ class DocumentsController extends TenantController
         $this->initTenant($request);
 
         $doc = $this->model()->newQuery()->findOrFail($id);
+
+        if ($this->docHidden($doc)) return $this->docNotFound();
 
         // Нельзя удалять документ в закрытом периоде
         if ($resp = $this->lockError($doc->date)) return $resp;
@@ -305,6 +372,26 @@ class DocumentsController extends TenantController
             'items.*.amount_cost'    => 'nullable|numeric|min:0',
             'items.*.note'           => 'nullable|string',
         ];
+    }
+
+    /**
+     * Нет ли в присланном документе закрытого счёта.
+     *
+     * Проверяем и шапку, и строки, и переопределения в строках: id можно
+     * подставить руками, минуя выпадающий список, где закрытых счетов нет.
+     */
+    private function payloadHasHidden(array $data): bool
+    {
+        if ($this->scope->isEmpty()) return false;
+
+        $ids = [$data['bi_id'] ?? null, $data['revenue_bi_id'] ?? null, $data['cogs_bi_id'] ?? null];
+
+        foreach ($data['items'] ?? [] as $row) {
+            $ids[] = $row['bi_id'] ?? null;
+            $ids[] = $row['head_bi_id'] ?? null;
+        }
+
+        return $this->scope->hidesAny($ids);
     }
 
     private function docData(array $data): array

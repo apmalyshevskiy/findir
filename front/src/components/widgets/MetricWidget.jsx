@@ -9,7 +9,15 @@ const FORMATTERS = {
   cogs:     formatMoney,
   foodcost: formatPercent,
 }
-const fmt = (indicator, v) => (FORMATTERS[indicator] || String)(v)
+/**
+ * null — не ноль.
+ *
+ * Счёт показателя может быть закрыт должностью; сервер тогда присылает null.
+ * Показать вместо этого «0 ₽» значило бы соврать: человек пошёл бы искать,
+ * куда делась выручка.
+ */
+const fmt = (indicator, v) =>
+  v === null || v === undefined ? '—' : (FORMATTERS[indicator] || String)(v)
 
 // props:
 //   widget   — конфиг {indicator, breakdown, ...}

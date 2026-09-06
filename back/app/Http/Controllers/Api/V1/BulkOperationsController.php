@@ -26,8 +26,10 @@ class BulkOperationsController extends TenantController
             return response()->json(['message' => 'Не выбрано ни одного поля для изменения'], 422);
         }
 
+        if ($resp = $this->accountGuard($set)) return $resp;
+
         return response()->json(
-            $this->editor->preview($this->dbName, $ids, $set, $side, $this->editLockDate())
+            $this->editor->preview($this->dbName, $this->visibleIds($ids), $set, $side, $this->editLockDate())
         );
     }
 
@@ -40,9 +42,40 @@ class BulkOperationsController extends TenantController
             return response()->json(['message' => 'Не выбрано ни одного поля для изменения'], 422);
         }
 
-        $res = $this->editor->apply($this->dbName, $ids, $set, $side, $this->editLockDate());
+        if ($resp = $this->accountGuard($set)) return $resp;
+
+        $res = $this->editor->apply($this->dbName, $this->visibleIds($ids), $set, $side, $this->editLockDate());
 
         return response()->json($res + ['ok' => true]);
+    }
+
+    /** Нельзя переводить операции на счёт, закрытый для этой должности. */
+    private function accountGuard(array $set)
+    {
+        return $this->scope->hidesAny([$set['in_bi_id'] ?? null, $set['out_bi_id'] ?? null])
+            ? $this->hiddenAccountError('выбранном счёте')
+            : null;
+    }
+
+    /**
+     * Убрать из пачки операции с закрытым счётом.
+     *
+     * Молча, а не отказом на всю пачку: человек отметил галочками то, что видел
+     * в списке, — замазанная операция могла попасть туда через «выделить все».
+     * Предпросмотр покажет уменьшившееся число, и оно совпадёт с тем, что
+     * реально изменится.
+     */
+    private function visibleIds(array $ids): array
+    {
+        if ($this->scope->isEmpty() || !$ids) return $ids;
+
+        $hidden = $this->scope->hiddenIds();
+
+        return DB::connection($this->dbName)->table('operations')
+            ->whereIn('id', $ids)
+            ->whereNotIn('in_bi_id', $hidden)
+            ->whereNotIn('out_bi_id', $hidden)
+            ->pluck('id')->map('intval')->values()->all();
     }
 
     /** Журнал массовых правок — и ручных, и сделанных через ИИ. */
@@ -65,6 +98,15 @@ class BulkOperationsController extends TenantController
     public function revert(Request $request, int $id)
     {
         $this->initTenant($request);
+
+        // Откат возвращает пачку целиком, а в ней могли быть операции с
+        // закрытыми счетами. Разбирать пачку наполовину нельзя — отказываем
+        if (!$this->scope->isEmpty()) {
+            return response()->json([
+                'message' => 'Откат массовой правки доступен только должности без закрытых счетов: '
+                    . 'в пачке могут быть операции, которых вы не видите.',
+            ], 403);
+        }
 
         $res = $this->editor->revert($this->dbName, $id, $this->editLockDate());
 

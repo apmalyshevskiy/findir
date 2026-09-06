@@ -247,6 +247,16 @@ class IntegrationsController extends TenantController
             'ids.*'  => 'string|max:191',
         ]);
 
+        // Загрузка пишет проводки на счета из настроек интеграции, а не на
+        // выбранные человеком: отфильтровать закрытые значило бы загрузить
+        // документ наполовину. Поэтому — запрет, а не фильтр
+        if (!$this->scope->isEmpty()) {
+            return response()->json([
+                'message' => 'Загрузка недоступна должности с закрытыми счетами: '
+                    . 'она создаёт проводки по всем счетам настройки.',
+            ], 403);
+        }
+
         if ($resp = $this->periodError($data['from'], $data['to'])) return $resp;
 
         $from = Carbon::parse($data['from'])->toDateString();

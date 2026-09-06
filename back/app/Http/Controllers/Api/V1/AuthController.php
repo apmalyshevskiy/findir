@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
+use App\Services\Access;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -205,6 +206,14 @@ class AuthController extends Controller
             ]);
         }
 
+        // Выключенного сотрудника не пускаем — и говорим почему, чтобы он не
+        // считал, что забыл пароль
+        if (!$user->is_active) {
+            throw ValidationException::withMessages([
+                'email' => ['Доступ отключён администратором компании.'],
+            ]);
+        }
+
         // Только сессии этого пользователя В ЭТОЙ компании. Без tenant_id здесь
         // сносились токены с тем же id пользователя в других базах, а id = 1 у
         // владельца каждой компании — вход к одному клиенту выбрасывал
@@ -217,14 +226,12 @@ class AuthController extends Controller
 
         $plainToken = $this->createToken($tenant->id, $user->id);
 
+        DB::connection($dbName)->table('users')->where('id', $user->id)
+            ->update(['last_login_at' => now()]);
+
         return response()->json([
             'token'  => $plainToken,
-            'user'   => [
-                'id'        => $user->id,
-                'name'      => $user->name,
-                'email'     => $user->email,
-                'tenant_id' => $tenant->id,
-            ],
+            'user'   => $this->userPayload($dbName, $user, $tenant->id),
             'tenant' => [
                 'id'   => $tenant->id,
                 'name' => $tenant->name,
@@ -266,14 +273,77 @@ class AuthController extends Controller
             ->where('id', $tokenRow->tokenable_id)
             ->first();
 
+        if (!$user || !$user->is_active) {
+            return response()->json(['message' => 'Доступ отключён администратором'], 403);
+        }
+
         return response()->json([
-            'user' => [
-                'id'        => $user->id,
-                'name'      => $user->name,
-                'email'     => $user->email,
-                'tenant_id' => $tenantId,
-            ],
+            'user' => $this->userPayload($dbName, $user, $tenantId),
         ]);
+    }
+
+    /** Смена собственного пароля: выданный администратором иначе останется навсегда */
+    public function changePassword(Request $request)
+    {
+        $data = $request->validate([
+            'current_password' => 'required|string',
+            'password'         => 'required|string|min:8|confirmed',
+        ]);
+
+        $plainToken = $request->bearerToken();
+        $tokenRow   = $plainToken ? DB::table('personal_access_tokens')
+            ->where('token', hash('sha256', $plainToken))->first() : null;
+
+        if (!$tokenRow) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+
+        $dbName = $this->connectTenant($tokenRow->tenant_id);
+        $user   = DB::connection($dbName)->table('users')->where('id', $tokenRow->tokenable_id)->first();
+
+        if (!$user || !Hash::check($data['current_password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['Текущий пароль указан неверно.'],
+            ]);
+        }
+
+        DB::connection($dbName)->table('users')->where('id', $user->id)->update([
+            'password'   => Hash::make($data['password']),
+            'updated_at' => now(),
+        ]);
+
+        // Остальные сессии гасим: смена пароля обычно и делается ради этого
+        DB::table('personal_access_tokens')
+            ->where('tokenable_type', 'tenant_user')
+            ->where('tokenable_id', $user->id)
+            ->where('tenant_id', $tokenRow->tenant_id)
+            ->where('token', '!=', hash('sha256', $plainToken))
+            ->delete();
+
+        return response()->json(['message' => 'Пароль изменён']);
+    }
+
+    /**
+     * Пользователь для фронта: вместе с должностью и картой прав.
+     *
+     * Права нужны интерфейсу, чтобы не показывать то, чего человек всё равно
+     * не сможет сделать. Решает при этом сервер — это подсказка, не защита.
+     */
+    private function userPayload(string $dbName, $user, string $tenantId): array
+    {
+        $role = $user->role_id
+            ? DB::connection($dbName)->table('roles')->where('id', $user->role_id)->first()
+            : null;
+
+        return [
+            'id'          => $user->id,
+            'name'        => $user->name,
+            'email'       => $user->email,
+            'tenant_id'   => $tenantId,
+            'role'        => $role ? ['id' => $role->id, 'code' => $role->code, 'name' => $role->name] : null,
+            'is_admin'    => $role?->code === 'admin',
+            'permissions' => Access::permissionsFor($dbName, (int) $user->id),
+        ];
     }
 
     public function logout(Request $request)

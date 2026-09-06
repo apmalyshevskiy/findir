@@ -21,6 +21,19 @@ class AiController extends TenantController
         private OperationDraftService $drafts,
     ) {}
 
+    /**
+     * Помощник работает в границах должности.
+     *
+     * Закрытые счета не должны попадать даже в промпт: спрятать их только в
+     * ответе мало — модель проговорилась бы о них в свободном тексте.
+     */
+    protected function initTenant(Request $request): void
+    {
+        parent::initTenant($request);
+
+        $this->drafts->withScope($this->scope);
+    }
+
     /** GET /ai/status — доступны ли ИИ-функции (для показа кнопок на фронте) */
     public function status(Request $request)
     {

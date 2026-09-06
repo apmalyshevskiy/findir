@@ -41,6 +41,17 @@ class OperationsController extends TenantController
         if ($request->external_date) $query->where('external_date', $request->external_date);
         if ($request->ids)           $query->whereIn('id', array_map('intval', explode(',', $request->ids)));
 
+        // Операция, у которой закрыты обе стороны, не показывается вовсе.
+        // Оставшиеся — с одной закрытой стороной — показываются замазанными:
+        // иначе у кассира не сошёлся бы остаток по расчётному счёту, деньги
+        // ушли бы в никуда. Замазывание делает formatOperation
+        if (!$this->scope->isEmpty()) {
+            $hidden = $this->scope->hiddenIds();
+            $query->where(function ($q) use ($hidden) {
+                $q->whereNotIn('in_bi_id', $hidden)->orWhereNotIn('out_bi_id', $hidden);
+            });
+        }
+
         if ($request->info_id) {
             $infoId = $request->info_id;
             $query->where(function ($q) use ($infoId) {
@@ -94,6 +105,10 @@ class OperationsController extends TenantController
 
         if ($resp = $this->lockError($data['date'])) return $resp;
 
+        if ($this->scope->hidesAny([$data['in_bi_id'], $data['out_bi_id']])) {
+            return $this->hiddenAccountError();
+        }
+
         // is_posted задаём явно, а не полагаемся на умолчание схемы: после
         // create() модель не перечитывается, и в ответе оказалось бы false,
         // хотя в базе операция проведена
@@ -112,6 +127,12 @@ class OperationsController extends TenantController
         $this->initTenant($request);
 
         $op = $this->model()->newQuery()->findOrFail($id);
+
+        // Замазанную операцию править нельзя: форма её не видела целиком и
+        // сохранила бы то, чего человеку не показывали
+        if ($this->scope->hidesAny([$op->in_bi_id, $op->out_bi_id])) {
+            return $this->hiddenAccountError();
+        }
 
         // Нельзя трогать операцию в закрытом периоде
         if ($resp = $this->lockError($op->date)) return $resp;
@@ -150,6 +171,11 @@ class OperationsController extends TenantController
         // Нельзя переносить операцию в закрытый период
         if ($resp = $this->lockError($data['date'])) return $resp;
 
+        // ...и нельзя увести операцию на закрытый счёт
+        if ($this->scope->hidesAny([$data['in_bi_id'], $data['out_bi_id']])) {
+            return $this->hiddenAccountError();
+        }
+
         $op->update(array_merge($data, $this->quantities($data)));
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
 
@@ -161,6 +187,10 @@ class OperationsController extends TenantController
         $this->initTenant($request);
 
         $op = $this->model()->newQuery()->findOrFail($id);
+
+        if ($this->scope->hidesAny([$op->in_bi_id, $op->out_bi_id])) {
+            return $this->hiddenAccountError();
+        }
 
         // Нельзя удалять операцию в закрытом периоде
         if ($resp = $this->lockError($op->date)) return $resp;
@@ -193,6 +223,10 @@ class OperationsController extends TenantController
 
         $op = $this->model()->newQuery()->findOrFail($id);
 
+        if ($this->scope->hidesAny([$op->in_bi_id, $op->out_bi_id])) {
+            return $this->hiddenAccountError();
+        }
+
         if ($resp = $this->lockError($op->date)) return $resp;
 
         // Проведением операций документа управляет сам документ: снимешь здесь —
@@ -223,7 +257,15 @@ class OperationsController extends TenantController
 
         $op = $this->model()->newQuery()->findOrFail($id);
 
-        $rows = DB::connection($this->dbName)->table('balance_changes as bc')
+        // Обе стороны закрыты — операции для этого человека не существует
+        if ($this->scope->hides($op->in_bi_id) && $this->scope->hides($op->out_bi_id)) {
+            return response()->json(['message' => 'Операция не найдена'], 404);
+        }
+
+        $rows = $this->scope->exclude(
+            DB::connection($this->dbName)->table('balance_changes as bc'),
+            'bc.bi_id'
+        )
             ->leftJoin('balance_items as bi', 'bi.id', '=', 'bc.bi_id')
             ->leftJoin('info as i1', 'i1.id', '=', 'bc.info_1_id')
             ->leftJoin('info as i2', 'i2.id', '=', 'bc.info_2_id')
@@ -272,9 +314,32 @@ class OperationsController extends TenantController
         ];
     }
 
+    /**
+     * Замазать закрытую сторону операции.
+     *
+     * Счёт и аналитика уходят вместе: «Иванов И. И.» рядом с суммой рассказывает
+     * ровно то, что мы прячем. Имя подменяем на «Скрыто», а не оставляем пустым, —
+     * так любое место, где строку просто выводят, скажет правду само.
+     */
+    private function maskSide(array $out, string $prefix): array
+    {
+        $out[$prefix . '_bi_id']   = null;
+        $out[$prefix . '_bi_code'] = null;
+        $out[$prefix . '_bi_name'] = 'Скрыто';
+        $out[$prefix . '_hidden']  = true;
+
+        foreach ([1, 2, 3] as $n) {
+            $out[$prefix . "_info_{$n}_id"]   = null;
+            $out[$prefix . "_info_{$n}_name"] = null;
+            $out[$prefix . "_info_{$n}_type"] = null;
+        }
+
+        return $out;
+    }
+
     private function formatOperation(Operation $op): array
     {
-        return [
+        $out = [
             'id'              => $op->id,
             // Отдаём «настенное» время без метки пояса.
             //
@@ -318,7 +383,16 @@ class OperationsController extends TenantController
             'out_info_1_name' => $op->outInfo1?->name,
             'out_info_2_id'   => $op->out_info_2_id,
             'out_info_2_name' => $op->outInfo2?->name,
+            'in_hidden'       => false,
+            'out_hidden'      => false,
             'created_at'      => $op->created_at,
         ];
+
+        if ($this->scope->isEmpty()) return $out;
+
+        if ($this->scope->hides($op->in_bi_id))  $out = $this->maskSide($out, 'in');
+        if ($this->scope->hides($op->out_bi_id)) $out = $this->maskSide($out, 'out');
+
+        return $out;
     }
 }

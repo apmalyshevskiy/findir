@@ -26,13 +26,28 @@ use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
 use App\Http\Controllers\Api\V1\BackupController;
 use App\Http\Controllers\Api\V1\IntegrationsController;
+use App\Http\Controllers\Api\V1\UsersController;
+use App\Http\Controllers\Api\V1\RolesController;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health',    HealthController::class);
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login',    [AuthController::class, 'login']);
     Route::get('/me',        [AuthController::class, 'me']);
+    Route::post('/me/password', [AuthController::class, 'changePassword']);
     Route::post('/logout',   [AuthController::class, 'logout']);
+
+    // Сотрудники и должности
+    Route::get   ('/users',                [UsersController::class, 'index']);
+    Route::post  ('/users',                [UsersController::class, 'store']);
+    Route::put   ('/users/{id}',           [UsersController::class, 'update']);
+    Route::post  ('/users/{id}/password',  [UsersController::class, 'password']);
+    Route::delete('/users/{id}',           [UsersController::class, 'destroy']);
+
+    Route::get   ('/roles',      [RolesController::class, 'index']);
+    Route::post  ('/roles',      [RolesController::class, 'store']);
+    Route::put   ('/roles/{id}', [RolesController::class, 'update']);
+    Route::delete('/roles/{id}', [RolesController::class, 'destroy']);
 
     // Проверка домена при регистрации (публичные)
     Route::get('/check-domain',   [AuthController::class, 'checkDomain']);

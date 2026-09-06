@@ -55,6 +55,13 @@ class CostController extends TenantController
             'items.*.quantity'   => 'required|numeric|min:0',
         ]);
 
+        // Себестоимость не фильтруем, а запрещаем: выкинуть часть движений из
+        // расчёта значит выдать неверное число под видом верного. Отфильтровать
+        // можно то, что показывают, но не то, из чего считают
+        if ($this->scope->hidesAny(array_column($data['items'], 'bi_id'))) {
+            return $this->hiddenAccountError('строках');
+        }
+
         $results = CostCalculatorService::calculate(
             $this->dbName,
             $data['date'],

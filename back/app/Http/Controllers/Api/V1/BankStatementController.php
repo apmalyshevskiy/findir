@@ -39,6 +39,17 @@ class BankStatementController extends TenantController
         $matcher = new BankStatementMatcher($this->dbName);
         $rows    = $matcher->matchRows($rows, $header['account_number'] ?? '');
 
+        // Подсказку на закрытый счёт снимаем: сохранить такую строку всё равно
+        // не выйдет, а в форме она выглядела бы счётом-невидимкой
+        if (!$this->scope->isEmpty()) {
+            foreach ($rows as &$r) {
+                foreach (['suggested_counter_bi_id', 'suggested_fee_bi_id'] as $f) {
+                    if ($this->scope->hides($r[$f] ?? null)) $r[$f] = null;
+                }
+            }
+            unset($r);
+        }
+
         // ── Поиск дублей ──────────────────────────────────────────────────
         $existingMap = $matcher->findExistingOperations($rows);
 

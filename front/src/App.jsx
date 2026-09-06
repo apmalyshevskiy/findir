@@ -11,6 +11,8 @@ import DocumentsPage from './pages/DocumentsPage'
 import DocumentTypesPage from './pages/DocumentTypesPage'
 import AiUsagePage from './pages/AiUsagePage'
 import AiAssistantPage from './pages/AiAssistantPage'
+import UsersPage from './pages/UsersPage'
+import RolesPage from './pages/RolesPage'
 import BudgetPage from './pages/BudgetPage'
 import PaymentCalendarPage from './pages/PaymentCalendarPage'
 import ClassificationRulesPage from './pages/ClassificationRulesPage'
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="/document-types"       element={<PrivateRoute><DocumentTypesPage /></PrivateRoute>} />
         <Route path="/ai-usage"             element={<PrivateRoute><AiUsagePage /></PrivateRoute>} />
         <Route path="/ai"                   element={<PrivateRoute><AiAssistantPage /></PrivateRoute>} />
+        <Route path="/users"                element={<PrivateRoute><UsersPage /></PrivateRoute>} />
+        <Route path="/roles"                element={<PrivateRoute><RolesPage /></PrivateRoute>} />
         <Route path="/edit-lock-date"       element={<PrivateRoute><EditLockDatePage /></PrivateRoute>} />
         <Route path="/backup"               element={<PrivateRoute><BackupPage /></PrivateRoute>} />
         <Route path="/integrations"         element={<PrivateRoute><IntegrationsPage /></PrivateRoute>} />

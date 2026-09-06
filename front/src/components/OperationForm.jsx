@@ -419,6 +419,10 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
   // Операцию, рождённую документом, сервер править не даст — и правильно:
   // документ пересоздаёт свои проводки при каждом проведении
   const fromDocument = !!(operation?.table_name === 'documents' && operation?.table_id)
+  // Одна из сторон закрыта должностью. Сервер такую правку не примет: форма
+  // сохранила бы то, чего человеку не показывали
+  const hasHidden = !!(operation?.in_hidden || operation?.out_hidden)
+  const locked = fromDocument || hasHidden
   const src = operation || initial || null
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects] = useState([])
@@ -792,7 +796,19 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
             </div>
           )}
 
-          <fieldset disabled={fromDocument} className="contents">
+          {hasHidden && (
+            <div className="bg-gray-50 border border-gray-200 text-gray-700 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+              <span className="text-base leading-none">🔒</span>
+              <span>
+                В операции есть счёт, закрытый для вашей должности — она доступна только для чтения.
+                <span className="block text-[11px] text-gray-500 mt-0.5">
+                  Сумма и дата видны, счёт и аналитика закрытой стороны — нет.
+                </span>
+              </span>
+            </div>
+          )}
+
+          <fieldset disabled={locked} className="contents">
 
           {projects.length > 1 && (
             <div>
@@ -847,9 +863,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onCancel}
               className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">
-              {fromDocument ? 'Закрыть' : 'Отмена'}
+              {locked ? 'Закрыть' : 'Отмена'}
             </button>
-            {!fromDocument && (
+            {!locked && (
               <button type="submit" disabled={loading}
                 className="flex-1 px-4 py-2.5 bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium">
                 {loading ? 'Сохранение...' : isEdit ? 'Обновить' : 'Сохранить'}
