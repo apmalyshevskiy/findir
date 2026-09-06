@@ -39,13 +39,14 @@ class DocumentTypesController extends TenantController
             $query->where('is_active', true);
         }
 
-        // Вид, у которого счёт шапки или строк закрыт, для этого человека
-        // бесполезен: документ по нему всё равно не сохранится
-        if (!$this->scope->isEmpty()) {
-            $hidden = $this->scope->hiddenIds();
-            $query->where(fn($q) => $q->whereNull('head_bi_id')->orWhereNotIn('head_bi_id', $hidden))
-                ->where(fn($q) => $q->whereNull('item_bi_id')->orWhereNotIn('item_bi_id', $hidden));
-        }
+        // Виды по закрытым счетам НЕ прячем.
+        //
+        // head_bi_id и item_bi_id — это подстановка для нового документа, а не
+        // ограничение: счёт шапки и счёт каждой строки хранятся в самом
+        // документе и свободно меняются. Спрятав вид, мы убирали вкладку целиком
+        // и вместе с ней все документы этого вида — включая те, где закрытого
+        // счёта нет вовсе. Закрытые счета вырезаются по документам, в
+        // DocumentsController; сама подстановка гасится в format().
 
         $used = DB::connection($this->dbName)->table('documents')
             ->whereNull('deleted_at')
@@ -173,17 +174,23 @@ class DocumentTypesController extends TenantController
 
     private function format(DocumentType $t, int $documentsCount): array
     {
+        // Подстановка на закрытый счёт человеку не нужна: он всё равно не
+        // увидит его в списке счетов, а форма открылась бы с пустым местом
+        // вместо счёта. Отдаём пусто — он выберет свой
+        $headHidden = $this->scope->hides($t->head_bi_id);
+        $itemHidden = $this->scope->hides($t->item_bi_id);
+
         return [
             'id'              => $t->id,
             'code'            => $t->code,
             'name'            => $t->name,
-            'head_bi_id'      => $t->head_bi_id,
-            'head_bi_code'    => $t->headBalanceItem?->code,
-            'head_bi_name'    => $t->headBalanceItem?->name,
+            'head_bi_id'      => $headHidden ? null : $t->head_bi_id,
+            'head_bi_code'    => $headHidden ? null : $t->headBalanceItem?->code,
+            'head_bi_name'    => $headHidden ? null : $t->headBalanceItem?->name,
             'head_side'       => $t->head_side,
-            'item_bi_id'      => $t->item_bi_id,
-            'item_bi_code'    => $t->itemBalanceItem?->code,
-            'item_bi_name'    => $t->itemBalanceItem?->name,
+            'item_bi_id'      => $itemHidden ? null : $t->item_bi_id,
+            'item_bi_code'    => $itemHidden ? null : $t->itemBalanceItem?->code,
+            'item_bi_name'    => $itemHidden ? null : $t->itemBalanceItem?->name,
             'show_quantity'   => $t->show_quantity,
             'show_price'      => $t->show_price,
             'show_vat'        => $t->show_vat,

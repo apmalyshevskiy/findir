@@ -72,11 +72,16 @@ export default function RolesPage() {
   const [saving, setSaving]     = useState(false)
   const [accounts, setAccounts] = useState([])
   const [showAccounts, setShowAccounts] = useState(false)
+  // Разделы, где «изменение» вообще что-то даёт, и подсказки к неочевидным
+  const [editable, setEditable] = useState([])
+  const [hints, setHints]       = useState({})
 
   const load = () => getRoles().then(r => {
     setRoles(r.data.data || [])
     setSections(r.data.sections || {})
     setLevels(r.data.levels || {})
+    setEditable(r.data.editable_sections || [])
+    setHints(r.data.section_hints || {})
   })
 
   useEffect(() => {
@@ -168,24 +173,37 @@ export default function RolesPage() {
           )}
 
           <div className="border border-gray-100 rounded-lg overflow-hidden">
-            {Object.entries(sections).map(([key, label]) => (
-              <div key={key} className="flex items-center justify-between gap-4 px-4 py-2 border-b border-gray-50 last:border-0">
-                <span className="text-sm text-gray-700">{label}</span>
-                <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs">
-                  {Object.entries(levels).map(([lvl, lvlLabel]) => (
-                    <button key={lvl} type="button" disabled={isAdminRole}
-                      onClick={() => setForm(f => ({ ...f, permissions: { ...f.permissions, [key]: lvl } }))}
-                      className={`px-3 py-1.5 rounded-md transition-colors disabled:opacity-60 ${
-                        form.permissions[key] === lvl
-                          ? 'bg-white shadow-sm text-gray-800 font-medium'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}>
-                      {lvlLabel}
-                    </button>
-                  ))}
+            {Object.entries(sections).map(([key, label]) => {
+              // В разделе, где нечего менять, третьей кнопки нет: переключатель
+              // без действия хуже, чем его отсутствие. Сохранённое ранее
+              // «изменение» показываем как просмотр — ровно так его и считает сервер
+              const canEdit = editable.includes(key)
+              const shown   = !canEdit && form.permissions[key] === 'edit' ? 'view' : form.permissions[key]
+              const choices = Object.entries(levels).filter(([lvl]) => canEdit || lvl !== 'edit')
+
+              return (
+                <div key={key} className="flex items-center justify-between gap-4 px-4 py-2 border-b border-gray-50 last:border-0">
+                  <span className="text-sm text-gray-700">
+                    {label}
+                    {!canEdit && <span className="block text-[11px] text-gray-400">раздел только читает</span>}
+                    {hints[key] && <span className="block text-[11px] text-gray-400">{hints[key]}</span>}
+                  </span>
+                  <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0">
+                    {choices.map(([lvl, lvlLabel]) => (
+                      <button key={lvl} type="button" disabled={isAdminRole}
+                        onClick={() => setForm(f => ({ ...f, permissions: { ...f.permissions, [key]: lvl } }))}
+                        className={`px-3 py-1.5 rounded-md transition-colors disabled:opacity-60 ${
+                          shown === lvl
+                            ? 'bg-white shadow-sm text-gray-800 font-medium'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}>
+                        {lvlLabel}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Второй, поперечный разрез прав: раздел открыт целиком, но часть
@@ -256,7 +274,10 @@ export default function RolesPage() {
                   <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-1">
                       {Object.entries(sections).map(([key, label]) => {
-                        const lvl = r.permissions[key] || 'none'
+                        let lvl = r.permissions[key] || 'none'
+                        // Должность могла быть сохранена до того, как из раздела
+                        // убрали «изменение» — показываем то, чем это является
+                        if (lvl === 'edit' && !editable.includes(key)) lvl = 'view'
                         if (lvl === 'none') return null
                         return (
                           <span key={key} className={`text-[10px] px-1.5 py-0.5 rounded ${LEVEL_STYLE[lvl]}`}>

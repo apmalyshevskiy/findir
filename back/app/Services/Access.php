@@ -113,6 +113,59 @@ class Access
         ];
     }
 
+    /**
+     * Записи, которые человек делает только про себя.
+     *
+     * Раскладка виджетов лежит в settings под ключом с id пользователя, то есть
+     * чужой дашборд ею не тронуть. Запрещать её уровнем «просмотр» значило бы
+     * не пускать человека переставить свои же плитки.
+     */
+    private static function personalWrites(): array
+    {
+        return [
+            'dashboard/layout',
+        ];
+    }
+
+    /**
+     * Чтения, которые выносят данные наружу.
+     *
+     * Метод запроса ничего не говорит о весе действия: выгрузка архивной копии —
+     * это вся база компании одним файлом, и уровня «просмотр» для неё мало.
+     */
+    private static function heavyReads(): array
+    {
+        return [
+            'backup/export',
+        ];
+    }
+
+    /**
+     * Маршруты, живущие не в том разделе, что подсказывает первый сегмент.
+     *
+     * Счёт за помощника — это деньги компании, а не работа с помощником: видеть
+     * трату должен тот, кто отвечает за настройки, даже если сам ИИ ему закрыт.
+     */
+    private static function sectionOverrides(): array
+    {
+        return [
+            'ai/usage' => 'settings',
+        ];
+    }
+
+    /**
+     * Подсказки к разделам, где уровень читается неоднозначно.
+     *
+     * Показываются в матрице должности рядом с названием раздела.
+     */
+    public static function sectionHints(): array
+    {
+        return [
+            'ai'     => 'Просмотр ничего не даёт: вопросы помощнику требуют уровня «изменение»',
+            'backup' => 'Просмотр — сводка и проверка файла; изменение — выгрузка и загрузка копии',
+        ];
+    }
+
     /** Маршруты, доступные без прав: вход, регистрация, здоровье, выход */
     public static function isPublic(string $path): bool
     {
@@ -124,17 +177,29 @@ class Access
     /** Раздел, к которому относится путь (или null — тогда доступ только админу) */
     public static function sectionFor(string $path): ?string
     {
-        return self::routeMap()[self::firstSegment($path)] ?? null;
+        $clean = self::clean($path);
+
+        return self::sectionOverrides()[$clean]
+            ?? self::routeMap()[self::firstSegment($path)]
+            ?? null;
     }
 
     /** Какой уровень нужен для этого запроса */
     public static function levelFor(string $method, string $path): string
     {
-        if (in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true)) {
+        $clean = self::clean($path);
+
+        if (in_array($clean, self::personalWrites(), true)) {
             return self::VIEW;
         }
 
-        $clean = trim(preg_replace('#^api/v1/#', '', $path), '/');
+        if (in_array($clean, self::heavyReads(), true)) {
+            return self::EDIT;
+        }
+
+        if (in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true)) {
+            return self::VIEW;
+        }
 
         foreach (self::readOnlyPosts() as $readOnly) {
             if ($clean === $readOnly) return self::VIEW;
@@ -147,6 +212,37 @@ class Access
         }
 
         return self::EDIT;
+    }
+
+    /**
+     * Разделы, в которых есть хоть один пишущий маршрут.
+     *
+     * Считаем по таблице маршрутов, а не списком: захардкоженный перечень
+     * разошёлся бы с кодом при первом же новом маршруте, и в матрице снова
+     * появился бы переключатель, за которым ничего нет.
+     */
+    public static function editableSections(): array
+    {
+        $out = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            // В таблице маршрутов на месте id стоит placeholder, а проверки в
+            // levelFor написаны под живой путь с цифрами
+            $path = str_replace(['{id}', '{key}'], '1', $route->uri());
+
+            if (self::isPublic($path)) continue;
+            if (!$section = self::sectionFor($path)) continue;
+            if (isset($out[$section])) continue;
+
+            foreach ($route->methods() as $method) {
+                if (self::levelFor($method, $path) === self::EDIT) {
+                    $out[$section] = true;
+                    break;
+                }
+            }
+        }
+
+        return array_keys($out);
     }
 
     /** Хватает ли уровня: edit покрывает view, view не покрывает edit */
@@ -203,10 +299,15 @@ class Access
         ];
     }
 
+    /** Путь без префикса api/v1 и крайних слэшей */
+    private static function clean(string $path): string
+    {
+        return trim(preg_replace('#^api/v1/#', '', $path), '/');
+    }
+
     private static function firstSegment(string $path): string
     {
-        $clean = trim(preg_replace('#^api/v1/#', '', $path), '/');
-        $parts = explode('/', $clean);
+        $parts = explode('/', self::clean($path));
 
         return $parts[0] ?? '';
     }

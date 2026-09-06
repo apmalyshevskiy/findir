@@ -31,6 +31,10 @@ class RolesController extends TenantController
         return response()->json([
             'sections' => Access::sections(),
             'levels'   => Access::levels(),
+            // Где «изменение» вообще что-то значит: в разделе без пишущих
+            // маршрутов третий уровень был бы переключателем без действия
+            'editable_sections' => Access::editableSections(),
+            'section_hints'     => Access::sectionHints(),
             'data'     => $roles->map(fn($r) => [
                 'id'              => $r->id,
                 'code'            => $r->code,
@@ -138,9 +142,18 @@ class RolesController extends TenantController
 
         // Неизвестные разделы отбрасываем, отсутствующие считаем закрытыми:
         // карта прав всегда полная, и новый раздел не открывается сам собой
+        $editable    = Access::editableSections();
         $permissions = [];
         foreach (array_keys(Access::sections()) as $section) {
-            $permissions[$section] = $data['permissions'][$section] ?? Access::NONE;
+            $level = $data['permissions'][$section] ?? Access::NONE;
+
+            // В разделе без пишущих маршрутов «изменение» ничего не значит —
+            // в базе не должно оседать значение, которого нельзя выбрать
+            if ($level === Access::EDIT && !in_array($section, $editable, true)) {
+                $level = Access::VIEW;
+            }
+
+            $permissions[$section] = $level;
         }
 
         // Несуществующие счета отбрасываем: удалили счёт — должность не должна
