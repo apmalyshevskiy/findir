@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import api from '../api/client'
@@ -10,6 +10,10 @@ import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import { SkeletonRows } from '../components/Busy'
 import OperationChanges from '../components/OperationChanges'
+import InfoItemCard from '../components/InfoItemCard'
+import PeriodPicker from '../components/PeriodPicker'
+import usePersistedPeriod from '../hooks/usePersistedPeriod'
+import usePersistedState from '../hooks/usePersistedState'
 import { INFO_LABELS } from '../utils/infoLabels'
 
 // Расчёт себестоимости
@@ -115,12 +119,26 @@ const NumInput = ({ value, onChange, disabled, placeholder = '—', step = '0.01
 
 // ─── InfoSelect — дропдаун с поиском через portal ─────────────────────────────
 
-const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать...', disabled }) => {
+/**
+ * Как форме обновить справочник после того, как в ней завели новый элемент.
+ *
+ * Кэш справочников живёт на странице, а список — в каждом поле; передавать
+ * колбэк через девять мест вызова значило бы девять раз повторить одно и то же.
+ */
+const InfoDict = createContext(null)
+
+const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать...', disabled, infoType }) => {
   const [search, setSearch]   = useState('')
   const [open, setOpen]       = useState(false)
   const [pos, setPos]         = useState({ top: 0, left: 0, width: 200 })
+  const [card, setCard]       = useState(null)   // null | 'create' | 'edit'
   const inputRef = useRef()
   const dropRef  = useRef()
+
+  // Заводить элемент справочника можно, только если известен его тип и есть
+  // кому обновить список — иначе поле работает как раньше
+  const dict     = useContext(InfoDict)
+  const editable = !!infoType && !!dict && !disabled
 
   useEffect(() => {
     const handler = (e) => {
@@ -146,18 +164,41 @@ const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать
     : flat
   const selected = items.find(i => i.id == value)
 
+  // Сохранили элемент — обновляем справочник страницы и встаём на него
+  const handleSaved = (saved) => {
+    dict.reload(infoType)
+    onChange(saved.id)
+    setCard(null)
+    setSearch('')
+    setOpen(false)
+  }
+
   return (
     <div className="relative">
       <input
         ref={inputRef}
         type="text"
         disabled={disabled}
-        className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${disabled ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200'}`}
+        className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${disabled ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200'} ${editable && value ? 'pr-12' : ''}`}
         placeholder={selected ? selected.name : placeholder}
         value={open ? search : (selected ? selected.name : '')}
         onFocus={handleFocus}
         onChange={e => setSearch(e.target.value)}
       />
+      {/* Карандашик — переименовать выбранный элемент, не уходя из документа.
+          Рисуем svg, а не знак ✎: шрифтовой символ система подменяет цветным
+          глифом из эмодзи-шрифта, и заданный серый цвет к нему не применяется */}
+      {editable && selected && (
+        <button type="button" title={`Изменить «${selected.name}»`}
+          onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('edit') }}
+          className="absolute right-7 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            <path d="m15 5 4 4" />
+          </svg>
+        </button>
+      )}
       {value && !disabled && (
         <button onClick={() => { onChange(null); setSearch('') }}
           className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
@@ -178,8 +219,28 @@ const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать
               </div>
             ))
           }
+          {/* Нужного элемента нет — заводим здесь же. Уходить за этим в
+              «Справочники», теряя набранный документ, неправильно */}
+          {editable && (
+            <div className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5 sticky bottom-0 bg-white"
+              onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('create') }}>
+              <span className="text-blue-500">+</span>
+              Создать{search ? ` «${search}»` : `: ${INFO_LABELS[infoType] || infoType}`}
+            </div>
+          )}
         </div>,
         document.body
+      )}
+
+      {card && (
+        <InfoItemCard
+          infoType={infoType}
+          item={card === 'edit' ? selected : null}
+          items={items}
+          initialName={card === 'create' ? search : ''}
+          onSaved={handleSaved}
+          onClose={() => setCard(null)}
+        />
       )}
     </div>
   )
@@ -187,7 +248,7 @@ const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать
 
 // ─── BiSelect — выбор счёта из balance_items ──────────────────────────────────
 
-const BiSelect = ({ items = [], value, onChange, disabled, placeholder = 'Выбрать счёт...' }) => {
+const BiSelect = ({ items = [], value, onChange, disabled, placeholder = 'Выбрать счёт...', clearable = false }) => {
   const [search, setSearch] = useState('')
   const [open, setOpen]     = useState(false)
   const [pos, setPos]       = useState({ top: 0, left: 0, width: 200 })
@@ -227,6 +288,12 @@ const BiSelect = ({ items = [], value, onChange, disabled, placeholder = 'Выб
         onFocus={handleFocus}
         onChange={e => setSearch(e.target.value)}
       />
+      {/* Снять отбор по счёту. В самом документе счёт обязателен, поэтому
+          крестик появляется только там, где пусто — осмысленное значение */}
+      {clearable && value && !disabled && (
+        <button onClick={() => { onChange(null); setSearch('') }}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+      )}
       {open && createPortal(
         <div ref={dropRef} className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl max-h-64 overflow-y-auto"
           style={{ top: pos.top, left: pos.left, width: pos.width }}>
@@ -470,6 +537,30 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
 
   const removeItem = (key) => setForm(f => ({ ...f, items: f.items.filter(i => i._key !== key) }))
 
+  /**
+   * Что остаётся от аналитики после смены счёта.
+   *
+   * Слот сохраняем, если у нового счёта в нём тот же тип разреза: значение
+   * по-прежнему осмысленно. Разные типы — значение чужое, и оставить его
+   * значило бы записать номенклатуру в поле сотрудника.
+   *
+   * Сравниваем послотно, а не по набору типов: тип, переехавший из первого
+   * слота во второй, — это другой разрез счёта, и переносить значение туда
+   * молча было бы догадкой.
+   */
+  const keptAnalytics = (prevBiId, nextBiId, source) => {
+    const prev = balanceItems.find(b => b.id == prevBiId)
+    const next = balanceItems.find(b => b.id == nextBiId)
+    const out  = {}
+
+    for (const n of [1, 2, 3]) {
+      const same = prev?.[`info_${n}_type`] && prev[`info_${n}_type`] === next?.[`info_${n}_type`]
+      out[`info_${n}_id`] = same ? (source[`info_${n}_id`] ?? null) : null
+    }
+
+    return out
+  }
+
   const setItemField = (key, field, val) => setForm(f => ({
     ...f,
     items: f.items.map(i => {
@@ -481,11 +572,12 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
         const p = parseFloat(field === 'price'    ? val : i.price)    || 0
         updated.amount = q && p ? (q * p).toFixed(2) : i.amount
       }
-      // Сброс аналитики при смене счёта строки
+      // Смена счёта строки: чистим только те слоты аналитики, у которых
+      // поменялся тип. Раньше сбрасывались все три, и при переходе, скажем,
+      // с «Продуктов» на «Товары» заново выбирать приходилось ту же самую
+      // номенклатуру — хотя разрез у счетов одинаковый
       if (field === 'bi_id') {
-        updated.info_1_id = null
-        updated.info_2_id = null
-        updated.info_3_id = null
+        Object.assign(updated, keptAnalytics(i.bi_id, val, i))
       }
       return updated
     })
@@ -621,6 +713,9 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   const firstColumnLabel = INFO_LABELS[typeItemBi?.info_1_type] || 'Аналитика'
 
   return (
+    // Полям аналитики нужен способ перечитать справочник после того, как в них
+    // завели новый элемент — кэш живёт на странице
+    <InfoDict.Provider value={{ reload: loadInfo }}>
     <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl my-4">
 
@@ -712,14 +807,14 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                 </label>
                 <BiSelect items={allBiOptions} value={form.bi_id}
                   disabled={isPosted}
-                  onChange={v => { setField('bi_id', v); setField('info_1_id', null); setField('info_2_id', null); setField('info_3_id', null) }}
+                  onChange={v => setForm(f => ({ ...f, bi_id: v, ...keptAnalytics(f.bi_id, v, f) }))}
                   placeholder="Выбрать счёт..." />
               </div>
               {headBi?.info_1_type && (
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_1_type] || headBi.info_1_type}</label>
                     <InfoSelect items={infoCache[headBi.info_1_type] || []} value={form.info_1_id}
-                      disabled={isPosted}
+                      disabled={isPosted} infoType={headBi.info_1_type}
                       onChange={v => setField('info_1_id', v)}
                       placeholder={`Выбрать ${INFO_LABELS[headBi.info_1_type] || ''}...`} />
                   </div>
@@ -728,7 +823,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_2_type] || headBi.info_2_type}</label>
                     <InfoSelect items={infoCache[headBi.info_2_type] || []} value={form.info_2_id}
-                      disabled={isPosted}
+                      disabled={isPosted} infoType={headBi.info_2_type}
                       onChange={v => setField('info_2_id', v)}
                       placeholder={`Выбрать...`} />
                   </div>
@@ -737,7 +832,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                   <div>
                     <label className={lbl}>{INFO_LABELS[headBi.info_3_type] || headBi.info_3_type}</label>
                     <InfoSelect items={infoCache[headBi.info_3_type] || []} value={form.info_3_id}
-                      disabled={isPosted}
+                      disabled={isPosted} infoType={headBi.info_3_type}
                       onChange={v => setField('info_3_id', v)}
                       placeholder={`Выбрать...`} />
                   </div>
@@ -750,7 +845,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                 <div>
                   <label className={lbl}>Статья дохода</label>
                   <InfoSelect items={infoCache['revenue'] || []} value={form.revenue_item_id}
-                    disabled={isPosted}
+                    disabled={isPosted} infoType="revenue"
                     onChange={v => setField('revenue_item_id', v)}
                     placeholder="Выбрать статью..." />
                 </div>
@@ -824,7 +919,8 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                     // Аналитика корреспондирующей стороны берётся у того счёта,
                     // который в этой строке и стоит: строка могла его переопределить
                     const lineHeadBi = balanceItems.find(b => b.id == (item.head_bi_id || form.bi_id))
-                    const headInfoItems = (f) => infoCache[lineHeadBi?.[`info_${f.slice(-1)}_type`]] || []
+                    const headInfoType  = (f) => lineHeadBi?.[`info_${f.slice(-1)}_type`]
+                    const headInfoItems = (f) => infoCache[headInfoType(f)] || []
                     const expanded = item._expanded || false
                     const toggleExp = () => setForm(f => ({
                       ...f,
@@ -844,7 +940,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                               <InfoSelect
                                 items={infoCache[itemBi.info_1_type] || []}
                                 value={item.info_1_id}
-                                disabled={isPosted}
+                                disabled={isPosted} infoType={itemBi.info_1_type}
                                 onChange={v => setItemFieldWithCalc(item._key, 'info_1_id', v)}
                                 placeholder={`${INFO_LABELS[itemBi.info_1_type] || 'Значение'}...`} />
                             ) : (
@@ -876,7 +972,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                 <InfoSelect
                                   items={headInfoItems(f)}
                                   value={item[`head_${f}_id`]}
-                                  disabled={isPosted}
+                                  disabled={isPosted} infoType={headInfoType(f)}
                                   onChange={v => setItemField(item._key, `head_${f}_id`, v)}
                                   placeholder="как в шапке" />
                               )}
@@ -956,7 +1052,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                 <div>
                                   <div className="text-xs text-gray-400 mb-1">{INFO_LABELS[itemBi.info_2_type]}</div>
                                   <InfoSelect items={infoCache[itemBi.info_2_type] || []} value={item.info_2_id}
-                                    disabled={isPosted}
+                                    disabled={isPosted} infoType={itemBi.info_2_type}
                                     onChange={v => setItemField(item._key, 'info_2_id', v)}
                                     placeholder="Выбрать..." />
                                 </div>
@@ -966,7 +1062,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                 <div>
                                   <div className="text-xs text-gray-400 mb-1">{INFO_LABELS[itemBi.info_3_type]}</div>
                                   <InfoSelect items={infoCache[itemBi.info_3_type] || []} value={item.info_3_id}
-                                    disabled={isPosted}
+                                    disabled={isPosted} infoType={itemBi.info_3_type}
                                     onChange={v => setItemField(item._key, 'info_3_id', v)}
                                     placeholder="Выбрать..." />
                                 </div>
@@ -978,10 +1074,11 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                   показывается, чтобы его не приняли за своё */}
                               {headFieldsInPanel.length > 0 && (
                                 <div style={{ gridColumn: '1 / -1' }}
-                                  className="border-t border-blue-100 pt-2 mt-1">
-                                  <div className="text-xs text-gray-400 mb-1.5">
+                                  className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                                  <div className="text-xs font-medium text-slate-600 mb-2 flex items-baseline gap-1.5">
+                                    <span className="text-slate-400">⇄</span>
                                     Корреспондирующая сторона ({sideLabel(headSide)})
-                                    <span className="text-gray-300"> — пусто значит «как в шапке»</span>
+                                    <span className="font-normal text-slate-400">— пусто значит «как в шапке»</span>
                                   </div>
                                   <div className="grid gap-3" style={{
                                     gridTemplateColumns: `repeat(${Math.min(headFieldsInPanel.length, 3)}, 1fr)`,
@@ -1004,7 +1101,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                           <InfoSelect
                                             items={headInfoItems(f)}
                                             value={item[`head_${f}_id`]}
-                                            disabled={isPosted}
+                                            disabled={isPosted} infoType={headInfoType(f)}
                                             onChange={v => setItemField(item._key, `head_${f}_id`, v)}
                                             placeholder="как в шапке" />
                                         )}
@@ -1014,8 +1111,11 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                 </div>
                               )}
 
-                              {/* Примечание — всегда последнее, занимает всю ширину */}
-                              <div style={{ gridColumn: '1 / -1' }}>
+                              {/* Примечание — всегда последнее, занимает всю ширину.
+                                  Отделено чертой от корреспондирующей стороны: это
+                                  текст для человека, а не часть проводки, и слипаться
+                                  с полями счетов ему нельзя */}
+                              <div style={{ gridColumn: '1 / -1' }} className="border-t border-gray-100 pt-2 mt-1">
                                 <div className="text-xs text-gray-400 mb-1">Примечание к строке</div>
                                 <input type="text" className={ic} value={item.note}
                                   disabled={isPosted} placeholder="необязательно"
@@ -1096,6 +1196,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
         )}
       </div>
     </div>
+    </InfoDict.Provider>
   )
 }
 
@@ -1107,11 +1208,20 @@ export default function DocumentsPage() {
   // Вкладки — виды документов из справочника. Пока он не приехал, вкладки нет:
   // выбирать не из чего, и запрашивать документы «вида null» незачем
   const [types, setTypes]           = useState(null)
-  const [tab, setTab]               = useState('')
+  // Вкладку помним: перезагрузка страницы возвращала на первый вид документов,
+  // и человек, работающий с авансовыми отчётами, каждый раз начинал с накладных
+  const [tab, setTab]               = usePersistedState('documents:tab', '')
   const [docs, setDocs]             = useState([])
   const [loading, setLoading]       = useState(false)
   const [balanceItems, setBalanceItems] = useState([])
   const [infoCache, setInfoCache]   = useState({})
+
+  // Отбор списка
+  const [period, setPeriod]         = usePersistedPeriod('documents', 'month')
+  const [biFilter, setBiFilter]     = useState('')
+  const [infoFilter, setInfoFilter] = useState('')
+  const [search, setSearch]         = useState('')
+  const [allInfo, setAllInfo]       = useState([])
   const [showForm, setShowForm]     = useState(false)
   const [editDoc, setEditDoc]       = useState(null)
   const [actionLoading, setActionLoading] = useState(null)
@@ -1120,14 +1230,27 @@ export default function DocumentsPage() {
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
     getBalanceItems().then(r => setBalanceItems(r.data.data))
+    // Справочники всех типов сразу — для отбора по аналитике: в списке
+    // документов заранее неизвестно, аналитика какого счёта понадобится
+    getInfo().then(r => setAllInfo(r.data.data || [])).catch(() => {})
     getDocumentTypes({ active: 1 }).then(r => {
       const list = r.data.data || []
       setTypes(list)
-      setTab(t => t || list[0]?.code || '')
+      // Запомненный вид мог быть выключен или удалён — тогда берём первый
+      setTab(t => (list.some(x => x.code === t) ? t : (list[0]?.code || '')))
     })
   }, [])
 
-  useEffect(() => { if (tab) loadDocs() }, [tab])
+  // Поиск набирают посимвольно — ждём паузы, иначе запрос уходит на каждую букву
+  const [searchQuery, setSearchQuery] = useState('')
+  useEffect(() => {
+    const id = setTimeout(() => setSearchQuery(search.trim()), 350)
+    return () => clearTimeout(id)
+  }, [search])
+
+  useEffect(() => {
+    if (tab) loadDocs()
+  }, [tab, period.from, period.to, biFilter, infoFilter, searchQuery])
 
   const activeType = types?.find(t => t.code === tab) || null
 
@@ -1150,11 +1273,30 @@ export default function DocumentsPage() {
 
   const loadDocs = () => {
     setLoading(true)
-    getDocuments({ type: tab, per_page: 100 })
+    const params = { type: tab, per_page: 100 }
+    // «Всё время» — пресет без границ: параметры просто не уходят
+    if (period.from) params.date_from = period.from
+    if (period.to)   params.date_to   = period.to
+    if (biFilter)    params.bi_id     = biFilter
+    if (infoFilter)  params.info_id   = infoFilter
+    if (searchQuery) params.search    = searchQuery
+
+    getDocuments(params)
       .then(r => setDocs(r.data.data))
       .catch(() => {})
       .finally(() => setLoading(false))
   }
+
+  const filtersOn = !!(biFilter || infoFilter || searchQuery)
+
+  const resetFilters = () => { setBiFilter(''); setInfoFilter(''); setSearch('') }
+
+  // Одинаковые названия встречаются в разных справочниках («Аренда» — и статья
+  // расхода, и статья ДДС), поэтому в отборе показываем тип рядом с названием
+  const infoOptions = useMemo(
+    () => allInfo.map(i => ({ ...i, code: INFO_LABELS[i.type] || i.type })),
+    [allInfo]
+  )
 
   const loadInfo = (type) => {
     getInfo({ type }).then(r => setInfoCache(c => ({ ...c, [type]: r.data.data })))
@@ -1261,6 +1403,40 @@ export default function DocumentsPage() {
         )}
       </div>
 
+      {/* Отбор. Период отдельно слева — он есть всегда; счёт, аналитика и поиск
+          задаются по надобности. Совпадение ищется и в шапке, и в строках:
+          «где покупали сырьё» — это про строку, а не про шапку документа */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <PeriodPicker value={period} onChange={setPeriod} allowAll />
+
+        <div className="w-56">
+          <BiSelect items={balanceItems} value={biFilter} clearable
+            onChange={v => setBiFilter(v || '')} placeholder="Счёт — любой" />
+        </div>
+
+        <div className="w-56">
+          <InfoSelect items={infoOptions} value={infoFilter}
+            onChange={v => setInfoFilter(v || '')} placeholder="Аналитика — любая" />
+        </div>
+
+        <div className="relative flex-1 min-w-[220px]">
+          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Номер, примечание, комментарий, сумма"
+            className="w-full px-3 py-1.5 pr-7 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          {search && (
+            <button onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+          )}
+        </div>
+
+        {filtersOn && (
+          <button onClick={resetFilters}
+            className="px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">
+            Сбросить
+          </button>
+        )}
+      </div>
+
       {/* Тост ошибки */}
       {actionError && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg flex items-center justify-between">
@@ -1275,8 +1451,19 @@ export default function DocumentsPage() {
       ) : docs.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <div className="text-5xl mb-4">📄</div>
-          <div className="text-lg font-medium text-gray-500 mb-1">Нет документов</div>
-          <div className="text-sm">Нажмите «+ Создать» чтобы добавить первый</div>
+          {/* Пустой список из-за отбора и пустой список вообще — разные вещи:
+              совет «создайте первый» на отфильтрованном экране сбивает с толку */}
+          {filtersOn || period.from ? (
+            <>
+              <div className="text-lg font-medium text-gray-500 mb-1">Ничего не найдено</div>
+              <div className="text-sm">Попробуйте расширить период или снять отбор</div>
+            </>
+          ) : (
+            <>
+              <div className="text-lg font-medium text-gray-500 mb-1">Нет документов</div>
+              <div className="text-sm">Нажмите «+ Создать» чтобы добавить первый</div>
+            </>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -1333,8 +1520,14 @@ export default function DocumentsPage() {
                         {/* Редактировать — для draft */}
                         {doc.status === 'draft' && (
                           <button onClick={() => openEdit(doc)}
-                            className="text-gray-400 hover:text-blue-600 p-1.5 rounded hover:bg-blue-50 text-sm" title="Редактировать">
-                            ✎
+                            className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100" title="Редактировать">
+                            {/* svg, а не знак ✎: шрифтовой символ система
+                                подменяет цветным глифом из эмодзи-шрифта */}
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                              <path d="m15 5 4 4" />
+                            </svg>
                           </button>
                         )}
                         {/* Просмотр — для posted и cancelled */}

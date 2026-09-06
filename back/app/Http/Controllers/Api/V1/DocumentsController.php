@@ -52,8 +52,11 @@ class DocumentsController extends TenantController
         if ($request->type)       $query->where('type', $request->type);
         if ($request->status)     $query->where('status', $request->status);
         if ($request->date_from)  $query->where('date', '>=', $request->date_from);
-        if ($request->date_to)    $query->where('date', '<=', $request->date_to);
+        // Дата документа — datetime, а граница периода приходит днём: без
+        // конца суток фильтр терял всё, что заведено сегодня после полуночи
+        if ($request->date_to)    $query->where('date', '<=', $this->endOfDay($request->date_to));
 
+        $this->applySearch($query, $request);
         $this->excludeHidden($query);
 
         $perPage = $request->per_page ?? 50;
@@ -66,6 +69,80 @@ class DocumentsController extends TenantController
             'total' => $total,
             'page'  => (int) $page,
         ]);
+    }
+
+    /** Граница периода: дата без времени означает весь день целиком. */
+    private function endOfDay(string $date): string
+    {
+        return strlen(trim($date)) <= 10 ? trim($date) . ' 23:59:59' : $date;
+    }
+
+    /**
+     * Отбор по счёту, аналитике и строке поиска.
+     *
+     * Счёт и аналитику ищем и в шапке, и в строках: документ ищут по тому, что
+     * в нём есть. «Покажи, где покупали сырьё» — это про строку авансового
+     * отчёта, а не про его шапку, и отбор только по шапке отвечал бы «ничего».
+     */
+    private function applySearch($query, Request $request): void
+    {
+        $inItems = fn(callable $where) => function ($q) use ($where) {
+            $q->from('document_items as di')->whereColumn('di.document_id', 'documents.id');
+            $where($q);
+        };
+
+        if ($biId = (int) $request->bi_id) {
+            $query->where(fn($q) => $q
+                ->where('bi_id', $biId)
+                ->orWhereExists($inItems(fn($s) => $s->where(
+                    fn($w) => $w->where('di.bi_id', $biId)->orWhere('di.head_bi_id', $biId)
+                ))));
+        }
+
+        if ($infoId = (int) $request->info_id) {
+            $head = ['info_1_id', 'info_2_id', 'info_3_id'];
+            $line = ['di.info_1_id', 'di.info_2_id', 'di.info_3_id',
+                     'di.head_info_1_id', 'di.head_info_2_id', 'di.head_info_3_id'];
+
+            $query->where(function ($q) use ($infoId, $head, $line, $inItems) {
+                foreach ($head as $f) $q->orWhere($f, $infoId);
+                $q->orWhereExists($inItems(function ($s) use ($infoId, $line) {
+                    $s->where(function ($w) use ($infoId, $line) {
+                        foreach ($line as $f) $w->orWhere($f, $infoId);
+                    });
+                }));
+            });
+        }
+
+        $search = trim((string) $request->search);
+        if ($search === '') return;
+
+        // \ % _ в поиске — обычные символы, а не подстановка: артикул «12%»
+        // иначе нашёл бы всё подряд
+        $like   = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\%', '\_'], $search) . '%';
+        $amount = $this->searchAmount($search);
+
+        $query->where(function ($q) use ($like, $amount, $inItems) {
+            $q->where('number', 'like', $like)
+                ->orWhere('external_number', 'like', $like)
+                ->orWhere('note', 'like', $like)
+                ->orWhere('content', 'like', $like)
+                ->orWhereExists($inItems(fn($s) => $s->where('di.note', 'like', $like)));
+
+            // Число ищем и как сумму: «850» чаще означает сумму, чем текст
+            if ($amount !== null) {
+                $q->orWhere('amount', $amount)
+                    ->orWhereExists($inItems(fn($s) => $s->where('di.amount', $amount)));
+            }
+        });
+    }
+
+    /** Строка поиска как сумма — или null, если это не число. */
+    private function searchAmount(string $search): ?float
+    {
+        $clean = str_replace([' ', "\u{00A0}", ','], ['', '', '.'], $search);
+
+        return is_numeric($clean) ? (float) $clean : null;
     }
 
     /**
