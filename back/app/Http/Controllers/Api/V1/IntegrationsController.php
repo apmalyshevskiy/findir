@@ -385,6 +385,9 @@ class IntegrationsController extends TenantController
         return [
             'id'               => $integration->id,
             'type'             => $integration->type,
+            // Способ обмена: по нему интерфейс решает, показывать ли период и
+            // проверку связи. Разбирать имя типа на части фронт не должен
+            'kind'             => IntegrationRegistry::schema($integration->type)['kind'] ?? 'api',
             'name'             => $integration->name,
             'is_active'        => $integration->is_active,
             'settings'         => $integration->settings ?: [],

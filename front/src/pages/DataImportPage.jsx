@@ -340,7 +340,16 @@ function ImportCard({ integration, onDone, onPeek }) {
         {integration.last_run_status && <Badge status={integration.last_run_status} />}
       </div>
 
-      {!integration.is_ready ? (
+      {/* Файловый обмен здесь не показываем периодом: за данными не мы ходим,
+          а человек приносит файл — и делает это на своём экране */}
+      {integration.kind === 'file' ? (
+        <div className="text-sm text-gray-600">
+          Загружается файлом выгрузки.{' '}
+          <Link to="/onec-postings" className="text-blue-700 hover:underline font-medium">
+            Открыть загрузку проводок
+          </Link>
+        </div>
+      ) : !integration.is_ready ? (
         <div className="border border-amber-200 bg-amber-50/60 rounded-lg px-4 py-3 text-sm text-amber-900">
           Не заполнено: {integration.missing.join(', ')}.{' '}
           <Link to="/integrations" className="text-blue-700 hover:underline font-medium">Открыть настройки</Link>

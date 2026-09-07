@@ -5,6 +5,7 @@ namespace App\Services\Integrations;
 use App\Models\Tenant\Integration;
 use App\Services\Integrations\Contracts\IntegrationDriver;
 use App\Services\Integrations\FusionPos\FusionPosDriver;
+use App\Services\Integrations\OneC\OneCBp3FileDriver;
 use RuntimeException;
 
 /**
@@ -20,15 +21,38 @@ use RuntimeException;
  *   balance_item — счёт плана счетов (codes: подсказка допустимых)
  *   info         — элемент справочника (info_type: partner/product/...)
  *   remote_multi — множественный выбор из справочника внешней системы (source)
+ *
+ * Имя типа складывается из системы, конфигурации и способа обмена:
+ * `onec_bp3_file` — 1С, Бухгалтерия 3.0, обмен файлом. У одной системы бывает
+ * несколько конфигураций и несколько способов связи, и завтрашний
+ * `onec_bp3_http` должен встать рядом, а не переименовывать сегодняшнее.
+ *
+ * `kind` описывает способ обмена для интерфейса: `file` означает, что связи нет
+ * и загрузка идёт со своего экрана. Фронт смотрит на этот признак, а не
+ * разбирает имя типа на части.
  */
 final class IntegrationRegistry
 {
     public static function types(): array
     {
         return [
+            'onec_bp3_file' => [
+                'label'       => '1С:Бухгалтерия 3.0 (файл)',
+                'description' => 'Проводки из файла выгрузки — файл готовит внешняя обработка в 1С',
+                'kind'        => 'file',
+                'entities'    => ['posting' => 'Проводки'],
+                'credentials' => [],
+                'settings'    => [
+                    [
+                        'key' => 'project_id', 'label' => 'Проект', 'kind' => 'project', 'required' => true,
+                        'hint' => 'В проводках 1С проектов нет — все загруженные лягут на этот',
+                    ],
+                ],
+            ],
             'fusionpos' => [
                 'label'       => 'FUSIONPOS',
                 'description' => 'Приходные накладные со складов FUSIONPOS',
+                'kind'        => 'api',
                 'entities'    => ['warehouse_invoice' => 'Приходные накладные'],
                 'credentials' => [
                     [
@@ -113,8 +137,9 @@ final class IntegrationRegistry
         $type = is_string($integration) ? $integration : $integration->type;
 
         return match ($type) {
-            'fusionpos' => app(FusionPosDriver::class),
-            default     => throw new RuntimeException("Нет драйвера для типа: {$type}"),
+            'fusionpos'     => app(FusionPosDriver::class),
+            'onec_bp3_file' => app(OneCBp3FileDriver::class),
+            default         => throw new RuntimeException("Нет драйвера для типа: {$type}"),
         };
     }
 

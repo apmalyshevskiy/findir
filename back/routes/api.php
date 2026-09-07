@@ -81,6 +81,7 @@ Route::prefix('v1')->group(function () {
     // Проводки из 1С:Бухгалтерии — файл выгружает обработка из папки 1c/
     Route::get ('/onec/settings',         [OneCController::class, 'settings']);
     Route::put ('/onec/settings',         [OneCController::class, 'saveSettings']);
+    Route::put ('/onec/analytics-map',    [OneCController::class, 'saveAnalytics']);
     Route::post('/onec/postings/preview', [OneCController::class, 'preview']);
     Route::post('/onec/postings/import',  [OneCController::class, 'import']);
 

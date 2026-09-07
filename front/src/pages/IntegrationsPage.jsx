@@ -191,10 +191,14 @@ export default function IntegrationsPage() {
                 className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
                 {busy === 'save' ? 'Сохраняю...' : 'Сохранить'}
               </button>
-              <button onClick={test} disabled={busy === 'test'}
-                className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40">
-                {busy === 'test' ? 'Проверяю...' : 'Сохранить и проверить связь'}
-              </button>
+              {/* У файлового обмена связи нет: проверять нечего, и кнопка
+                  только сбивала бы с толку */}
+              {types[editing.type]?.kind !== 'file' && (
+                <button onClick={test} disabled={busy === 'test'}
+                  className="px-4 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-40">
+                  {busy === 'test' ? 'Проверяю...' : 'Сохранить и проверить связь'}
+                </button>
+              )}
               {editing.id && (
                 <button onClick={() => remove(editing)}
                   className="px-4 py-2 text-sm text-gray-400 hover:text-red-600 ml-auto">

@@ -2,8 +2,13 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Tenant\Integration;
+use App\Models\Tenant\IntegrationRun;
+use App\Services\Integrations\IntegrationRegistry;
+use App\Services\Integrations\OneC\OneCBp3FileDriver;
 use App\Services\OneC\PostingsFile;
 use App\Services\OneC\PostingsImporter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -12,16 +17,21 @@ use RuntimeException;
  * Загрузка проводок из 1С:Бухгалтерии.
  *
  * Файл выгружает обработка из папки 1c/ в корне репозитория; формат описан в
- * 1c/FORMAT.md. Сюда он попадает через форму — по сети 1С к нам не ходит.
+ * 1c/FORMAT.md. Сюда он попадает через форму — по сети 1С к нам не ходит,
+ * поэтому у драйвера [OneCBp3FileDriver](../../../Services/Integrations/OneC/OneCBp3FileDriver.php)
+ * сетевые методы отказываются работать, а вся загрузка живёт здесь.
+ *
+ * Интеграция всё равно настоящая: строка в `integrations` даёт настройки по
+ * общей схеме, журнал прогонов и — главное — `integration_id`, под которым в
+ * `integration_links` лежат привязки счетов и аналитики.
  *
  * Загрузка в два шага: сначала просмотр (ничего не пишется), потом отмеченные
  * проводки. Одной кнопкой «взять всё» пользоваться страшно — из файла за месяц
- * получаются сотни операций, и увидеть их до записи важнее, чем сэкономить щелчок.
+ * получаются сотни операций.
  */
 class OneCController extends TenantController
 {
-    /** Ключ проекта в settings: проводки 1С проекта не знают, его выбирают у нас. */
-    private const PROJECT_KEY = 'onec_project_id';
+    private const TYPE = 'onec_bp3_file';
 
     /** Файл за месяц — сотни килобайт; 20 МБ хватает с запасом на год. */
     private const MAX_FILE_KB = 20480;
@@ -29,100 +39,125 @@ class OneCController extends TenantController
     /**
      * GET /onec/settings
      *
-     * Проект и сохранённое соответствие счетов. Счета отдаём вместе с кодом и
-     * названием: список нужен и для показа, и для выпадающего списка.
+     * Интеграции 1С, привязка счетов выбранной и проекты для настройки.
      */
-    public function settings(Request $request)
+    public function settings(Request $request): JsonResponse
     {
         $this->initTenant($request);
 
+        $integration = $this->resolve($request);
+
         return response()->json([
             'data' => [
-                'project_id' => $this->projectId(),
-                'accounts'   => $this->accountMap(),
-                'projects'   => DB::connection($this->dbName)->table('projects')
+                'integrations'   => $this->list(),
+                'integration_id' => $integration?->id,
+                'project_id'     => $integration ? $this->projectId($integration) : null,
+                'accounts'       => $integration ? $this->accountMap($integration) : [],
+                'projects'       => DB::connection($this->dbName)->table('projects')
                     ->whereNull('deleted_at')->orderBy('name')->select('id', 'name')->get(),
             ],
         ]);
     }
 
     /**
-     * PUT /onec/settings
+     * PUT /onec/settings — проект и привязка счетов.
      *
-     * Соответствие приходит целиком: пустой bi_id означает «убрать строку».
-     * Частичное обновление здесь только запутало бы — таблица маленькая и
-     * правится вся сразу.
+     * Привязка приходит целиком: таблица маленькая и правится вся сразу,
+     * частичное обновление здесь только запутало бы.
      */
-    public function saveSettings(Request $request)
+    public function saveSettings(Request $request): JsonResponse
     {
         $this->initTenant($request);
 
         $data = $request->validate([
-            'project_id'          => 'nullable|integer',
-            'accounts'            => 'array',
-            'accounts.*.account'  => 'required|string|max:20',
-            'accounts.*.bi_id'    => 'nullable|integer',
+            'integration_id'     => 'nullable|integer',
+            'project_id'         => 'nullable|integer',
+            'accounts'           => 'array',
+            'accounts.*.account' => 'required|string|max:20',
+            'accounts.*.mode'    => 'required|string|in:bind,skip,auto',
+            'accounts.*.bi_id'   => 'nullable|integer',
         ]);
 
-        // Список пар, а не карта «счёт → id». Ключом массива код счёта быть не
-        // может: PHP приводит числовые ключи к integer, и счета вроде «26» и
-        // «51» уехали бы числами. MySQL на сравнении varchar с числом приводит
-        // к числу саму колонку, и отбор поехал бы молча
-        $wanted = [];
+        $integration = $this->resolve($request);
+        if (!$integration) return $this->noIntegration();
+
+        $items = [];
         foreach ($data['accounts'] ?? [] as $row) {
             $account = trim((string) $row['account']);
-            if ($account === '' || empty($row['bi_id'])) continue;
-            $wanted[] = ['account' => $account, 'bi_id' => (int) $row['bi_id']];
+            if ($account === '') continue;
+
+            $items[] = [
+                'external_id'   => $account,
+                'external_name' => $account,
+                'local_type'    => 'balance_item',
+                'mode'          => $row['mode'],
+                'local_id'      => $row['mode'] === 'bind' ? (int) ($row['bi_id'] ?? 0) : null,
+            ];
         }
 
-        $codes = array_column($wanted, 'account');
-        $biIds = array_column($wanted, 'bi_id');
+        if ($resp = $this->checkTargets($items, 'balance_items', 'счёт')) return $resp;
 
-        // Счёт, закрытый для этой должности, сопоставить нельзя: иначе человек
-        // настроил бы загрузку туда, куда ему самому смотреть не положено
-        if ($biIds && $this->scope->hidesAny($biIds)) {
-            return $this->hiddenAccountError('соответствии счетов');
-        }
-
-        $known = DB::connection($this->dbName)->table('balance_items')
-            ->whereIn('id', $biIds ?: [0])->whereNull('deleted_at')->pluck('id')->all();
-
-        foreach ($wanted as $row) {
-            if (!in_array($row['bi_id'], $known)) {
-                return response()->json([
-                    'message' => "Счёта FINDIR для «{$row['account']}» больше нет в плане счетов.",
-                ], 422);
-            }
-        }
-
-        DB::connection($this->dbName)->transaction(function () use ($wanted, $codes, $data) {
-            $conn = DB::connection($this->dbName);
-
-            // Каждому запросу — свой построитель. Построитель накапливает
-            // условия, и один объект на всё дописал бы к updateOrInsert ещё и
-            // whereNotIn от удаления: строка не находилась бы, вставка падала
-            // на уникальном индексе
-            $conn->table('onec_account_map')->whereNotIn('account', $codes ?: [''])->delete();
-
-            foreach ($wanted as $row) {
-                $conn->table('onec_account_map')->updateOrInsert(
-                    ['account' => $row['account']],
-                    ['bi_id' => $row['bi_id'], 'updated_at' => now(), 'created_at' => now()],
-                );
-            }
+        DB::connection($this->dbName)->transaction(function () use ($integration, $items, $data) {
+            $this->writeLinks($integration, PostingsImporter::ENTITY_ACCOUNT, $items);
 
             if (array_key_exists('project_id', $data)) {
-                $conn->table('settings')->updateOrInsert(
-                    ['key' => self::PROJECT_KEY],
-                    ['value' => $data['project_id'], 'updated_at' => now(), 'created_at' => now()],
+                $integration->settings = array_merge(
+                    $integration->settings ?: [],
+                    ['project_id' => $data['project_id'] ? (int) $data['project_id'] : null],
                 );
+                $integration->save();
             }
         });
 
         return response()->json(['data' => [
-            'project_id' => $this->projectId(),
-            'accounts'   => $this->accountMap(),
+            'integration_id' => $integration->id,
+            'project_id'     => $this->projectId($integration),
+            'accounts'       => $this->accountMap($integration),
         ]]);
+    }
+
+    /**
+     * PUT /onec/analytics-map — привязка субконто.
+     *
+     * Три состояния, и они означают разное:
+     *   bind — «это вот тот элемент справочника»;
+     *   skip — «эту аналитику не переносить»;
+     *   auto — привязки нет, работает поиск по ИНН и наименованию.
+     */
+    public function saveAnalytics(Request $request): JsonResponse
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'integration_id'  => 'nullable|integer',
+            'items'           => 'array',
+            'items.*.kind'    => 'required|string|max:64',
+            'items.*.name'    => 'required|string|max:255',
+            'items.*.mode'    => 'required|string|in:bind,skip,auto',
+            'items.*.info_id' => 'nullable|integer',
+        ]);
+
+        $integration = $this->resolve($request);
+        if (!$integration) return $this->noIntegration();
+
+        $items = [];
+        foreach ($data['items'] ?? [] as $row) {
+            $items[] = [
+                'external_id'   => PostingsImporter::subcontoKey($row['kind'], $row['name']),
+                'external_name' => mb_substr($row['kind'] . ': ' . $row['name'], 0, 255),
+                'local_type'    => 'info',
+                'mode'          => $row['mode'],
+                'local_id'      => $row['mode'] === 'bind' ? (int) ($row['info_id'] ?? 0) : null,
+            ];
+        }
+
+        if ($resp = $this->checkTargets($items, 'info', 'элемент справочника')) return $resp;
+
+        DB::connection($this->dbName)->transaction(
+            fn() => $this->writeLinks($integration, PostingsImporter::ENTITY_SUBCONTO, $items)
+        );
+
+        return response()->json(['ok' => true, 'saved' => count($items)]);
     }
 
     /**
@@ -134,20 +169,20 @@ class OneCController extends TenantController
     {
         $this->initTenant($request);
 
+        $integration = $this->resolve($request);
+        if (!$integration) return $this->noIntegration();
+
         $file = $this->readFile($request);
         if (!is_array($file)) return $file;
 
-        $importer = new PostingsImporter(
-            $this->dbName, $this->scope, $this->editLockDate(), $this->projectId(),
-        );
-
-        $result = $importer->preview($file);
+        $result = $this->importer($integration)->preview($file);
 
         return response()->json([
             'data' => $result + [
-                'meta'       => $file['meta'],
-                'problems'   => $file['problems'],
-                'project_id' => $this->projectId(),
+                'meta'           => $file['meta'],
+                'problems'       => $file['problems'],
+                'integration_id' => $integration->id,
+                'project_id'     => $this->projectId($integration),
             ],
         ]);
     }
@@ -165,27 +200,213 @@ class OneCController extends TenantController
 
         $request->validate(['only' => 'array', 'only.*' => 'string']);
 
+        $integration = $this->resolve($request);
+        if (!$integration) return $this->noIntegration();
+
         $file = $this->readFile($request);
         if (!is_array($file)) return $file;
 
-        $projectId = $this->projectId();
-        if (!$projectId) {
+        if (!$this->projectId($integration)) {
             return response()->json([
                 'message' => 'Не выбран проект. Проводки 1С проекта не знают — его нужно указать до загрузки.',
             ], 422);
         }
 
-        $importer = new PostingsImporter(
-            $this->dbName, $this->scope, $this->editLockDate(), $projectId,
-        );
+        $period = $file['meta']['period'] ?? null;
 
-        $only   = $request->input('only');
-        $result = $importer->import($file, is_array($only) ? $only : null);
+        $run = (new IntegrationRun)->setConnection($this->dbName);
+        $run->fill([
+            'integration_id' => $integration->id,
+            'entity'         => OneCBp3FileDriver::ENTITY,
+            'mode'           => 'manual',
+            'period_from'    => $period['from'] ?? null,
+            'period_to'      => $period['to'] ?? null,
+            'status'         => 'running',
+            'started_at'     => now(),
+            'fetched' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0, 'failed' => 0,
+        ]);
+        $run->save();
+
+        @set_time_limit(300);
+
+        $only = $request->input('only');
+
+        try {
+            $result = $this->importer($integration)->import($file, is_array($only) ? $only : null);
+
+            foreach (['fetched', 'created', 'updated', 'skipped', 'failed'] as $k) {
+                $run->{$k} = $result[$k] ?? 0;
+            }
+            $run->details = $result['warnings'] ?: null;
+            $run->status  = $run->failed > 0 ? 'warning' : 'ok';
+            $run->message = $this->summary($run);
+        } catch (\Throwable $e) {
+            $result = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'failed' => 0, 'warnings' => []];
+            $run->status  = 'error';
+            $run->message = $e->getMessage();
+        }
+
+        $run->finished_at = now();
+        $run->save();
+
+        $integration->last_run_at      = $run->finished_at;
+        $integration->last_run_status  = $run->status;
+        $integration->last_run_message = $run->message;
+        $integration->save();
+
+        if ($run->status === 'error') {
+            return response()->json(['message' => $run->message], 422);
+        }
 
         return response()->json(['data' => $result]);
     }
 
     // ─── Приватные ───────────────────────────────────────────────────────────
+
+    private function importer(Integration $integration): PostingsImporter
+    {
+        return new PostingsImporter(
+            $this->dbName, $this->scope, $integration, $this->editLockDate(),
+        );
+    }
+
+    /**
+     * Интеграция запроса.
+     *
+     * Явный integration_id важнее: 1С-баз может быть несколько, и у каждой своя
+     * привязка счетов. Когда она одна — не спрашиваем, лишний выбор из одного
+     * варианта только мешает.
+     */
+    private function resolve(Request $request): ?Integration
+    {
+        $id = $request->input('integration_id');
+
+        $query = Integration::on($this->dbName)->where('type', self::TYPE);
+
+        if ($id) return (clone $query)->where('id', (int) $id)->first();
+
+        return $query->where('is_active', true)->orderBy('id')->first();
+    }
+
+    private function noIntegration(): JsonResponse
+    {
+        return response()->json([
+            'message' => 'Не настроена интеграция с 1С. Заведите её в «Обмен данными → '
+                . 'Настройка интеграций», тип «' . IntegrationRegistry::schema(self::TYPE)['label'] . '».',
+        ], 422);
+    }
+
+    private function list(): array
+    {
+        return Integration::on($this->dbName)->where('type', self::TYPE)
+            ->orderBy('name')->get()
+            ->map(fn($i) => [
+                'id'         => $i->id,
+                'name'       => $i->name,
+                'is_active'  => (bool) $i->is_active,
+                'project_id' => $this->projectId($i),
+            ])->all();
+    }
+
+    private function projectId(Integration $integration): ?int
+    {
+        $value = $integration->setting('project_id');
+
+        return $value ? (int) $value : null;
+    }
+
+    /**
+     * Запись привязок одного вида.
+     *
+     * Строки, которых нет в присланном списке, не трогаем: человек правит то,
+     * что видит в текущем файле, и стирать привязки из прошлых месяцев было бы
+     * сюрпризом. Убирает привязку режим auto, и только по конкретной строке.
+     */
+    private function writeLinks(Integration $integration, string $entity, array $items): void
+    {
+        $table = fn() => DB::connection($this->dbName)->table('integration_links');
+
+        foreach ($items as $item) {
+            $where = [
+                'integration_id' => $integration->id,
+                'entity'         => $entity,
+                'external_id'    => $item['external_id'],
+            ];
+
+            if ($item['mode'] === 'auto') {
+                $table()->where($where)->delete();
+                continue;
+            }
+
+            $table()->updateOrInsert($where, [
+                'external_name' => $item['external_name'],
+                'local_type'    => $item['local_type'],
+                'local_id'      => $item['local_id'],
+                'synced_at'     => now(),
+                'updated_at'    => now(),
+                'created_at'    => now(),
+            ]);
+        }
+    }
+
+    /**
+     * Проверка целей привязки до записи: существуют ли и не закрыты ли ролью.
+     *
+     * Счёт, закрытый для этой должности, привязать нельзя — иначе человек
+     * настроил бы загрузку туда, куда ему самому смотреть не положено.
+     */
+    private function checkTargets(array $items, string $table, string $what): ?JsonResponse
+    {
+        $ids = array_values(array_filter(array_map(
+            fn($i) => $i['mode'] === 'bind' ? $i['local_id'] : null, $items
+        )));
+
+        if (!$ids) return null;
+
+        if ($table === 'balance_items' && $this->scope->hidesAny($ids)) {
+            return $this->hiddenAccountError('соответствии счетов');
+        }
+
+        $known = DB::connection($this->dbName)->table($table)
+            ->whereIn('id', $ids)->whereNull('deleted_at')->pluck('id')->all();
+
+        foreach ($items as $item) {
+            if ($item['mode'] !== 'bind') continue;
+
+            if (!in_array($item['local_id'], $known)) {
+                return response()->json([
+                    'message' => "Выбранный {$what} для «{$item['external_name']}» больше не существует.",
+                ], 422);
+            }
+        }
+
+        return null;
+    }
+
+    /** Сохранённая привязка счетов вместе с названиями счетов FINDIR. */
+    private function accountMap(Integration $integration): array
+    {
+        $rows = DB::connection($this->dbName)
+            ->table('integration_links as l')
+            ->leftJoin('balance_items as b', function ($join) {
+                $join->on('b.id', '=', 'l.local_id')->whereNull('b.deleted_at');
+            })
+            ->where('l.integration_id', $integration->id)
+            ->where('l.entity', PostingsImporter::ENTITY_ACCOUNT)
+            ->orderBy('l.external_id')
+            ->select('l.external_id as account', 'l.local_id', 'b.code', 'b.name')
+            ->get();
+
+        // Закрытые счета не показываем: настройка чужого счёта — такой же
+        // способ узнать о нём, как и отчёт
+        return $rows->reject(fn($r) => $r->local_id && $this->scope->hides((int) $r->local_id))
+            ->map(fn($r) => [
+                'account' => $r->account,
+                'mode'    => $r->local_id === null ? 'skip' : 'bind',
+                'bi_id'   => $r->local_id ? (int) $r->local_id : null,
+                'bi'      => $r->code ? $r->code . ' ' . $r->name : null,
+            ])->values()->all();
+    }
 
     /**
      * Разобранный файл или готовый ответ об ошибке.
@@ -206,32 +427,16 @@ class OneCController extends TenantController
         }
     }
 
-    private function projectId(): ?int
+    private function summary(IntegrationRun $run): string
     {
-        $value = DB::connection($this->dbName)->table('settings')
-            ->where('key', self::PROJECT_KEY)->value('value');
+        $parts = [
+            "получено {$run->fetched}",
+            "создано {$run->created}",
+            "обновлено {$run->updated}",
+            "без изменений {$run->skipped}",
+        ];
+        if ($run->failed > 0) $parts[] = "пропущено {$run->failed}";
 
-        return $value ? (int) $value : null;
-    }
-
-    /** Сохранённое соответствие вместе с названиями счетов FINDIR. */
-    private function accountMap(): array
-    {
-        $rows = DB::connection($this->dbName)
-            ->table('onec_account_map as m')
-            ->join('balance_items as b', 'b.id', '=', 'm.bi_id')
-            ->whereNull('b.deleted_at')
-            ->orderBy('m.account')
-            ->select('m.account', 'b.id as bi_id', 'b.code', 'b.name')
-            ->get();
-
-        // Закрытые счета не показываем и не отдаём: настройка чужого счёта —
-        // такой же способ узнать о нём, как и отчёт
-        return $rows->reject(fn($r) => $this->scope->hides((int) $r->bi_id))
-            ->map(fn($r) => [
-                'account' => $r->account,
-                'bi_id'   => (int) $r->bi_id,
-                'bi'      => $r->code . ' ' . $r->name,
-            ])->values()->all();
+        return implode(', ', $parts);
     }
 }
