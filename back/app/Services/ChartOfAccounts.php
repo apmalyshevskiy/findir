@@ -73,6 +73,12 @@ class ChartOfAccounts
                 'hint' => 'Готовая продукция кухни или производства.',
             ],
             [
+                'id' => 250, 'code' => 'А250', 'name' => 'МАТЕРИАЛЫ ДЛЯ ХОЗРАСХОДОВ',
+                'group' => self::ASSETS, 'default' => false,
+                'info_1_type' => 'product', 'info_2_type' => null, 'has_quantity' => 1,
+                'hint' => 'Моющие средства, одноразовая посуда, канцелярия — то, что расходуется, но не входит в себестоимость.',
+            ],
+            [
                 'id' => 300, 'code' => 'А300', 'name' => 'КЛИЕНТЫ',
                 'group' => self::ASSETS, 'default' => true,
                 'info_1_type' => 'partner', 'info_2_type' => null, 'has_quantity' => 0,

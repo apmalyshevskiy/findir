@@ -64,44 +64,55 @@ class OneCController extends TenantController
             'accounts.*.bi_id'    => 'nullable|integer',
         ]);
 
+        // Список пар, а не карта «счёт → id». Ключом массива код счёта быть не
+        // может: PHP приводит числовые ключи к integer, и счета вроде «26» и
+        // «51» уехали бы числами. MySQL на сравнении varchar с числом приводит
+        // к числу саму колонку, и отбор поехал бы молча
         $wanted = [];
         foreach ($data['accounts'] ?? [] as $row) {
-            $account = trim($row['account']);
+            $account = trim((string) $row['account']);
             if ($account === '' || empty($row['bi_id'])) continue;
-            $wanted[$account] = (int) $row['bi_id'];
+            $wanted[] = ['account' => $account, 'bi_id' => (int) $row['bi_id']];
         }
+
+        $codes = array_column($wanted, 'account');
+        $biIds = array_column($wanted, 'bi_id');
 
         // Счёт, закрытый для этой должности, сопоставить нельзя: иначе человек
         // настроил бы загрузку туда, куда ему самому смотреть не положено
-        if ($wanted && $this->scope->hidesAny(array_values($wanted))) {
+        if ($biIds && $this->scope->hidesAny($biIds)) {
             return $this->hiddenAccountError('соответствии счетов');
         }
 
         $known = DB::connection($this->dbName)->table('balance_items')
-            ->whereIn('id', $wanted ?: [0])->whereNull('deleted_at')->pluck('id')->all();
+            ->whereIn('id', $biIds ?: [0])->whereNull('deleted_at')->pluck('id')->all();
 
-        foreach ($wanted as $account => $biId) {
-            if (!in_array($biId, $known)) {
+        foreach ($wanted as $row) {
+            if (!in_array($row['bi_id'], $known)) {
                 return response()->json([
-                    'message' => "Счёта FINDIR для «{$account}» больше нет в плане счетов.",
+                    'message' => "Счёта FINDIR для «{$row['account']}» больше нет в плане счетов.",
                 ], 422);
             }
         }
 
-        DB::connection($this->dbName)->transaction(function () use ($wanted, $data) {
-            $table = DB::connection($this->dbName)->table('onec_account_map');
+        DB::connection($this->dbName)->transaction(function () use ($wanted, $codes, $data) {
+            $conn = DB::connection($this->dbName);
 
-            $table->whereNotIn('account', array_keys($wanted) ?: [''])->delete();
+            // Каждому запросу — свой построитель. Построитель накапливает
+            // условия, и один объект на всё дописал бы к updateOrInsert ещё и
+            // whereNotIn от удаления: строка не находилась бы, вставка падала
+            // на уникальном индексе
+            $conn->table('onec_account_map')->whereNotIn('account', $codes ?: [''])->delete();
 
-            foreach ($wanted as $account => $biId) {
-                $table->updateOrInsert(
-                    ['account' => $account],
-                    ['bi_id' => $biId, 'updated_at' => now(), 'created_at' => now()],
+            foreach ($wanted as $row) {
+                $conn->table('onec_account_map')->updateOrInsert(
+                    ['account' => $row['account']],
+                    ['bi_id' => $row['bi_id'], 'updated_at' => now(), 'created_at' => now()],
                 );
             }
 
             if (array_key_exists('project_id', $data)) {
-                DB::connection($this->dbName)->table('settings')->updateOrInsert(
+                $conn->table('settings')->updateOrInsert(
                     ['key' => self::PROJECT_KEY],
                     ['value' => $data['project_id'], 'updated_at' => now(), 'created_at' => now()],
                 );

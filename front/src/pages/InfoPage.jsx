@@ -90,7 +90,20 @@ const Highlight = ({ text, q }) => {
   )
 }
 
-const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
+/**
+ * Выбор элемента справочника с поиском и созданием на месте.
+ *
+ * Раньше умел только выбирать родителя, отсюда и имя. Теперь им же выбирается
+ * статья расхода по умолчанию у статьи ДДС: там та же задача — нужного элемента
+ * может ещё не быть, а уходить за ним в другой справочник, теряя набранное,
+ * неправильно.
+ *
+ * @param label       подпись поля
+ * @param hint        мелкая серая приписка к подписи
+ * @param emptyLabel  как называется «ничего не выбрано»
+ */
+const InfoPicker = ({ items, value, onChange, infoType, onItemCreated,
+                      label = 'Родитель', hint = '', emptyLabel = '— Без родителя' }) => {
   const [search, setSearch] = useState('')
   const [isOpen, setIsOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -133,12 +146,15 @@ const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
 
   return (
     <div className="relative">
-      <label className="block text-sm font-medium text-gray-700 mb-1">Родитель</label>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}
+        {hint && <span className="ml-1 text-xs text-gray-400 font-normal">{hint}</span>}
+      </label>
       <div className="relative">
         <input
           type="text"
           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder={selectedOption ? '' : "— Без родителя"}
+          placeholder={selectedOption ? '' : emptyLabel}
           value={search}
           onFocus={() => setIsOpen(true)}
           onChange={e => { setSearch(e.target.value); setIsOpen(true); setCreating(false) }}
@@ -154,7 +170,7 @@ const ParentSelect = ({ items, value, onChange, infoType, onItemCreated }) => {
               className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
               onClick={() => { onChange(''); setSearch(''); setIsOpen(false); setCreating(false) }}
             >
-              — Без родителя
+              {emptyLabel}
             </div>
             {filtered.map(opt => (
               <div
@@ -589,7 +605,7 @@ export default function InfoPage() {
               </div>
 
               {/* Родитель */}
-              <ParentSelect
+              <InfoPicker
                 items={items.filter(i => i.type === form.type && i.id !== editItem?.id)}
                 value={form.parent_id}
                 onChange={val => setForm({ ...form, parent_id: val })}
@@ -617,26 +633,24 @@ export default function InfoPage() {
                   maxLength={35} />
               </div>
 
-              {/* Статья расходов по умолчанию — только для flow */}
+              {/* Статья расходов по умолчанию — только для flow.
+                  Тем же компонентом, что и родитель: нужной статьи расхода
+                  может ещё не быть, и заводить её надо здесь же, не выходя
+                  из карточки статьи ДДС */}
               {form.type === 'flow' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Статья расходов по умолчанию
-                    <span className="ml-1 text-xs text-gray-400 font-normal">для автозаполнения выписки</span>
-                  </label>
-                  <select
-                    value={form.default_expense_id || ''}
-                    onChange={e => setForm({ ...form, default_expense_id: e.target.value })}
-                    className={ic}
-                  >
-                    <option value="">— Не выбрана</option>
-                    {flattenTree(buildTree(expenseOptions), 0, new Set((expenseOptions || []).map(i => i.id))).map(opt => (
-                      <option key={opt.id} value={opt.id}>
-                        {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <InfoPicker
+                  label="Статья расходов по умолчанию"
+                  hint="для автозаполнения выписки"
+                  emptyLabel="— Не выбрана"
+                  items={expenseOptions}
+                  value={form.default_expense_id}
+                  onChange={val => setForm({ ...form, default_expense_id: val })}
+                  infoType="expenses"
+                  // Кладём только в список статей расхода: общий список страницы
+                  // отфильтрован по типу, и расходу среди статей ДДС не место.
+                  // Страница перечитается сама после сохранения формы
+                  onItemCreated={(newItem) => setExpenseOptions(prev => [...prev, newItem])}
+                />
               )}
 
               {/* ИНН — только для partner */}
