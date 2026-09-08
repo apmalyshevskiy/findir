@@ -111,6 +111,11 @@ export default function BalanceSheetPage() {
   const [editOp, setEditOp]           = useState(null)
   const dragIdx = useRef(null) // для drag-and-drop порядка аналитик
 
+  // Смещение окна расшифровки от центра. Окно перетаскивают, когда нужно
+  // заглянуть в строку оборотки под ним, — а не потому, что оно стоит не там
+  const [drillPos, setDrillPos] = useState({ x: 0, y: 0 })
+  const drillDrag = useRef(null)
+
   // Состояние для инлайн-просмотра документа из drill-down
   const [docModal, setDocModal]           = useState(null)  // { doc }
   const [docInfoCache, setDocInfoCache]   = useState({})
@@ -276,8 +281,32 @@ export default function BalanceSheetPage() {
     return op.quantity
   }
 
+  /** Перетаскивание окна расшифровки за заголовок. */
+  const drillDown = (e) => {
+    // За крестик не таскаем — иначе окно уезжает вместо закрытия
+    if (e.target.closest('button')) return
+
+    drillDrag.current = { sx: e.clientX, sy: e.clientY, ox: drillPos.x, oy: drillPos.y }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+
+  const drillMove = (e) => {
+    const d = drillDrag.current
+    if (!d) return
+
+    setDrillPos({ x: d.ox + e.clientX - d.sx, y: d.oy + e.clientY - d.sy })
+  }
+
+  const drillUp = (e) => {
+    drillDrag.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* уже отпущен */ }
+  }
+
   const openDrill = async (title, biId, direction, infoId = null) => {
     setDrillLoading(true)
+    // Новая расшифровка открывается по центру: искать уехавшее окно человеку
+    // пришлось бы каждый раз заново
+    setDrillPos({ x: 0, y: 0 })
     setDrillModal({ title, ops: [], posted: [], unposted: [], biId, direction, infoId })
     const params = { per_page: 200, date_from: filter.from, date_to: filter.to }
 
@@ -1021,10 +1050,20 @@ export default function BalanceSheetPage() {
 
       {drillModal && !editOp && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] flex flex-col">
-            <div className="p-5 border-b border-gray-100 flex justify-between items-center">
+          {/* Ширина как у самой оборотки (SHELL в Layout — 1400px): окно и
+              таблица под ним стоят по одним краям, глазу не надо перестраиваться.
+              Дальше размер меняется мышкой за правый нижний угол */}
+          <div
+            className="bg-white rounded-2xl shadow-xl w-[1400px] max-w-[96vw] max-h-[85vh] flex flex-col resize overflow-hidden"
+            style={{ transform: `translate(${drillPos.x}px, ${drillPos.y}px)` }}>
+            <div
+              onPointerDown={drillDown}
+              onPointerMove={drillMove}
+              onPointerUp={drillUp}
+              onPointerCancel={drillUp}
+              className="p-5 border-b border-gray-100 flex justify-between items-center cursor-move select-none">
               <h3 className="font-semibold text-gray-800">{drillModal.title}</h3>
-              <button onClick={() => setDrillModal(null)} className="text-gray-400 hover:text-gray-600 text-xl px-2">×</button>
+              <button onClick={() => setDrillModal(null)} className="text-gray-400 hover:text-gray-600 text-xl px-2 cursor-pointer">×</button>
             </div>
             <div className="overflow-auto flex-1">
               {drillLoading ? (
@@ -1043,11 +1082,14 @@ export default function BalanceSheetPage() {
                     <tr className="text-xs text-gray-500 uppercase tracking-wide">
                       <th className="text-left px-4 py-3 w-10">#</th>
                       <th className="text-left px-4 py-3">Дата</th>
-                      <th className="text-left px-4 py-3">Дебет</th>
-                      <th className="text-left px-4 py-3">Кредит</th>
+                      {/* Счёт с двумя аналитиками — три строки текста, и в узкой
+                          колонке каждая ломалась пополам. Ширину забираем у
+                          содержания: там перенос по словам читается нормально */}
+                      <th className="text-left px-4 py-3 w-[17rem] min-w-[17rem]">Дебет</th>
+                      <th className="text-left px-4 py-3 w-[17rem] min-w-[17rem]">Кредит</th>
                       <th className="text-right px-4 py-3">Сумма</th>
                       <th className="text-right px-4 py-3 text-blue-500">#</th>
-                      <th className="text-left px-4 py-3">Содержание</th>
+                      <th className="text-left px-4 py-3">Содержание и комментарий</th>
                       <th className="px-4 py-3 w-10"></th>
                     </tr>
                   </thead>
@@ -1087,7 +1129,16 @@ export default function BalanceSheetPage() {
                         <td className="px-4 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
                           {drillQty(op) ? fmtQty(drillQty(op)) : '—'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-500">{op.note || op.content || '—'}</td>
+                        {/* Оба поля, когда оба заполнены. Раньше показывался
+                            только комментарий, и содержание — то, что пришло из
+                            банка или из 1С, — до расшифровки не доезжало */}
+                        <td className="px-4 py-3 text-sm text-gray-500">
+                          {op.content && <div className="text-gray-700">{op.content}</div>}
+                          {op.note && (
+                            <div className={op.content ? 'text-xs text-gray-400 mt-0.5' : ''}>{op.note}</div>
+                          )}
+                          {!op.content && !op.note && '—'}
+                        </td>
                         <td className="px-4 py-3 text-right">
                           {op.table_name === 'documents' && op.table_id ? (
                             <button
