@@ -10,7 +10,7 @@ import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import { SkeletonRows } from '../components/Busy'
 import OperationChanges from '../components/OperationChanges'
-import InfoItemCard from '../components/InfoItemCard'
+import SharedInfoSelect from '../components/InfoSelect'
 import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
@@ -127,122 +127,22 @@ const NumInput = ({ value, onChange, disabled, placeholder = '—', step = '0.01
  */
 const InfoDict = createContext(null)
 
-const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать...', disabled, infoType }) => {
-  const [search, setSearch]   = useState('')
-  const [open, setOpen]       = useState(false)
-  const [pos, setPos]         = useState({ top: 0, left: 0, width: 200 })
-  const [card, setCard]       = useState(null)   // null | 'create' | 'edit'
-  const inputRef = useRef()
-  const dropRef  = useRef()
-
-  // Заводить элемент справочника можно, только если известен его тип и есть
-  // кому обновить список — иначе поле работает как раньше
-  const dict     = useContext(InfoDict)
-  const editable = !!infoType && !!dict && !disabled
-
-  useEffect(() => {
-    const handler = (e) => {
-      if (
-        inputRef.current && !inputRef.current.contains(e.target) &&
-        !(dropRef.current && dropRef.current.contains(e.target))
-      ) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const handleFocus = () => {
-    const r = inputRef.current.getBoundingClientRect()
-    setPos({ top: r.bottom + window.scrollY + 2, left: r.left + window.scrollX, width: Math.max(r.width, 240) })
-    setOpen(true)
-    setSearch('')
-  }
-
-  const flat     = flattenTree(buildTree(items))
-  const filtered = search
-    ? flat.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) || (i.code || '').toLowerCase().includes(search.toLowerCase()))
-    : flat
-  const selected = items.find(i => i.id == value)
-
-  // Сохранили элемент — обновляем справочник страницы и встаём на него
-  const handleSaved = (saved) => {
-    dict.reload(infoType)
-    onChange(saved.id)
-    setCard(null)
-    setSearch('')
-    setOpen(false)
-  }
+/**
+ * Выбор аналитики в документе.
+ *
+ * Список, поиск, недавние, карандаш и создание живут в общем компоненте —
+ * он один на все экраны. Здесь остаётся единственное, что специфично для
+ * документа: сказать странице, что справочник пополнился, чтобы новый
+ * элемент увидели и остальные поля формы.
+ */
+const InfoSelect = (props) => {
+  const dict = useContext(InfoDict)
 
   return (
-    <div className="relative">
-      <input
-        ref={inputRef}
-        type="text"
-        disabled={disabled}
-        className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${disabled ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200'} ${editable && value ? 'pr-12' : ''}`}
-        placeholder={selected ? selected.name : placeholder}
-        value={open ? search : (selected ? selected.name : '')}
-        onFocus={handleFocus}
-        onChange={e => setSearch(e.target.value)}
-      />
-      {/* Карандашик — переименовать выбранный элемент, не уходя из документа.
-          Рисуем svg, а не знак ✎: шрифтовой символ система подменяет цветным
-          глифом из эмодзи-шрифта, и заданный серый цвет к нему не применяется */}
-      {editable && selected && (
-        <button type="button" title={`Изменить «${selected.name}»`}
-          onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('edit') }}
-          className="absolute right-7 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            <path d="m15 5 4 4" />
-          </svg>
-        </button>
-      )}
-      {value && !disabled && (
-        <button onClick={() => { onChange(null); setSearch('') }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
-      )}
-      {open && createPortal(
-        <div ref={dropRef} className="fixed z-[9999] bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto"
-          style={{ top: pos.top, left: pos.left, width: pos.width }}>
-          {filtered.length === 0
-            ? <div className="px-3 py-2 text-xs text-gray-400">Ничего не найдено</div>
-            : filtered.map(i => (
-              <div key={i.id}
-                className="px-3 py-1.5 text-sm cursor-pointer hover:bg-blue-50 flex items-center gap-1"
-                style={{ paddingLeft: 12 + i.depth * 14 }}
-                onMouseDown={() => { onChange(i.id); setOpen(false); setSearch('') }}>
-                {i.depth > 0 && <span className="text-gray-300 text-xs">└</span>}
-                <span className={i.depth === 0 ? 'font-medium text-gray-800' : 'text-gray-600'}>{i.name}</span>
-                {i.code && <span className="ml-auto text-xs text-gray-400 font-mono">{i.code}</span>}
-              </div>
-            ))
-          }
-          {/* Нужного элемента нет — заводим здесь же. Уходить за этим в
-              «Справочники», теряя набранный документ, неправильно */}
-          {editable && (
-            <div className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5 sticky bottom-0 bg-white"
-              onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('create') }}>
-              <span className="text-blue-500">+</span>
-              Создать{search ? ` «${search}»` : `: ${INFO_LABELS[infoType] || infoType}`}
-            </div>
-          )}
-        </div>,
-        document.body
-      )}
-
-      {card && (
-        <InfoItemCard
-          infoType={infoType}
-          item={card === 'edit' ? selected : null}
-          items={items}
-          initialName={card === 'create' ? search : ''}
-          onSaved={handleSaved}
-          onClose={() => setCard(null)}
-        />
-      )}
-    </div>
+    <SharedInfoSelect
+      {...props}
+      onItemCreated={() => props.infoType && dict?.reload(props.infoType)}
+    />
   )
 }
 

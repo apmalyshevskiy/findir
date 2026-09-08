@@ -3,6 +3,8 @@ import { getInfo, createInfo, updateInfo, deleteInfo } from '../api/info'
 import Layout from '../components/Layout'
 import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
 import InfoTypeBadge from '../components/InfoTypeBadge'
+import InfoSelect from '../components/InfoSelect'
+import { matchesSearch, Highlight } from '../utils/infoSearch'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -50,203 +52,26 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
 const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '' }
 
 /**
- * Поиск по справочнику.
+ * Выбор элемента справочника: родитель и статья расхода по умолчанию.
  *
- * Ищем не только по названию: контрагента чаще помнят по ИНН, статью — по коду,
- * а свой же элемент из формы операции — по номеру, который там показан решёткой.
- * Поэтому «7707083893», «02.01» и «#128» находят каждый своё.
- */
-const matchesSearch = (item, q) => {
-  const needle = q.trim().toLowerCase()
-  if (!needle) return true
-
-  // «#128» и просто «128» — это про идентификатор, но по числу ищем и в
-  // остальных полях: код статьи тоже бывает числом
-  if (needle.startsWith('#')) return String(item.id) === needle.slice(1)
-
-  // Номер сверяем целиком: по подстроке «1» нашлась бы половина справочника
-  if (String(item.id) === needle) return true
-
-  return [item.name, item.code, item.inn, item.description]
-    .some(v => v && String(v).toLowerCase().includes(needle))
-}
-
-/** Подсветка найденного куска — глазу проще зацепиться в длинном списке */
-const Highlight = ({ text, q }) => {
-  const needle = q.trim()
-  if (!text) return null
-  if (!needle || needle.startsWith('#')) return <>{text}</>
-
-  const idx = String(text).toLowerCase().indexOf(needle.toLowerCase())
-  if (idx < 0) return <>{text}</>
-
-  const s = String(text)
-  return (
-    <>
-      {s.slice(0, idx)}
-      <mark className="bg-amber-100 text-inherit rounded-sm px-0.5">{s.slice(idx, idx + needle.length)}</mark>
-      {s.slice(idx + needle.length)}
-    </>
-  )
-}
-
-/**
- * Выбор элемента справочника с поиском и созданием на месте.
- *
- * Раньше умел только выбирать родителя, отсюда и имя. Теперь им же выбирается
- * статья расхода по умолчанию у статьи ДДС: там та же задача — нужного элемента
- * может ещё не быть, а уходить за ним в другой справочник, теряя набранное,
- * неправильно.
- *
- * @param label       подпись поля
- * @param hint        мелкая серая приписка к подписи
- * @param emptyLabel  как называется «ничего не выбрано»
+ * Список, поиск, недавние и создание — в общем компоненте, одном на все
+ * экраны. Здесь остались только подписи: у родителя пустое значение
+ * называется «Без родителя», у статьи расхода — «Не выбрана».
  */
 const InfoPicker = ({ items, value, onChange, infoType, onItemCreated,
-                      label = 'Родитель', hint = '', emptyLabel = '— Без родителя' }) => {
-  const [search, setSearch] = useState('')
-  const [isOpen, setIsOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newParentId, setNewParentId] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const tree = buildTree(items || [])
-  const allFlat = flattenTree(tree, 0, new Set((items || []).map(i => i.id)))
-  const filtered = search
-    ? allFlat.filter(opt =>
-        opt.name.toLowerCase().includes(search.toLowerCase()) ||
-        (opt.code && opt.code.toLowerCase().includes(search.toLowerCase()))
-      )
-    : allFlat
-
-  const selectedOption = items?.find(o => String(o.id) === String(value))
-
-  const handleCreate = async () => {
-    if (!newName.trim() || !infoType) return
-    setSaving(true)
-    try {
-      const res = await createInfo({ name: newName.trim(), type: infoType, parent_id: newParentId || null })
-      const created = res.data.data
-      if (onItemCreated) onItemCreated(created)
-      onChange(String(created.id))
-      setCreating(false)
-      setNewName('')
-      setNewParentId('')
-      setSearch('')
-      setIsOpen(false)
-    } catch (err) {
-      console.error('Ошибка создания:', err)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const typeLabel = INFO_TYPES.find(t => t.value === infoType)?.label || infoType
-
-  return (
-    <div className="relative">
-      <label className="block text-sm font-medium text-gray-700 mb-1">
-        {label}
-        {hint && <span className="ml-1 text-xs text-gray-400 font-normal">{hint}</span>}
-      </label>
-      <div className="relative">
-        <input
-          type="text"
-          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder={selectedOption ? '' : emptyLabel}
-          value={search}
-          onFocus={() => setIsOpen(true)}
-          onChange={e => { setSearch(e.target.value); setIsOpen(true); setCreating(false) }}
-        />
-        {selectedOption && !search && (
-          <div className="absolute inset-y-0 left-0 right-0 flex items-center px-3 text-sm text-gray-900 pointer-events-none truncate">
-            {selectedOption.name}
-          </div>
-        )}
-        {isOpen && (
-          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto">
-            <div
-              className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
-              onClick={() => { onChange(''); setSearch(''); setIsOpen(false); setCreating(false) }}
-            >
-              {emptyLabel}
-            </div>
-            {filtered.map(opt => (
-              <div
-                key={opt.id}
-                className="px-3 py-2 text-sm hover:bg-blue-50 cursor-pointer flex justify-between items-center group"
-                onClick={() => { onChange(String(opt.id)); setSearch(''); setIsOpen(false); setCreating(false) }}
-              >
-                <span style={{ paddingLeft: search ? 0 : opt.depth * 16 }} className="truncate">
-                  {!search && opt.depth > 0 && <span className="text-gray-300 mr-1.5">└</span>}
-                  <span className={opt.children?.length > 0 ? "font-medium text-gray-800" : "text-gray-700 group-hover:text-blue-700"}>
-                    {opt.name}
-                  </span>
-                </span>
-                {opt.code && <span className="text-gray-400 text-[10px] font-mono ml-2">{opt.code}</span>}
-              </div>
-            ))}
-            {filtered.length === 0 && !creating && (
-              <div className="px-3 py-2 text-sm text-gray-400">Ничего не найдено</div>
-            )}
-
-            {/* Кнопка создания */}
-            {!creating && (
-              <div
-                className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5"
-                onClick={e => { e.stopPropagation(); setCreating(true); setNewName(search); setNewParentId('') }}
-              >
-                <span className="text-blue-500">+</span> Создать «{search || typeLabel}»
-              </div>
-            )}
-
-            {creating && (
-              <div className="p-3 border-t border-gray-100 bg-gray-50 space-y-2" onClick={e => e.stopPropagation()}>
-                <div className="text-xs text-gray-500 font-medium">Новый: {typeLabel}</div>
-                <input
-                  type="text"
-                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Название"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') { e.preventDefault(); handleCreate() }
-                    if (e.key === 'Escape') setCreating(false)
-                  }}
-                  autoFocus
-                />
-                <select
-                  className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={newParentId}
-                  onChange={e => setNewParentId(e.target.value)}
-                >
-                  <option value="">— Без родителя</option>
-                  {allFlat.map(opt => (
-                    <option key={opt.id} value={opt.id}>
-                      {'\u00A0'.repeat(opt.depth * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex gap-2">
-                  <button type="button" onClick={handleCreate} disabled={!newName.trim() || saving}
-                    className="flex-1 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50">
-                    {saving ? 'Создаю...' : 'Создать'}
-                  </button>
-                  <button type="button" onClick={() => setCreating(false)}
-                    className="px-3 py-1.5 text-gray-500 hover:text-gray-700 text-sm border border-gray-200 rounded-lg">
-                    Отмена
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      {isOpen && <div className="fixed inset-0 z-[55]" onClick={() => { setIsOpen(false); setCreating(false) }}></div>}
-    </div>
-  )
-}
+                      label = 'Родитель', hint = '', emptyLabel = '— Без родителя' }) => (
+  <InfoSelect
+    items={items}
+    value={value}
+    onChange={onChange}
+    infoType={infoType}
+    onItemCreated={onItemCreated}
+    label={label}
+    hint={hint}
+    emptyLabel={emptyLabel}
+    placeholder={emptyLabel}
+  />
+)
 
 export default function InfoPage() {
   const [items, setItems] = useState([])

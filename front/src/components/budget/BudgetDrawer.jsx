@@ -116,7 +116,10 @@ export default function BudgetDrawer({
   return (
     <>
       <div className="fixed inset-0 bg-black/20 z-40" onClick={editOp || docModal ? undefined : onClose} />
-      <div className="fixed top-0 right-0 h-full w-[460px] max-w-full bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
+      {/* Половина экрана вместо прежних 460 px: в расшифровке живёт содержание
+          операций, а оно длинное — в узкой панели каждая строка ломалась на
+          три и список переставал читаться. На узких экранах панель не уже 460 */}
+      <div className="fixed top-0 right-0 h-full w-[50vw] min-w-[460px] max-w-full bg-white shadow-2xl z-50 flex flex-col border-l border-gray-200">
         <div className="px-5 py-4 border-b border-gray-100 flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-gray-800">{articleName}</h3>

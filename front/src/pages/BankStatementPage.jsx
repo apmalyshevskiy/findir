@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { parseBankStatement } from '../api/bankStatements'
@@ -8,120 +7,13 @@ import { getInfo } from '../api/info'
 import { getBalanceItems } from '../api/operations'
 import { classifyStatement, applyRules } from '../api/ai'
 import Layout from '../components/Layout'
+import InfoSelect from '../components/InfoSelect'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => n == null ? '—' : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 
-const buildTree = (items) => {
-  const map = {}
-  const roots = []
-  items.forEach(i => { map[i.id] = { ...i, children: [] } })
-  items.forEach(i => {
-    if (i.parent_id && map[i.parent_id]) map[i.parent_id].children.push(map[i.id])
-    else roots.push(map[i.id])
-  })
-  const sort = (nodes) => {
-    nodes.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || (a.name || '').localeCompare(b.name || ''))
-    nodes.forEach(n => sort(n.children))
-  }
-  sort(roots)
-  return roots
-}
-
-const flattenTree = (nodes, depth = 0) => {
-  let r = []
-  nodes.forEach(n => {
-    r.push({ ...n, depth })
-    if (n.children?.length) r = r.concat(flattenTree(n.children, depth + 1))
-  })
-  return r
-}
-
-// ── Компонент: поиск с иерархией (dropdown через portal) ────────────────────────
-const InfoSelect = ({ items = [], value, onChange, placeholder = 'Выбрать...' }) => {
-  const [search, setSearch] = useState('')
-  const [open, setOpen] = useState(false)
-  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 200 })
-  const inputRef = useRef()
-  const dropRef = useRef()
-
-  useEffect(() => {
-    const handler = (e) => {
-      if (
-        inputRef.current && !inputRef.current.contains(e.target) &&
-        !(dropRef.current && dropRef.current.contains(e.target))
-      ) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const handleFocus = () => {
-    const rect = inputRef.current.getBoundingClientRect()
-    setDropPos({
-      top:   rect.bottom + window.scrollY + 2,
-      left:  rect.left   + window.scrollX,
-      width: Math.max(rect.width, 260),
-    })
-    setOpen(true)
-    setSearch('')
-  }
-
-  const flat = flattenTree(buildTree(items))
-  const filtered = search
-    ? flat.filter(i => i.name.toLowerCase().includes(search.toLowerCase()) || (i.code || '').toLowerCase().includes(search.toLowerCase()))
-    : flat
-  const selected = items.find(i => i.id == value)
-
-  const dropdown = open && createPortal(
-    <div
-      ref={dropRef}
-      style={{ position: 'absolute', top: dropPos.top, left: dropPos.left, width: dropPos.width, zIndex: 9999 }}
-      className="bg-white border border-gray-200 rounded-lg shadow-2xl max-h-60 overflow-y-auto"
-    >
-      <div
-        className="px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 cursor-pointer border-b border-gray-100"
-        onMouseDown={() => { onChange(null); setOpen(false); setSearch('') }}
-      >
-        — Не выбрано
-      </div>
-      {filtered.map(i => (
-        <div
-          key={i.id}
-          onMouseDown={() => { onChange(i.id); setOpen(false); setSearch('') }}
-          className="px-3 py-1.5 text-xs hover:bg-blue-50 cursor-pointer"
-          style={{ paddingLeft: `${12 + i.depth * 12}px` }}
-        >
-          {i.depth > 0 && <span className="text-gray-300 mr-1">└</span>}
-          {i.code && <span className="text-gray-400 mr-1.5 font-mono">{i.code}</span>}
-          {i.name}
-        </div>
-      ))}
-      {filtered.length === 0 && (
-        <div className="px-3 py-2 text-xs text-gray-400">Ничего не найдено</div>
-      )}
-    </div>,
-    document.body
-  )
-
-  return (
-    <div className="relative">
-      <input
-        ref={inputRef}
-        type="text"
-        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
-        placeholder={selected ? selected.name : placeholder}
-        value={open ? search : (selected?.name || '')}
-        onFocus={handleFocus}
-        onChange={e => setSearch(e.target.value)}
-      />
-      {dropdown}
-    </div>
-  )
-}
-
 // ── Строка операции внутри строки выписки ─────────────────────────────────────
-const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, suggestedExpenseId, onChange, onRemove }) => {
+const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, suggestedExpenseId, onChange, onRemove, onInfoCreated }) => {
   const ic = 'w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400'
 
   // ── Нога комиссии эквайринг-свода: свободный режим, обе стороны — обычные счета ──
@@ -165,6 +57,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             <div>
               <div className="text-[10px] text-gray-400 mb-0.5">{LBL[dtInfo1Type] || dtInfo1Type}</div>
               <InfoSelect items={infoCache[dtInfo1Type] || []} value={op.in_info_1_id}
+                infoType={dtInfo1Type} onItemCreated={() => onInfoCreated?.(dtInfo1Type)}
                 onChange={v => onChange({ ...op, in_info_1_id: v })} placeholder="Выбрать..." />
             </div>
           ) : <div />}
@@ -190,6 +83,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             <div>
               <div className="text-[10px] text-gray-400 mb-0.5">{LBL[ktInfo1Type] || ktInfo1Type}</div>
               <InfoSelect items={infoCache[ktInfo1Type] || []} value={op.out_info_1_id}
+                infoType={ktInfo1Type} onItemCreated={() => onInfoCreated?.(ktInfo1Type)}
                 onChange={v => onChange({ ...op, out_info_1_id: v })} placeholder="Выбрать..." />
             </div>
           )}
@@ -307,6 +201,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             <InfoSelect
               items={infoCache[a100Info2Type] || []}
               value={op[a100Info2Field]}
+              infoType={a100Info2Type}
+              onItemCreated={() => onInfoCreated?.(a100Info2Type)}
               onChange={v => onChange({ ...op, [a100Info2Field]: v })}
               placeholder="Выбрать..."
             />
@@ -361,6 +257,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             <InfoSelect
               items={infoCache[counterInfo1Type] || []}
               value={op[counterInfo1Field]}
+              infoType={counterInfo1Type}
+              onItemCreated={() => onInfoCreated?.(counterInfo1Type)}
               onChange={v => onChange({ ...op, [counterInfo1Field]: v })}
               placeholder={counterInfo1Type === 'partner' && counterpartyInn ? `ИНН ${counterpartyInn}...` : 'Выбрать...'}
             />
@@ -374,6 +272,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
             <InfoSelect
               items={infoCache[counterInfo2Type] || []}
               value={op[counterInfo2Field]}
+              infoType={counterInfo2Type}
+              onItemCreated={() => onInfoCreated?.(counterInfo2Type)}
               onChange={v => onChange({ ...op, [counterInfo2Field]: v })}
               placeholder="Выбрать..."
             />
@@ -385,7 +285,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
 }
 
 // ── Строка выписки ────────────────────────────────────────────────────────────
-const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, forcedIgnored, onOperationsChange }) => {
+const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, forcedIgnored, onOperationsChange, onInfoCreated }) => {
   const a100 = balanceItems.find(b => b.code === 'А100')
   const a100Id = a100?.id
 
@@ -677,6 +577,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
               isOnly={ops.length === 1}
               balanceItems={balanceItems}
               infoCache={infoCache}
+              onInfoCreated={onInfoCreated}
               direction={row.direction}
               counterpartyInn={row.counterparty_inn}
               counterpartyAccount={row.counterparty_account}
@@ -893,6 +794,20 @@ export default function BankStatementPage() {
     } finally { setAiBusy(false) }
   }
 
+  /**
+   * Перечитать один справочник.
+   *
+   * Нужна не только при первой загрузке: в строке выписки можно завести
+   * контрагента прямо на месте, и остальные строки должны его увидеть — иначе
+   * следующую операцию тому же поставщику придётся заводить заново.
+   */
+  const reloadInfo = useCallback((type) => {
+    if (!type) return
+    getInfo({ type })
+      .then(r => setInfoCache(c => ({ ...c, [type]: r.data.data })))
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
     // Загружаем счета и справочники
@@ -900,9 +815,7 @@ export default function BankStatementPage() {
     getInfo({ type: 'cash' }).then(r => setCashInfoList(r.data.data))
     // Загружаем все типы аналитики которые могут встретиться в balance_items
     const infoTypes = ['flow', 'partner', 'employee', 'department', 'expenses', 'revenue', 'product', 'cash']
-    infoTypes.forEach(type =>
-      getInfo({ type }).then(r => setInfoCache(c => ({ ...c, [type]: r.data.data })))
-    )
+    infoTypes.forEach(type => reloadInfo(type))
   }, [])
 
   // ── Загрузка файла ──────────────────────────────────────────────────────────
@@ -1262,6 +1175,7 @@ export default function BankStatementPage() {
               cashInfoId={cashInfoId}
               balanceItems={balanceItems}
               infoCache={infoCache}
+              onInfoCreated={reloadInfo}
               direction={row.direction}
               forcedIgnored={forcedIgnored}
               onOperationsChange={async (ops, ignored, shouldCreate, readyForCreate) => {

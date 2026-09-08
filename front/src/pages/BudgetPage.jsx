@@ -8,6 +8,7 @@ import {
 import { createInfo, updateInfo } from '../api/info'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
+import usePersistedState from '../hooks/usePersistedState'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
@@ -142,6 +143,37 @@ export default function BudgetPage() {
   const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
+
+  /**
+   * Ширина колонки статей — тянется за правый край заголовка.
+   *
+   * Раньше таблица растягивалась на всю ширину, и при одном месяце цифра
+   * уезжала от названия статьи на полтора экрана: глаз терял строку по дороге.
+   * Теперь таблица прижата к содержимому, а ширину колонки человек ставит сам —
+   * названия статей у всех разной длины, и одного правильного значения нет.
+   */
+  const [articleW, setArticleW] = usePersistedState('budget:articleWidth', 420)
+  const articleDrag = useRef(null)
+
+  const colDown = (e) => {
+    articleDrag.current = { sx: e.clientX, w: articleW }
+    e.currentTarget.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  }
+
+  const colMove = (e) => {
+    const d = articleDrag.current
+    if (!d) return
+
+    // Границы, а не свобода: уже 220 колонка перестаёт читаться, шире 900 —
+    // возвращается ровно та беда, от которой уходим
+    setArticleW(Math.min(900, Math.max(220, d.w + e.clientX - d.sx)))
+  }
+
+  const colUp = (e) => {
+    articleDrag.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* уже отпущен */ }
+  }
   const [editDoc, setEditDoc] = useState(null) // { name, period_from, period_to }
   const [showSettingsPopup, setShowSettingsPopup] = useState(false) // попап настроек бюджета
   const [clipboard, setClipboard] = useState(null) // { articleId, section, periodDate, articleName }
@@ -636,16 +668,27 @@ export default function BudgetPage() {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-xs" style={{ minWidth: `${280 + periodDates.length * ((isPlanOnly || isFactOnly) ? 85 : showDelta ? 210 : 160)}px` }}>
+            {/* Без w-full: таблица шириной по содержимому, и колонка месяца
+                стоит вплотную к статьям, а не у правого края экрана */}
+            <table className="border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200" style={{ minWidth: 240 }}>
+                  <th
+                    className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200 relative"
+                    style={{ width: articleW, minWidth: articleW, maxWidth: articleW }}>
                     <div className="flex items-center gap-2">
                       Статья
                       {selectedDoc?.type === 'dds' && selectedDoc?.status === 'draft' && (
                         <button onClick={() => openAddArticle('flow', '_dds')} className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded">+ статья</button>
                       )}
                     </div>
+                    <span
+                      onPointerDown={colDown}
+                      onPointerMove={colMove}
+                      onPointerUp={colUp}
+                      onPointerCancel={colUp}
+                      title="Потяните, чтобы изменить ширину колонки"
+                      className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/60 active:bg-blue-500/70" />
                   </th>
                   {periodDates.map(pd => { const fm = isFactMonth(pd); return <th key={pd} colSpan={colsPerMonth} className={`text-center px-1 py-2 font-medium border-b border-l border-gray-200 ${fm ? 'bg-gray-50 text-gray-400' : isCurrentMonth(pd) ? 'bg-blue-50 text-blue-800' : 'text-gray-600'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && !fm && <span className="ml-1 text-[9px] text-blue-500">▸ тек.</span>}{fm && <span className="ml-1 text-[9px] text-gray-400">● факт</span>}</th> })}
                 </tr>
@@ -787,9 +830,13 @@ export default function BudgetPage() {
                   const isEditing = editArticle?.rowKey ? editArticle.rowKey === article.rowKey : editArticle?.id === article.id
                   return (
                     <Fragment key={article.rowKey}>
-                    <tr className={`border-b border-gray-50 hover:bg-gray-50/50 ${isParent ? 'bg-gray-50/50 font-medium' : ''} group/row`}>
-                      <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap" style={{ paddingLeft: 12 + article.depth * 20 }}>
-                        <div className="flex items-center gap-1">
+                    {/* Разделитель заметнее прежнего и подсветка на всю строку:
+                        глазу нужно чем-то держаться, пока он идёт от названия
+                        статьи к цифре */}
+                    <tr className={`border-b border-gray-100 hover:bg-blue-50/40 ${isParent ? 'bg-gray-50/50 font-medium' : ''} group/row`}>
+                      <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap overflow-hidden"
+                        style={{ paddingLeft: 12 + article.depth * 20, maxWidth: articleW }}>
+                        <div className="flex items-center gap-1 overflow-hidden">
                           {isParent && (
                             <button onClick={() => toggleExpand(article.rowKey)} className="text-gray-400 hover:text-gray-600 transition-colors w-4 flex items-center justify-center">
                               <svg className={`w-2.5 h-2.5 transition-transform duration-200 ${expanded.has(article.rowKey) ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="currentColor">
@@ -797,7 +844,9 @@ export default function BudgetPage() {
                               </svg>
                             </button>
                           )}
-                          <span className={article.depth === 0 ? 'font-medium' : ''}>{article.depth > 0 && !isParent && <span className="text-gray-300 mr-1">└</span>}{article.name}</span>
+                          {/* Длинное название обрезаем, а не раздвигаем им
+                              колонку: полное видно в подсказке */}
+                          <span title={article.name} className={`truncate ${article.depth === 0 ? 'font-medium' : ''}`}>{article.depth > 0 && !isParent && <span className="text-gray-300 mr-1">└</span>}{article.name}</span>
                           <button
                             onClick={() => openEditArticle(article)}
                             className="opacity-0 group-hover/row:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-0.5 ml-1"
