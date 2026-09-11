@@ -18,9 +18,8 @@ import { createTemplate } from '../api/operationTemplates'
  */
 export default function AiAssistantPage() {
   const navigate = useNavigate()
-  const [draft, setDraft]       = useState(null)
-  const [resetKey, setResetKey] = useState(0)
-  const [saved, setSaved]       = useState(0)   // сколько операций создано за сеанс
+  const [draft, setDraft] = useState(null)   // { payload, onSaved, key }
+  const [saved, setSaved] = useState(0)      // сколько операций создано за сеанс
 
   const saveTemplate = async (payload, defaultName) => {
     const name = prompt('Название шаблона (короткая фраза для кнопки):', defaultName || '')
@@ -51,23 +50,27 @@ export default function AiAssistantPage() {
       </div>
 
       <AiQuickEntry
-        onUseDraft={setDraft}
+        // Ключ — чтобы форма пересобралась под новый черновик: начальные
+        // значения она читает один раз, при монтировании
+        onUseDraft={(payload, onSaved) => setDraft({ payload, onSaved, key: Date.now() })}
         onSaveTemplate={saveTemplate}
         // Массовые правки и создание справочников помощник делает сам —
         // списка на этой странице нет, обновлять нечего
         onChanged={() => {}}
-        resetKey={resetKey}
       />
 
       {draft && (
         <OperationForm
-          initial={draft}
-          onSuccess={() => {
+          key={draft.key}
+          initial={draft.payload}
+          onSuccess={(operationId) => {
+            // Помечаем черновик записанным — вместе с номером операции, чтобы по
+            // диалогу было видно, что из него вышло. Диалог оставляем: в одном
+            // ответе операций бывает несколько — по счёту, по выписке, — и сброс
+            // уносил с собой все, до которых ещё не дошли
+            draft.onSaved?.(operationId)
             setDraft(null)
             setSaved(n => n + 1)
-            // Диалог начинаем заново: операция записана, продолжать уточнять
-            // уже нечего
-            setResetKey(k => k + 1)
           }}
           onCancel={() => setDraft(null)}
         />

@@ -21,6 +21,7 @@ use App\Http\Controllers\Api\V1\FundsController;
 use App\Http\Controllers\Api\V1\FundSchemeController;
 use App\Http\Controllers\Api\V1\FundPlanDocController;
 use App\Http\Controllers\Api\V1\AiController;
+use App\Http\Controllers\Api\V1\AiDialogsController;
 use App\Http\Controllers\Api\V1\OperationTemplatesController;
 use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
@@ -210,5 +211,11 @@ Route::prefix('v1')->group(function () {
     Route::post('/ai/classify-statement', [AiController::class, 'classifyStatement']);
     Route::post('/ai/apply-rules',        [AiController::class, 'applyRules']);
     Route::post('/ai/transcribe',      [AiController::class, 'transcribe']);
+    // История диалогов помощника — у каждого своя
+    Route::get('/ai/dialogs',           [AiDialogsController::class, 'index']);
+    Route::post('/ai/dialogs',          [AiDialogsController::class, 'store']);
+    Route::get('/ai/dialogs/{id}',      [AiDialogsController::class, 'show']);
+    Route::put('/ai/dialogs/{id}',      [AiDialogsController::class, 'update']);
+    Route::delete('/ai/dialogs/{id}',   [AiDialogsController::class, 'destroy']);
 
 });

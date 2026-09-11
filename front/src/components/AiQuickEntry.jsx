@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAiStatus, parseOperation, parseFile, transcribeAudio, applyBulk, revertBulk } from '../api/ai'
+import { createDialog, saveDialog, getDialog, listDialogs } from '../api/aiDialogs'
 import AiNewItems from './AiNewItems'
 import AiLinks from './AiLinks'
+import AiDialogHistory, { parseUtc } from './AiDialogHistory'
 import ReportChart from './ReportChart'
 import useElapsed from '../hooks/useElapsed'
 
@@ -56,15 +58,28 @@ const chargeLabel = (charge) => {
   return `${sum} ${unit} · ${tokens} токенов`
 }
 
-// Диалог переживает переход между разделами и перезагрузку вкладки.
-// Ключ привязан к тенанту, чтобы чужой диалог не всплыл после смены компании.
+/**
+ * Диалог хранится в базе компании (см. AiDialogsController), а в браузере —
+ * быстрый кэш: он поднимает ленту мгновенно при перезагрузке и держит её, когда
+ * сервер не ответил. Источник правды — база; кэш только опережает её.
+ *
+ * Ключ привязан к тенанту, чтобы чужой диалог не всплыл после смены компании.
+ */
 const storeKey = () => {
   let tenant = ''
   try { tenant = JSON.parse(localStorage.getItem('tenant') || '{}').id || '' } catch { /* ignore */ }
   return `ai_dialog_${tenant}`
 }
+
+// Дольше половины суток не храним: диалог, всплывший через неделю, — не помощь.
+// В нём черновики с позавчерашней датой, и записать такой по привычке легко
+const MAX_AGE = 12 * 3600 * 1000
+
 const loadSaved = () => {
-  try { return JSON.parse(sessionStorage.getItem(storeKey()) || '{}') } catch { return {} }
+  try {
+    const saved = JSON.parse(localStorage.getItem(storeKey()) || '{}')
+    return saved.savedAt && Date.now() - saved.savedAt < MAX_AGE ? saved : {}
+  } catch { return {} }
 }
 
 const SIDE_LABEL = { debit: 'приход (дебет)', credit: 'расход (кредит)', net: 'сальдо' }
@@ -161,19 +176,31 @@ function ReportCard({ report }) {
  * Операцию не создаёт — готовит черновик, который пользователь
  * подтверждает в обычной форме (onUseDraft).
  */
-export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, resetKey = 0 }) {
+export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged }) {
   const [enabled, setEnabled] = useState(false)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState('')          // '' | 'parse' | 'stt' | 'save'
   const [error, setError] = useState('')
   const [turns, setTurns] = useState(() => loadSaved().turns || [])        // лента: {role:'user'|'ai', ...}
   const [history, setHistory] = useState(() => loadSaved().history || [])  // контекст для модели
+  const [dialogId, setDialogId] = useState(() => loadSaved().dialogId || null)
+  const [sync, setSync] = useState('')          // '' | 'saving' | 'saved' | 'error'
+  const [historyKey, setHistoryKey] = useState(0)
   const [recording, setRecording] = useState(false)
   const recRef = useRef(null)
   const chunksRef = useRef([])
   const endRef = useRef(null)
   const fileRef = useRef(null)
   const inputRef = useRef(null)
+
+  // Номер диалога нужен обработчику сохранения, который живёт в таймере: к
+  // моменту срабатывания состояние из его замыкания уже устарело
+  const dialogIdRef = useRef(dialogId)
+  // Первая отрисовка и восстановление ленты записью не считаются: иначе диалог
+  // сохранялся бы сам собой при каждом открытии страницы
+  const skipSave = useRef(true)
+  const savingRef = useRef(false)
+  const pendingRef = useRef(false)
 
   // Поле растёт под текст само, до ~7 строк, дальше — прокрутка внутри.
   // Высоту меряем через scrollHeight: сбросили в auto, взяли фактическую
@@ -188,20 +215,117 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
     getAiStatus().then(r => setEnabled(!!r.data.enabled)).catch(() => setEnabled(false))
   }, [])
 
-  useEffect(() => { if (resetKey) reset() }, [resetKey])
   // Прокручиваем и на начало ожидания: пузырь «думаю» должен быть виден,
   // иначе он появится ниже края ленты и человек его не заметит
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }) }, [turns, busy])
 
-  // Сохраняем диалог, чтобы он не терялся при уходе на другую вкладку
+  // Кэш в браузере: чтобы лента вернулась мгновенно, не дожидаясь сервера
   useEffect(() => {
     try {
-      if (turns.length === 0 && history.length === 0) sessionStorage.removeItem(storeKey())
-      else sessionStorage.setItem(storeKey(), JSON.stringify({ turns, history }))
+      if (turns.length === 0 && history.length === 0) localStorage.removeItem(storeKey())
+      else localStorage.setItem(storeKey(), JSON.stringify({ turns, history, dialogId, savedAt: Date.now() }))
+      sessionStorage.removeItem(storeKey())   // диалог переехал в localStorage
     } catch { /* приватный режим / переполнение — не критично */ }
+  }, [turns, history, dialogId])
+
+  /**
+   * Запись диалога в базу.
+   *
+   * Пока запись идёт, новые изменения не плодят второй запрос — они ставятся в
+   * очередь одним флагом. Иначе первый же ответ модели, меняющий состояние
+   * дважды, создал бы два диалога вместо одного.
+   */
+  const flush = async (t, h) => {
+    if (savingRef.current) { pendingRef.current = true; return }
+
+    savingRef.current = true
+    setSync('saving')
+    try {
+      if (dialogIdRef.current) {
+        await saveDialog(dialogIdRef.current, t, h)
+      } else {
+        const r = await createDialog(t, h)
+        dialogIdRef.current = r.data.data.id
+        setDialogId(r.data.data.id)
+      }
+      setSync('saved')
+      setHistoryKey(k => k + 1)
+    } catch {
+      // Не роняем чат: лента цела, в кэше браузера она тоже есть
+      setSync('error')
+    } finally {
+      savingRef.current = false
+      if (pendingRef.current) { pendingRef.current = false; flush(t, h) }
+    }
+  }
+
+  // Задержка гасит дребезг: за один ответ модели состояние меняется несколько раз
+  useEffect(() => {
+    if (skipSave.current) { skipSave.current = false; return }
+    if (turns.length === 0 && history.length === 0) return
+
+    const id = setTimeout(() => flush(turns, history), 1500)
+    return () => clearTimeout(id)
   }, [turns, history])
 
-  const reset = () => { setTurns([]); setHistory([]); setText(''); setError('') }
+  /**
+   * Восстановление на чистом устройстве.
+   *
+   * Кэша нет — берём самый свежий диалог с сервера, если он моложе полусуток.
+   * Правило то же, что у кэша: диалог недельной давности подставлять нельзя,
+   * в нём черновики с позавчерашними датами. Такой остаётся в «Истории».
+   */
+  useEffect(() => {
+    // Ждём ответа про доступность ИИ: без прав на помощника ходить за его
+    // диалогами незачем — там нечему быть
+    if (!enabled || turns.length > 0 || history.length > 0) return
+
+    let alive = true
+    listDialogs()
+      .then(r => {
+        const last = (r.data.data || [])[0]
+        if (!alive || !last || Date.now() - parseUtc(last.updated_at).getTime() > MAX_AGE) return
+        return getDialog(last.id)
+      })
+      .then(d => {
+        if (!alive || !d) return
+        const row = d.data.data
+        skipSave.current = true
+        dialogIdRef.current = row.id
+        setDialogId(row.id)
+        setTurns(row.turns || [])
+        setHistory(row.history || [])
+      })
+      .catch(() => { /* нет связи — работаем с пустой лентой */ })
+
+    return () => { alive = false }
+  }, [enabled])
+
+  // «Начать заново» больше ничего не уничтожает: диалог остаётся в базе и
+  // виден в «Истории», а на экране начинается новый
+  const reset = () => {
+    skipSave.current = true
+    dialogIdRef.current = null
+    setDialogId(null)
+    setTurns([]); setHistory([]); setText(''); setError(''); setSync('')
+    setHistoryKey(k => k + 1)
+  }
+
+  // Открыть прошлый диалог из истории
+  const openDialog = async (id) => {
+    setError('')
+    try {
+      const r = await getDialog(id)
+      skipSave.current = true
+      dialogIdRef.current = id
+      setDialogId(id)
+      setTurns(r.data.data.turns || [])
+      setHistory(r.data.data.history || [])
+      setSync('saved')
+    } catch {
+      setError('Не удалось открыть диалог')
+    }
+  }
 
   // Сколько стоил весь диалог: складываем цену ответов текущей ленты
   const dialogCost = turns.reduce((acc, t) => t.charge?.cost == null ? acc : {
@@ -307,6 +431,22 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
     }))
   }
 
+  /**
+   * Открыть черновик в форме операции.
+   *
+   * Вторым аргументом отдаём отметку «записано»: страница вызовет её после
+   * сохранения и передаст номер созданной операции. Раньше страница вместо
+   * этого сбрасывала весь диалог — а в одном ответе черновиков бывает несколько
+   * (счёт на пять позиций, выписка), и вместе с диалогом уносило все
+   * незаписанные.
+   */
+  const openDraft = (turnIdx, k, payload) => {
+    onUseDraft(payload, (operationId) => setTurns(prev => prev.map((t, i) => i !== turnIdx ? t : {
+      ...t,
+      drafts: (t.drafts || []).map((d, j) => j === k ? { ...d, saved: true, operationId } : d),
+    })))
+  }
+
   // Связи проставлены — убираем их из предложений, диалог не трогаем
   const markLinked = (turnIdx, done) => {
     setTurns(prev => prev.map((t, i) => {
@@ -365,9 +505,22 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
           <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg>
           Быстрый ввод — можно уточнять сообщениями
         </span>
-        {turns.length > 0 && (
-          <button onClick={reset} className="text-xs text-gray-400 hover:text-gray-700">Начать заново</button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Молча терять диалог нельзя: если запись не прошла, человек должен
+              это видеть — лента пока держится только кэшем браузера */}
+          {sync === 'error' && (
+            <span className="text-[11px] text-amber-700" title="Диалог остался в этом браузере, но на сервер не записан">
+              не сохранён
+            </span>
+          )}
+          {sync === 'saved' && dialogId && (
+            <span className="text-[11px] text-gray-300">сохранён</span>
+          )}
+          <AiDialogHistory currentId={dialogId} onPick={openDialog} refreshKey={historyKey} />
+          {turns.length > 0 && (
+            <button onClick={reset} className="text-xs text-gray-400 hover:text-gray-700">Начать заново</button>
+          )}
+        </div>
       </div>
 
       {/* Лента диалога. Показываем и когда она пуста, но ИИ уже думает:
@@ -403,18 +556,38 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
                 {/* Показатели: цифры посчитал сервер по базе, не модель */}
                 {(t.reports || []).map((rep, k) => <ReportCard key={`r${k}`} report={rep} />)}
 
+                {/* Сколько операций в ответе и сколько уже записано. Их вносят
+                    по очереди, и без счётчика в длинном ответе легко потерять,
+                    на чём остановился */}
+                {isLast && (t.drafts || []).length > 1 && (
+                  <p className="text-[11px] text-gray-500 pl-1">
+                    Операций в ответе: {t.drafts.length} · записано {t.drafts.filter(d => d.saved).length} —
+                    открывайте по очереди, диалог сохранится
+                  </p>
+                )}
+
                 {(t.drafts || []).map((d, k) => {
                   const p = d.payload || {}
                   const low = (d.confidence ?? 0) < 0.7
                   return (
-                    <div key={k} className={`rounded-lg border p-3 ${low ? 'border-amber-200 bg-amber-50/50' : 'border-green-200 bg-green-50/40'} ${!isLast ? 'opacity-60' : ''}`}>
+                    <div key={k} className={`rounded-lg border p-3 ${
+                      d.saved ? 'border-green-300 bg-green-50/70'
+                        : low ? 'border-amber-200 bg-amber-50/50' : 'border-green-200 bg-green-50/40'
+                    } ${!isLast && !d.saved ? 'opacity-60' : ''}`}>
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="text-sm text-gray-800">
                           <span className="font-semibold">{money(p.amount)}</span>
                           <span className="text-gray-500"> · {p.date}</span>
                           {p.content && <span className="text-gray-600"> · {p.content}</span>}
                         </div>
-                        {isLast && (
+                        {/* Записанный черновик кнопки не показывает: второй раз
+                            открывать его незачем, а по невнимательности так
+                            заводится дубль проводки */}
+                        {d.saved ? (
+                          <span className="text-xs font-medium text-green-700 whitespace-nowrap">
+                            ✓ Записана{d.operationId ? ` · операция #${d.operationId}` : ''}
+                          </span>
+                        ) : isLast && (
                           <div className="flex items-center gap-1.5">
                             {onSaveTemplate && (
                               <button onClick={() => onSaveTemplate(p, p.content)} title="Сохранить как шаблон для повтора"
@@ -422,18 +595,23 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged, re
                                 ★ В шаблоны
                               </button>
                             )}
-                            <button onClick={() => onUseDraft(p)}
+                            <button onClick={() => openDraft(i, k, p)}
                               className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-medium hover:bg-blue-800">
                               Открыть в форме →
                             </button>
                           </div>
                         )}
                       </div>
-                      {d.question && <p className="text-xs text-amber-700 mt-1.5">⚠ {d.question}</p>}
-                      {(d.warnings || []).map((w, x) => <p key={x} className="text-xs text-amber-700 mt-1">⚠ {w}</p>)}
-                      <p className="text-[10px] text-gray-400 mt-1.5">
-                        Уверенность: {Math.round((d.confidence ?? 0) * 100)}% · можно уточнить сообщением ниже
-                      </p>
+                      {!d.saved && (
+                        <>
+                          {d.question && <p className="text-xs text-amber-700 mt-1.5">⚠ {d.question}</p>}
+                          {(d.warnings || []).map((w, x) => <p key={x} className="text-xs text-amber-700 mt-1">⚠ {w}</p>)}
+                          <p className="text-[10px] text-gray-400 mt-1.5">
+                            Уверенность: {Math.round((d.confidence ?? 0) * 100)}%
+                            {isLast ? ' · можно уточнить сообщением ниже' : ' · черновик из прошлого ответа, смотрите ниже'}
+                          </p>
+                        </>
+                      )}
                     </div>
                   )
                 })}

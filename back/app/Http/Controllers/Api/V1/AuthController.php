@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -156,25 +157,44 @@ class AuthController extends Controller
         (new \Database\Seeders\TenantDatabaseSeeder())->setContainer(app())->run();
         DB::setDefaultConnection('mysql');
 
+        /**
+         * Создатель компании — её администратор.
+         *
+         * Должности засеяны миграцией выше, но привязать первого пользователя
+         * было некому: та же миграция раздаёт админа существующим людям, а
+         * здесь база только что создана и людей в ней ещё нет. Без явной
+         * привязки человек оставался без прав вовсе — открывал собственную
+         * компанию и получал «недостаточно прав» на каждом разделе.
+         */
+        $adminRoleId = DB::connection($dbName)->table('roles')->where('code', 'admin')->value('id');
+
+        if (!$adminRoleId) {
+            // Должностей нет — значит сломана миграция или сидер тенанта.
+            // Компанию всё равно отдаём: чинить права проще, чем занятый домен
+            Log::error("Регистрация {$tenantId}: должность администратора не найдена, первый пользователь без прав");
+        }
+
         $userId = DB::connection($dbName)->table('users')->insertGetId([
             'name'       => $data['name'],
             'email'      => $data['email'],
             'password'   => Hash::make($data['password']),
+            'role_id'    => $adminRoleId,
+            'is_active'  => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         $plainToken = $this->createToken($tenantId, $userId);
 
+        // Пользователь тем же составом, что при входе: интерфейсу нужна карта
+        // прав. Без неё фронт считает права неизвестными и показывает всё
+        // подряд, а сервер отказывает на каждом запросе
+        $user = DB::connection($dbName)->table('users')->where('id', $userId)->first();
+
         return response()->json([
             'message' => 'Регистрация успешна',
             'token'   => $plainToken,
-            'user'    => [
-                'id'        => $userId,
-                'name'      => $data['name'],
-                'email'     => $data['email'],
-                'tenant_id' => $tenantId,
-            ],
+            'user'    => $this->userPayload($dbName, $user, $tenantId),
             'tenant' => [
                 'id'            => $tenant->id,
                 'name'          => $tenant->name,

@@ -212,8 +212,14 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
         const s = String(payload.date).replace('T', ' ')
         payload.date = s.length === 16 ? `${s}:00` : s.slice(0, 19)
       }
-      isEdit ? await updateOperation(operation.id, payload) : await createOperation(payload)
-      onSuccess()
+      // Номер операции нужен помощнику: он подписывает им записанный черновик,
+      // чтобы по диалогу было видно, что из него вышло. Остальные вызывающие
+      // лишний аргумент просто не читают
+      const res = isEdit
+        ? await updateOperation(operation.id, payload)
+        : await createOperation(payload)
+
+      onSuccess(res?.data?.data?.id ?? operation?.id ?? null)
     } catch (err) {
       const errors = err.response?.data?.errors
       setError(errors ? Object.values(errors).flat().join(', ') : err.response?.data?.message || 'Ошибка')
