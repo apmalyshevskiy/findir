@@ -24,21 +24,35 @@ export const matchesSearch = (item, q) => {
     .some(v => v && String(v).toLowerCase().includes(needle))
 }
 
-/** Подсветка найденного куска — глазу проще зацепиться в длинном списке. */
+/**
+ * Подсветка найденного — глазу проще зацепиться в длинном списке.
+ *
+ * Отмечаем все вхождения, а не первое: в назначении платежа из выписки
+ * искомое слово встречается по нескольку раз, и подсвеченное первое посреди
+ * трёх строк текста только сбивает с толку.
+ */
 export const Highlight = ({ text, q }) => {
   const needle = String(q ?? '').trim()
   if (!text) return null
   if (!needle || needle.startsWith('#')) return <>{text}</>
 
-  const s   = String(text)
-  const idx = s.toLowerCase().indexOf(needle.toLowerCase())
-  if (idx < 0) return <>{s}</>
+  const s     = String(text)
+  const lower = s.toLowerCase()
+  const nlow  = needle.toLowerCase()
 
-  return (
-    <>
-      {s.slice(0, idx)}
-      <mark className="bg-amber-100 text-inherit rounded-sm px-0.5">{s.slice(idx, idx + needle.length)}</mark>
-      {s.slice(idx + needle.length)}
-    </>
-  )
+  if (!lower.includes(nlow)) return <>{s}</>
+
+  const parts = []
+  let from = 0
+
+  for (let i = lower.indexOf(nlow); i >= 0; i = lower.indexOf(nlow, from)) {
+    if (i > from) parts.push(s.slice(from, i))
+    parts.push(
+      <mark key={i} className="bg-amber-100 text-inherit rounded-sm px-0.5">{s.slice(i, i + needle.length)}</mark>
+    )
+    from = i + needle.length
+  }
+  if (from < s.length) parts.push(s.slice(from))
+
+  return <>{parts}</>
 }

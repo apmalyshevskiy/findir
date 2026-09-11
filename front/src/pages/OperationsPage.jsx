@@ -17,6 +17,7 @@ import { getInfo } from '../api/info'
 import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
 import AccountChip from '../components/AccountChip'
 import LockIcon from '../components/LockIcon'
+import { Highlight } from '../utils/infoSearch'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -85,6 +86,99 @@ const SearchableSelect = ({ label, value, onChange, options, placeholder }) => {
 // шире колонок дебета и кредита.
 const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(170px,1.3fr)_7.5rem_minmax(207px,1.59fr)_4rem] gap-x-3'
 
+// Сколько операций приезжает за раз. Двести — столько же, сколько страница
+// показывала раньше: привычный объём списка, но теперь это честная первая
+// порция, а не молчаливый обрыв периода
+const PER_PAGE = 200
+
+/**
+ * Кусок текста вокруг найденного.
+ *
+ * Назначение платежа из выписки обрезается двумя строками, а совпадение часто
+ * стоит в середине — и подсветка оказывается за краем: операция выглядит
+ * найденной неизвестно за что. Показываем текст начиная чуть раньше
+ * совпадения; целиком он остаётся во всплывающей подсказке.
+ */
+const snippet = (text, q, lead = 40) => {
+  if (!text || !q) return text
+
+  const i = String(text).toLowerCase().indexOf(String(q).toLowerCase())
+
+  return i > lead + 20 ? '…' + String(text).slice(i - lead) : text
+}
+
+/**
+ * Поле поиска.
+ *
+ * Набранный текст держит в себе, наружу отдаёт только готовый запрос — по
+ * Enter или по лупе. Иначе каждая буква меняла бы состояние страницы, а вместе
+ * с ним перерисовывались бы все двести карточек списка: именно от этого набор
+ * и подтормаживал, хотя по существу в этот момент ничего не происходит.
+ */
+function SearchBox({ applied, onSearch, className = '' }) {
+  const [value, setValue] = useState(applied)
+
+  // Запрос сбросили снаружи — крестиком на бейдже или из пустого списка
+  useEffect(() => { setValue(applied) }, [applied])
+
+  const dirty = value.trim() !== applied
+
+  return (
+    <div className={`relative ${className}`}>
+      {/* Лупа внутри поля, а не отдельной кнопкой рядом: искать ей можно,
+          но глазу она прежде всего говорит, что это поле — поиск.
+          Синеет, пока набранное не совпадает с найденным: видно, что список
+          показывает ещё прошлый запрос */}
+      <button type="button" onClick={() => onSearch(value.trim())} title="Искать (Enter)"
+        className={`absolute left-2.5 top-1/2 -translate-y-1/2 transition-colors ${
+          dirty ? 'text-blue-600 hover:text-blue-800' : 'text-gray-400 hover:text-gray-600'
+        }`}>
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+        </svg>
+      </button>
+
+      <input
+        type="text"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter')  { e.preventDefault(); onSearch(value.trim()) }
+          if (e.key === 'Escape') { setValue(''); onSearch('') }
+        }}
+        placeholder="Поиск по журналу — Enter"
+        title="Ищет по содержанию, примечанию, контрагенту, счёту, сумме и номеру операции"
+        className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+
+      {value && (
+        <button type="button" onClick={() => { setValue(''); onSearch('') }} title="Очистить (Esc)"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-600 text-sm">✕</button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Действующий поиск — жёлтым бейджем среди фильтров.
+ *
+ * Поиск сужает список наравне с периодом и счётом, поэтому и стоять должен
+ * там же, где остальные отборы, а не подписью у поля ввода. Жёлтый тот же, что
+ * у подсветки совпадений: понятно, откуда она взялась.
+ */
+function SearchBadge({ q, found, onClear }) {
+  if (!q) return null
+
+  return (
+    <span className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-900 border border-amber-200
+                     rounded-full pl-2.5 pr-1 py-0.5 text-xs whitespace-nowrap">
+      «{q}»: {found}
+      <button type="button" onClick={onClear} title="Очистить поиск"
+        className="text-amber-600 hover:text-amber-900 px-0.5">✕</button>
+    </span>
+  )
+}
+
 export default function OperationsPage() {
   const navigate = useNavigate()
   const [operations, setOperations] = useState([])
@@ -95,9 +189,15 @@ export default function OperationsPage() {
   const [draftOperation, setDraftOperation] = useState(null)   // черновик от ИИ
   const [tplKey, setTplKey] = useState(0)                      // перезагрузка списка шаблонов
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   // Период запоминается между заходами и хранится отдельно от прочих фильтров
   const [period, setPeriod] = usePersistedPeriod('operations')
   const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '', is_posted: '' })
+  // Применённый запрос. Набранный текст живёт внутри SearchBox — см. там
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  // Итоги за период считает сервер — список приезжает страницами
+  const [summary, setSummary] = useState(null)
   const [selected, setSelected] = useState(new Set())
   const [showBulkEdit, setShowBulkEdit] = useState(false)
   // Документ-источник открываем сразу для правки и поверх списка: уходить со
@@ -132,17 +232,32 @@ export default function OperationsPage() {
     setSelectedInfoId('') // Сбрасываем фильтр по конкретному элементу
   }, [infoType])
 
- 
+
   useEffect(() => {
-    loadOperations()
-  }, [filter, period, selectedInfoId])
+    loadOperations(1)
+  }, [filter, period, selectedInfoId, q])
 
-  const loadOperations = () => {
-    setLoading(true)
-    setSelected(new Set())
-    const params = { per_page: 200 }
+  /**
+   * Список операций страницами.
+   *
+   * Раньше страница просила 200 операций и молча показывала их как весь
+   * период: за 201-й никто не приходил, а карточки «операций за период» и
+   * «сумма за период» складывались из приехавшего — то есть врали ровно тогда,
+   * когда правда нужнее всего. Теперь количество и суммы считает сервер по
+   * всему отбору, а список догружается по кнопке.
+   */
+  const loadOperations = (nextPage = 1, span = 1) => {
+    const first = nextPage === 1
+    first ? setLoading(true) : setLoadingMore(true)
+    // Выделение живёт в пределах показанного списка: после смены отбора
+    // сохранять его не в чем
+    if (first) setSelected(new Set())
 
-    // Сохраняем старые фильтры
+    // span — сколько страниц перечитать одним запросом. Нужен при обновлении
+    // после правки: иначе список схлопнулся бы к первой странице, и человек,
+    // догрузивший шестьсот строк, потерял бы место, на котором работал
+    const params = { page: nextPage, per_page: Math.min(PER_PAGE * span, 1000) }
+
     if (period.from)      params.date_from  = period.from
     if (period.to)        params.date_to    = period.to
     if (filter.in_bi_id)  params.in_bi_id   = filter.in_bi_id
@@ -150,21 +265,31 @@ export default function OperationsPage() {
     if (filter.project_id) params.project_id = filter.project_id
     // Именно !== '': «0» — это осмысленный фильтр «только непроведённые»
     if (filter.is_posted !== '') params.is_posted = filter.is_posted
-
-    // --- ДОБАВЛЯЕМ НОВЫЙ ФИЛЬТР ---
     if (selectedInfoId)   params.info_id    = selectedInfoId
+    if (q)                params.q          = q
 
     getOperations(params)
-      .then(res => setOperations(res.data.data))
-      .finally(() => setLoading(false))
+      .then(res => {
+        const rows = res.data.data || []
+        setOperations(prev => first ? rows : [...prev, ...rows])
+        setSummary(res.data.summary || null)
+        setPage(first ? span : nextPage)
+      })
+      .finally(() => { setLoading(false); setLoadingMore(false) })
   }
+
+  // Показать следующую порцию
+  const loadMore = () => loadOperations(page + 1)
+
+  // Перечитать ровно то, что уже показано — после правки, удаления, проведения
+  const reload = () => loadOperations(1, page)
 
   // Проведение — не правка реквизитов, а включение операции в обороты,
   // поэтому отдельным запросом и без формы
   const togglePosting = async (op) => {
     try {
       await setOperationPosting(op.id, !op.is_posted)
-      loadOperations()
+      reload()
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось изменить проведение')
     }
@@ -174,7 +299,7 @@ export default function OperationsPage() {
     if (!confirm('Удалить операцию?')) return
     try {
       await deleteOperation(id)
-      loadOperations()
+      reload()
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось удалить операцию')
     }
@@ -266,28 +391,41 @@ export default function OperationsPage() {
   const allChecked  = operations.length > 0 && selected.size === operations.length
   const someChecked = selected.size > 0 && selected.size < operations.length
 
-  const totalAll      = operations.reduce((sum, op) => sum + parseFloat(op.amount), 0)
+  // Количество и сумма — за весь период, из ответа сервера. Пока он не
+  // ответил (первая отрисовка), показываем то, что есть на руках
+  const totalCount    = summary?.count ?? operations.length
+  const totalAll      = summary?.amount ?? operations.reduce((sum, op) => sum + parseFloat(op.amount), 0)
   const totalSelected = operations.filter(op => selected.has(op.id)).reduce((sum, op) => sum + parseFloat(op.amount), 0)
+  const hasMore       = operations.length < totalCount
 
-  const accountTotals = useMemo(() => {
-    const map = {}
-    // Закрытые счета сходятся в одну строку «Скрыто» и уходят в конец списка:
-    // без общего ключа они склеились бы в безымянную строку сами, но случайно
-    const key  = (op, side) => op[`${side}_hidden`] ? 'hidden' : op[`${side}_bi_id`]
-    const cell = (op, side) => op[`${side}_hidden`]
-      ? { code: '', name: 'Скрыто', hidden: true, debit: 0, credit: 0 }
-      : { code: op[`${side}_bi_code`], name: op[`${side}_bi_name`]?.replace(/^[А-ЯA-Z]\d+\s/, ''), debit: 0, credit: 0 }
+  /**
+   * Чем операция зацепилась за поиск.
+   *
+   * Текстовые совпадения подсвечиваются прямо в тексте. Сумма и номер — числа,
+   * подсвечивать в них нечего, поэтому помечаем саму ячейку: иначе строка,
+   * найденная по сумме, выглядит попавшей в список без причины.
+   */
+  const qAmount = useMemo(() => {
+    // \s покрывает и неразрывный пробел — тот, которым список разделяет
+    // разряды: сумму часто копируют прямо из него
+    const n = Number(String(q).replace(/\s/g, '').replace(',', '.'))
+    return q && !isNaN(n) ? n : null
+  }, [q])
 
-    operations.forEach(op => {
-      const inKey = key(op, 'in'), outKey = key(op, 'out')
-      if (!map[inKey])  map[inKey]  = cell(op, 'in')
-      if (!map[outKey]) map[outKey] = cell(op, 'out')
-      map[inKey].debit   += parseFloat(op.amount)
-      map[outKey].credit += parseFloat(op.amount)
-    })
-    return Object.values(map).sort((a, b) =>
-      (a.hidden ? 1 : 0) - (b.hidden ? 1 : 0) || (a.code || '').localeCompare(b.code || ''))
-  }, [operations])
+  const qId = useMemo(() => {
+    const m = /^#?(\d+)$/.exec(q)
+    return m ? Number(m[1]) : null
+  }, [q])
+
+  const hitCell = 'bg-amber-100 rounded px-1 -mx-1'
+
+  // Обороты по счетам тоже считает сервер: сложенные по показанным строкам,
+  // они противоречили бы карточке «сумма за период» над тем же списком
+  const accountTotals = useMemo(() => (summary?.accounts || []).map(a => ({
+    ...a,
+    // Код счёта в начале названия уже стоит отдельной колонкой
+    name: a.hidden ? a.name : (a.name || '').replace(/^[А-ЯA-Z]\d+\s/, ''),
+  })), [summary])
 
   const formatAmount = (amount) =>
     new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(amount)
@@ -350,7 +488,7 @@ export default function OperationsPage() {
       
       // Сбрасываем выделение и обновляем список
       setSelected(new Set())
-      loadOperations()
+      reload()
     } catch (err) {
       alert(err.response?.data?.message || 'Произошла ошибка при копировании')
       console.error(err)
@@ -365,11 +503,18 @@ export default function OperationsPage() {
       {/* Карточки */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Операций за период</p>
-          <p className="text-3xl font-bold text-gray-800">{operations.length}</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+            {q ? 'Найдено операций' : 'Операций за период'}
+          </p>
+          <p className="text-3xl font-bold text-gray-800">{totalCount}</p>
+          {hasMore && (
+            <p className="text-[11px] text-gray-400 mt-1">показано {operations.length}</p>
+          )}
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Сумма за период</p>
+          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+            {q ? 'Сумма найденного' : 'Сумма за период'}
+          </p>
           <p className="text-2xl font-bold text-blue-600">{formatAmount(totalAll)}</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
@@ -392,9 +537,14 @@ export default function OperationsPage() {
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
         
         {/* Замени блок заголовка таблицы */}
-<div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
-  <div className="flex items-center gap-4">
-    <h2 className="font-semibold text-gray-800">Операции</h2>
+<div className="flex justify-between items-center gap-4 px-6 py-4 border-b border-gray-100">
+  <div className="flex items-center gap-4 flex-1 min-w-0">
+    <h2 className="font-semibold text-gray-800 whitespace-nowrap">Операции</h2>
+
+    {/* Поиск — сразу за заголовком, до фильтров: с него чаще всего и
+        начинают, когда ищут конкретную операцию, а не разбирают период.
+        Ищет сервер и по всему периоду, а не по показанным строкам */}
+    <SearchBox applied={q} onSearch={setQ} className="flex-1 min-w-[200px] max-w-xl" />
     {selected.size > 0 && (
       <>
         <button
@@ -486,6 +636,9 @@ export default function OperationsPage() {
     </div>
   )}
 </div>
+            {/* Действующий поиск — среди фильтров: он такой же отбор,
+                как период или счёт, и снимается там же */}
+            <SearchBadge q={q} found={totalCount} onClear={() => setQ('')} />
             <BusyLabel active={loading}>Загружаю операции</BusyLabel>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
@@ -538,10 +691,24 @@ export default function OperationsPage() {
           </div>
         ) : operations.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-gray-400 mb-4">Нет операций за выбранный период</p>
-            <button onClick={() => setShowForm(true)} className="text-blue-600 hover:underline text-sm">
-              Добавить операцию
-            </button>
+            {q ? (
+              <>
+                <p className="text-gray-400 mb-1">По запросу «{q}» ничего не найдено</p>
+                <p className="text-xs text-gray-400 mb-4">
+                  Поиск идёт в пределах периода и остальных фильтров — возможно, дело в них
+                </p>
+                <button onClick={() => setQ('')} className="text-blue-600 hover:underline text-sm">
+                  Очистить поиск
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-gray-400 mb-4">Нет операций за выбранный период</p>
+                <button onClick={() => setShowForm(true)} className="text-blue-600 hover:underline text-sm">
+                  Добавить операцию
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="relative overflow-x-auto px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
@@ -592,25 +759,29 @@ export default function OperationsPage() {
                       <input type="checkbox" checked={selected.has(op.id)}
                         onChange={() => toggleSelect(op.id)} className="rounded" />
                     </div>
-                    <div className="text-xs text-gray-400 font-mono pt-0.5">{op.id}</div>
+                    <div className="text-xs text-gray-400 font-mono pt-0.5">
+                      <span className={qId === op.id ? hitCell : ''}>{op.id}</span>
+                    </div>
                     <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" />
+                        <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" q={q} />
                       </div>
-                      {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_1_name}</span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
-                      {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.in_info_2_name}</span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
+                      {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
+                      {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" />
+                        <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" q={q} />
                       </div>
-                      {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_1_name}</span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
-                      {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500">{op.out_info_2_name}</span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
+                      {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
+                      {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
                     </div>
                     <div className="text-right whitespace-nowrap pt-0.5">
                       <div className={`font-semibold ${op.is_posted === false ? 'text-gray-400' : 'text-gray-800'}`}>
-                        {formatAmount(op.amount)}
+                        <span className={qAmount !== null && Math.abs(Number(op.amount) - qAmount) < 0.005 ? hitCell : ''}>
+                          {formatAmount(op.amount)}
+                        </span>
                       </div>
                       {op.is_posted === false && (
                         <div className="text-[10px] text-gray-500 bg-gray-200 rounded px-1 mt-0.5 inline-block">
@@ -620,7 +791,9 @@ export default function OperationsPage() {
                     </div>
                     <div className="min-w-0">
                       {op.content
-                        ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>{op.content}</div>
+                        ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>
+                            <Highlight text={snippet(op.content, q)} q={q} />
+                          </div>
                         : (!showNotes || !op.note) && <span className="text-gray-300">—</span>}
 
                       {/* Примечание — сразу под содержанием. Не обрезаем в одну
@@ -634,7 +807,7 @@ export default function OperationsPage() {
                           className={`flex items-start gap-1 text-[11px] text-gray-400 leading-snug
                                       select-text cursor-auto ${op.content ? 'mt-1' : ''}`}>
                           <span className="text-gray-300 flex-shrink-0 select-none">💬</span>
-                          <span className="break-words line-clamp-3">{op.note}</span>
+                          <span className="break-words line-clamp-3"><Highlight text={snippet(op.note, q)} q={q} /></span>
                         </div>
                       )}
                     </div>
@@ -676,12 +849,29 @@ export default function OperationsPage() {
                   </div>
                 ))}
               </div>
+
+              {/* Сколько показано из найденного. Прежде список обрывался на
+                  двухсотой операции молча, и период выглядел меньше, чем есть */}
+              <div className="flex items-center justify-center gap-3 pt-4 text-xs text-gray-500">
+                <span>
+                  Показано {operations.length} из {totalCount}
+                </span>
+                {hasMore && (
+                  <button onClick={loadMore} disabled={loadingMore}
+                    className="px-3 py-1.5 border border-gray-200 bg-white rounded-lg text-xs font-medium text-blue-700 hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40">
+                    {loadingMore
+                      ? 'Загружаю…'
+                      : `Показать ещё ${Math.min(PER_PAGE, totalCount - operations.length)}`}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Обороты по счетам — под таблицей */}
+      {/* Обороты по счетам — под таблицей. Считаются по всему отбору,
+          а не по показанным строкам */}
       {accountTotals.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
           <div className="px-6 py-3 border-b border-gray-100">
@@ -744,7 +934,7 @@ export default function OperationsPage() {
           operation={editOperation}
           initial={draftOperation}
           onOpenDocument={(id) => { handleFormClose(); openDocument(id) }}
-          onSuccess={() => { handleFormClose(); loadOperations() }}
+          onSuccess={() => { handleFormClose(); reload() }}
           onCancel={handleFormClose}
         />
       )}
@@ -763,7 +953,7 @@ export default function OperationsPage() {
           balanceItems={balanceItems}
           infoCache={docInfoCache}
           loadInfo={loadDocInfo}
-          onSave={() => { setDocModal(null); loadOperations() }}
+          onSave={() => { setDocModal(null); reload() }}
           onCancel={() => setDocModal(null)}
           onChanged={loadOperations}
         />

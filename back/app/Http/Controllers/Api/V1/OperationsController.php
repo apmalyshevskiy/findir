@@ -64,16 +64,150 @@ class OperationsController extends TenantController
             });
         }
 
-        $perPage = $request->per_page ?? 50;
-        $page    = $request->page ?? 1;
-        $total   = $query->count();
+        if ($q = trim((string) $request->q)) {
+            $this->applySearch($query, $q);
+        }
+
+        // Итоги считаем по всему отбору, а не по показанной странице.
+        // Раньше «операций за период» и «сумма за период» складывались в
+        // браузере из того, что приехало, — и на 201-й операции обе цифры
+        // начинали тихо врать, показывая неполный период как полный
+        $summary = $this->summary($query);
+
+        $perPage = min((int) ($request->per_page ?? 50), 500);
+        $page    = max((int) ($request->page ?? 1), 1);
         $items   = $query->offset(($page - 1) * $perPage)->limit($perPage)->get();
 
         return response()->json([
-            'data'  => $items->map(fn($op) => $this->formatOperation($op)),
-            'total' => $total,
-            'page'  => (int) $page,
+            'data'     => $items->map(fn($op) => $this->formatOperation($op)),
+            'total'    => $summary['count'],
+            'page'     => $page,
+            'per_page' => $perPage,
+            'summary'  => $summary,
         ]);
+    }
+
+    /**
+     * Поиск строкой по журналу.
+     *
+     * Ищем там, куда человек смотрит в списке: содержание, примечание, номер,
+     * сумма, счёт и аналитика. Отдельного поля под каждый реквизит не заводим —
+     * в журнале ищут «Альфа-банк» или «1297,87», не зная и не желая знать, в
+     * какой колонке это лежит.
+     *
+     * Справочники и счета отбираем заранее, отдельными запросами: шесть
+     * коррелированных подзапросов на каждую строку журнала стоили бы дороже
+     * двух простых выборок по маленьким таблицам.
+     */
+    private function applySearch($query, string $q): void
+    {
+        $conn = DB::connection($this->dbName);
+        // Проценты и подчёркивания в запросе — литералы, а не шаблон LIKE
+        $like = '%' . addcslashes($q, '%_\\') . '%';
+
+        $infoIds = $conn->table('info')
+            ->whereNull('deleted_at')
+            ->where(fn($w) => $w->where('name', 'like', $like)->orWhere('inn', 'like', $like)->orWhere('code', 'like', $like))
+            ->limit(1000)->pluck('id');
+
+        $biIds = $conn->table('balance_items')
+            ->whereNull('deleted_at')
+            ->where(fn($w) => $w->where('name', 'like', $like)->orWhere('code', 'like', $like))
+            ->limit(1000)->pluck('id')
+            // Закрытый должностью счёт из поиска убираем: его название не
+            // показывают, и находить по нему операции — тот же показ, окольно
+            ->diff($this->scope->isEmpty() ? [] : $this->scope->hiddenIds())
+            ->values();
+
+        $query->where(function ($w) use ($q, $like, $infoIds, $biIds) {
+            $w->where('content', 'like', $like)
+                ->orWhere('note', 'like', $like)
+                ->orWhere('external_id', 'like', $like);
+
+            // «368» или «#368» — это номер операции в первой колонке
+            if (preg_match('/^#?(\d+)$/u', $q, $m)) {
+                $w->orWhere('id', (int) $m[1]);
+            }
+
+            // «1297,87», «1 297.87» — сумма. Точное совпадение: диапазон по
+            // сумме — это уже фильтр, а не поиск по строке
+            $num = str_replace([' ', "\u{00A0}", ','], ['', '', '.'], $q);
+            if (is_numeric($num)) {
+                $w->orWhere('amount', (float) $num);
+            }
+
+            if ($infoIds->isNotEmpty()) {
+                foreach (['in_info_1_id', 'in_info_2_id', 'in_info_3_id',
+                          'out_info_1_id', 'out_info_2_id', 'out_info_3_id'] as $col) {
+                    $w->orWhereIn($col, $infoIds);
+                }
+            }
+
+            if ($biIds->isNotEmpty()) {
+                $w->orWhereIn('in_bi_id', $biIds)->orWhereIn('out_bi_id', $biIds);
+            }
+        });
+    }
+
+    /**
+     * Итоги по всему отбору: количество, сумма и обороты по счетам.
+     *
+     * Считает база, а не браузер: список приезжает страницами, и складывать
+     * показанное значило бы показывать часть периода как весь период.
+     */
+    private function summary($query): array
+    {
+        // Без eager-загрузок и без сортировки: для агрегатов они лишние,
+        // а ORDER BY рядом с GROUP BY ещё и отвергается строгим режимом
+        $source = $query->toBase();
+        $base   = fn() => (clone $source)->reorder();
+
+        $row = $base()->selectRaw('COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS amount')->first();
+
+        $turnover = [];
+        foreach (['in_bi_id' => 'debit', 'out_bi_id' => 'credit'] as $col => $side) {
+            foreach ($base()->select($col)->selectRaw('SUM(amount) AS s')->groupBy($col)->get() as $r) {
+                $turnover[$r->$col][$side] = (float) $r->s;
+            }
+        }
+
+        return [
+            'count'    => (int) $row->cnt,
+            'amount'   => (float) $row->amount,
+            'accounts' => $this->turnoverRows($turnover),
+        ];
+    }
+
+    /** Обороты по счетам списком: закрытые должностью сходятся в одну строку */
+    private function turnoverRows(array $turnover): array
+    {
+        if (!$turnover) return [];
+
+        $items = DB::connection($this->dbName)->table('balance_items')
+            ->whereIn('id', array_keys($turnover))
+            ->get(['id', 'code', 'name'])->keyBy('id');
+
+        $out = [];
+        foreach ($turnover as $biId => $sides) {
+            $hidden = $this->scope->hides($biId);
+            $key    = $hidden ? 'hidden' : $biId;
+
+            $out[$key] ??= [
+                'bi_id'  => $hidden ? null : (int) $biId,
+                'code'   => $hidden ? '' : ($items[$biId]->code ?? ''),
+                'name'   => $hidden ? 'Скрыто' : ($items[$biId]->name ?? ''),
+                'hidden' => $hidden,
+                'debit'  => 0.0,
+                'credit' => 0.0,
+            ];
+
+            $out[$key]['debit']  += $sides['debit'] ?? 0;
+            $out[$key]['credit'] += $sides['credit'] ?? 0;
+        }
+
+        usort($out, fn($a, $b) => ($a['hidden'] <=> $b['hidden']) ?: strcmp($a['code'], $b['code']));
+
+        return $out;
     }
 
     public function store(Request $request)

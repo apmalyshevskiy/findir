@@ -10,6 +10,7 @@
  */
 
 import LockIcon from './LockIcon'
+import { Highlight } from '../utils/infoSearch'
 
 const TONE = {
   debit:  'bg-green-50 text-green-700',
@@ -19,7 +20,8 @@ const TONE = {
 // Код счёта в начале названия («А51 Расчётные счета») дублирует пилюлю
 const stripCode = (name) => name?.replace(/^[А-ЯA-Z]\d+\s/, '')
 
-export default function AccountChip({ code, name, hidden, side = 'debit', size = 'text-xs' }) {
+/** q — строка поиска из журнала: по подсветке видно, за что зацепилась операция */
+export default function AccountChip({ code, name, hidden, side = 'debit', size = 'text-xs', q = '' }) {
   if (hidden) {
     return (
       <span className={`${size} inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium`}
@@ -32,8 +34,12 @@ export default function AccountChip({ code, name, hidden, side = 'debit', size =
 
   return (
     <>
-      <span className={`${size} ${TONE[side]} px-1.5 py-0.5 rounded font-mono font-medium`}>{code}</span>
-      <span className={`${size} text-gray-600`}>{stripCode(name)}</span>
+      <span className={`${size} ${TONE[side]} px-1.5 py-0.5 rounded font-mono font-medium`}>
+        <Highlight text={code} q={q} />
+      </span>
+      <span className={`${size} text-gray-600`}>
+        <Highlight text={stripCode(name)} q={q} />
+      </span>
     </>
   )
 }
