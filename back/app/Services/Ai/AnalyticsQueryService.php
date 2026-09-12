@@ -343,10 +343,7 @@ final class AnalyticsQueryService
     /** Поле info_N_id, в котором у этого счёта лежит аналитика нужного типа. */
     private function slotFor($acc, string $type): ?string
     {
-        foreach ([1, 2, 3] as $n) {
-            if (($acc->{"info_{$n}_type"} ?? null) === $type) return "info_{$n}_id";
-        }
-        return null;
+        return \App\Services\AnalyticSlots::fieldFor($acc, $type);
     }
 
     /** Поиск счёта по коду — терпим к латинским двойникам кириллических букв. */

@@ -15,6 +15,7 @@ import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
 import { INFO_LABELS } from '../utils/infoLabels'
+import { slotTypes, slotLabel, slotItems, slotAccepts, slotAllTypes } from '../utils/analyticSlots'
 
 // Расчёт себестоимости
 const calculateCostApi = (data) => api.post('/documents/calculate-cost', data)
@@ -359,7 +360,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
           if (cost.negative_stock) {
             warnings.push({
               _key: item._key,
-              name: (infoCache[balanceItems.find(b => b.id == item.bi_id)?.info_1_type] || [])
+              name: (slotItems(balanceItems.find(b => b.id == item.bi_id)?.info_1_type, infoCache) || [])
                       .find(x => x.id == item.info_1_id)?.name || `#${item.info_1_id}`,
             })
           }
@@ -407,9 +408,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   // Загружаем аналитику для счёта шапки
   useEffect(() => {
     if (!headBi) return
-    ;[headBi.info_1_type, headBi.info_2_type, headBi.info_3_type].filter(Boolean).forEach(t => {
-      if (!infoCache[t]) loadInfo(t)
-    })
+    slotAllTypes(headBi).forEach(t => { if (!infoCache[t]) loadInfo(t) })
   }, [form.bi_id])
 
   // Загружаем аналитику для счетов строк — и своих, и корреспондирующих:
@@ -419,9 +418,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
       [item.bi_id, item.head_bi_id].filter(Boolean).forEach(id => {
         const bi = balanceItems.find(b => b.id == id)
         if (!bi) return
-        ;[bi.info_1_type, bi.info_2_type, bi.info_3_type].filter(Boolean).forEach(t => {
-          if (!infoCache[t]) loadInfo(t)
-        })
+        slotAllTypes(bi).forEach(t => { if (!infoCache[t]) loadInfo(t) })
       })
     })
   }, [form.items.map(i => `${i.bi_id}:${i.head_bi_id}`).join(',')])
@@ -430,6 +427,36 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   useEffect(() => {
     if (isOutgoing && !infoCache['revenue']) loadInfo('revenue')
   }, [isOutgoing])
+
+  // Тип элемента справочника по его id — собираем из уже загруженных кэшей.
+  // Нужен, когда слот принимает набор: по одному id иначе не понять, что это
+  const infoTypeById = useMemo(() => {
+    const map = {}
+    for (const [type, list] of Object.entries(infoCache)) {
+      for (const i of (list || [])) map[i.id] = i.type || type
+    }
+    return map
+  }, [infoCache])
+
+  /**
+   * Всё, что нужно полю аналитики одного слота.
+   *
+   * Слот объявляет набор справочников: один — как было всегда, несколько или
+   * любой — список собирается из всех разрешённых.
+   */
+  const slotProps = (bi, n) => {
+    const declared = bi?.[`info_${n}_type`]
+    if (!declared) return null
+
+    const types = slotTypes(declared)
+
+    return {
+      items:     slotItems(declared, infoCache) || [],
+      label:     slotLabel(declared),
+      infoType:  types.length === 1 ? types[0] : undefined,
+      infoTypes: types,
+    }
+  }
 
   const setField = (field, val) => setForm(f => ({ ...f, [field]: val }))
 
@@ -453,9 +480,14 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
     const next = balanceItems.find(b => b.id == nextBiId)
     const out  = {}
 
+    // Значение остаётся, если слот нового счёта принимает его тип. Сравнивать
+    // объявления слотов было грубее: счёт с набором «контрагент, сотрудник»
+    // терял бы контрагента, который ему вполне подходит
     for (const n of [1, 2, 3]) {
-      const same = prev?.[`info_${n}_type`] && prev[`info_${n}_type`] === next?.[`info_${n}_type`]
-      out[`info_${n}_id`] = same ? (source[`info_${n}_id`] ?? null) : null
+      const id   = source[`info_${n}_id`] ?? null
+      const type = id ? infoTypeById[id] : null
+
+      out[`info_${n}_id`] = type && slotAccepts(next?.[`info_${n}_type`], type) ? id : null
     }
 
     return out
@@ -574,8 +606,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
 
   const headFieldLabel = (field) => {
     if (field === 'bi') return 'Счёт корр.'
-    const infoType = headBiForForm?.[`info_${field.slice(-1)}_type`]
-    return INFO_LABELS[infoType] || 'Аналитика'
+    return slotLabel(headBiForForm?.[`info_${field.slice(-1)}_type`]) || 'Аналитика'
   }
 
   /** Строка задала это поле сама, а не взяла из шапки */
@@ -610,7 +641,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   // Заголовок первой колонки — по аналитике счёта строк из вида документа:
   // «Номенклатура» у накладной, «Сотрудник» у ЗП, «Статья расхода» у авансового
   const typeItemBi = balanceItems.find(b => b.id == type?.item_bi_id)
-  const firstColumnLabel = INFO_LABELS[typeItemBi?.info_1_type] || 'Аналитика'
+  const firstColumnLabel = slotLabel(typeItemBi?.info_1_type) || 'Аналитика'
 
   return (
     // Полям аналитики нужен способ перечитать справочник после того, как в них
@@ -710,33 +741,20 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                   onChange={v => setForm(f => ({ ...f, bi_id: v, ...keptAnalytics(f.bi_id, v, f) }))}
                   placeholder="Выбрать счёт..." />
               </div>
-              {headBi?.info_1_type && (
-                  <div>
-                    <label className={lbl}>{INFO_LABELS[headBi.info_1_type] || headBi.info_1_type}</label>
-                    <InfoSelect items={infoCache[headBi.info_1_type] || []} value={form.info_1_id}
-                      disabled={isPosted} infoType={headBi.info_1_type}
-                      onChange={v => setField('info_1_id', v)}
-                      placeholder={`Выбрать ${INFO_LABELS[headBi.info_1_type] || ''}...`} />
-                  </div>
-                )}
-                {headBi?.info_2_type && (
-                  <div>
-                    <label className={lbl}>{INFO_LABELS[headBi.info_2_type] || headBi.info_2_type}</label>
-                    <InfoSelect items={infoCache[headBi.info_2_type] || []} value={form.info_2_id}
-                      disabled={isPosted} infoType={headBi.info_2_type}
-                      onChange={v => setField('info_2_id', v)}
-                      placeholder={`Выбрать...`} />
-                  </div>
-                )}
-                {headBi?.info_3_type && (
-                  <div>
-                    <label className={lbl}>{INFO_LABELS[headBi.info_3_type] || headBi.info_3_type}</label>
-                    <InfoSelect items={infoCache[headBi.info_3_type] || []} value={form.info_3_id}
-                      disabled={isPosted} infoType={headBi.info_3_type}
-                      onChange={v => setField('info_3_id', v)}
-                      placeholder={`Выбрать...`} />
-                  </div>
-                )}
+              {[1, 2, 3].map(n => {
+                  const s = slotProps(headBi, n)
+                  if (!s) return null
+
+                  return (
+                    <div key={n}>
+                      <label className={lbl}>{s.label}</label>
+                      <InfoSelect items={s.items} value={form[`info_${n}_id`]}
+                        disabled={isPosted} infoType={s.infoType} infoTypes={s.infoTypes}
+                        onChange={v => setField(`info_${n}_id`, v)}
+                        placeholder={`Выбрать ${n === 1 ? s.label.toLowerCase() : ''}...`} />
+                    </div>
+                  )
+                })}
             </div>
 
             {/* Поля outgoing_invoice */}
@@ -836,13 +854,15 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
 
                           {/* Аналитика строки — номенклатура, сотрудник, статья: что у счёта */}
                           <div className="min-w-0">
-                            {itemBi?.info_1_type ? (
+                            {slotProps(itemBi, 1) ? (
                               <InfoSelect
-                                items={infoCache[itemBi.info_1_type] || []}
+                                items={slotProps(itemBi, 1).items}
                                 value={item.info_1_id}
-                                disabled={isPosted} infoType={itemBi.info_1_type}
+                                disabled={isPosted}
+                                infoType={slotProps(itemBi, 1).infoType}
+                                infoTypes={slotProps(itemBi, 1).infoTypes}
                                 onChange={v => setItemFieldWithCalc(item._key, 'info_1_id', v)}
-                                placeholder={`${INFO_LABELS[itemBi.info_1_type] || 'Значение'}...`} />
+                                placeholder={`${slotProps(itemBi, 1).label}...`} />
                             ) : (
                               <span className="text-xs text-gray-400 px-2">
                                 {itemBi ? `${itemBi.code} ${itemBi.name}` : 'Выберите счёт →'}
@@ -948,25 +968,20 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                                   placeholder="Выбрать счёт..." />
                               </div>
 
-                              {itemBi?.info_2_type && (
-                                <div>
-                                  <div className="text-xs text-gray-400 mb-1">{INFO_LABELS[itemBi.info_2_type]}</div>
-                                  <InfoSelect items={infoCache[itemBi.info_2_type] || []} value={item.info_2_id}
-                                    disabled={isPosted} infoType={itemBi.info_2_type}
-                                    onChange={v => setItemField(item._key, 'info_2_id', v)}
-                                    placeholder="Выбрать..." />
-                                </div>
-                              )}
+                              {[2, 3].map(n => {
+                                const s = slotProps(itemBi, n)
+                                if (!s) return null
 
-                              {itemBi?.info_3_type && (
-                                <div>
-                                  <div className="text-xs text-gray-400 mb-1">{INFO_LABELS[itemBi.info_3_type]}</div>
-                                  <InfoSelect items={infoCache[itemBi.info_3_type] || []} value={item.info_3_id}
-                                    disabled={isPosted} infoType={itemBi.info_3_type}
-                                    onChange={v => setItemField(item._key, 'info_3_id', v)}
-                                    placeholder="Выбрать..." />
-                                </div>
-                              )}
+                                return (
+                                  <div key={n}>
+                                    <div className="text-xs text-gray-400 mb-1">{s.label}</div>
+                                    <InfoSelect items={s.items} value={item[`info_${n}_id`]}
+                                      disabled={isPosted} infoType={s.infoType} infoTypes={s.infoTypes}
+                                      onChange={v => setItemField(item._key, `info_${n}_id`, v)}
+                                      placeholder="Выбрать..." />
+                                  </div>
+                                )
+                              })}
 
                               {/* Корреспондирующая сторона: то, что не вынесено
                                   колонкой. Пустое поле значит «как в шапке» —
@@ -1375,7 +1390,7 @@ export default function DocumentsPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Номер</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
                   {/* Кто в шапке — контрагент, сотрудник или статья: зависит от счёта вида */}
-                  {INFO_LABELS[balanceItems.find(b => b.id == activeType?.head_bi_id)?.info_1_type] || 'Аналитика'}
+                  {slotLabel(balanceItems.find(b => b.id == activeType?.head_bi_id)?.info_1_type) || 'Аналитика'}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Статус</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Сумма</th>

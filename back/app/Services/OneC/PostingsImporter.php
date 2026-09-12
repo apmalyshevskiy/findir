@@ -5,6 +5,7 @@ namespace App\Services\OneC;
 use App\Models\Tenant\Integration;
 use App\Models\Tenant\Operation;
 use App\Services\AccountScope;
+use App\Services\AnalyticSlots;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -431,14 +432,15 @@ final class PostingsImporter
 
         if (!$item) return $out;
 
-        // Раскладка по слотам: слот ждёт свой тип, и берём первое подходящее
-        // из ещё не разложенного
-        for ($slot = 1; $slot <= 3; $slot++) {
-            $type = $item->{"info_{$slot}_type"};
-            if (!$type) continue;
+        // Раскладка по слотам. Сначала точные слоты, потом наборы, потом
+        // «любой» — иначе субконто, которому есть свой слот, заняло бы общий,
+        // и следующему места уже не хватило бы
+        foreach ($out['analytics'] as $i => $a) {
+            if ($a['slot'] !== null || $a['info_id'] === null) continue;
 
-            foreach ($out['analytics'] as $i => $a) {
-                if ($a['slot'] !== null || $a['info_id'] === null || $a['type'] !== $type) continue;
+            foreach (AnalyticSlots::slotsFor($item, $a['type']) as $slot) {
+                // Слот занят другим субконто этого же счёта — пробуем следующий
+                if ($out['info'][$slot - 1] !== null) continue;
 
                 $out['analytics'][$i]['slot'] = $slot;
                 $out['info'][$slot - 1] = $a['info_id'];
@@ -540,12 +542,7 @@ final class PostingsImporter
         $item = $biId ? ($this->bi[$biId] ?? null) : null;
         if (!$item) return [];
 
-        $types = [];
-        foreach ([1, 2, 3] as $slot) {
-            if ($t = $item->{"info_{$slot}_type"}) $types[$t] = true;
-        }
-
-        return array_keys($types);
+        return AnalyticSlots::acceptedTypes($item);
     }
 
     /**
@@ -694,9 +691,7 @@ final class PostingsImporter
     {
         $types = [];
         foreach ($this->bi as $item) {
-            foreach ([1, 2, 3] as $slot) {
-                if ($t = $item->{"info_{$slot}_type"}) $types[$t] = true;
-            }
+            foreach (AnalyticSlots::acceptedTypes($item) as $t) $types[$t] = true;
         }
 
         if ($types) {

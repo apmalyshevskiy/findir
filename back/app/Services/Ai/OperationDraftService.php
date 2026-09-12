@@ -2,6 +2,7 @@
 
 namespace App\Services\Ai;
 
+use App\Services\AnalyticSlots;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -373,11 +374,9 @@ class OperationDraftService
 
                     $bi = $accounts[$biId] ?? null;
                     if (!$bi) continue;
-                    foreach ([1, 2, 3] as $n) {
-                        if (($bi->{"info_{$n}_type"} ?? null) === $type) {
-                            $patch["{$prefix}_info_{$n}_id"] = $id;
-                            break;
-                        }
+
+                    if ($field = AnalyticSlots::fieldFor($bi, $type, $prefix)) {
+                        $patch[$field] = $id;
                     }
                 }
             }
@@ -572,9 +571,18 @@ class OperationDraftService
 выбрав статью ДДС, указывай в expenses именно связанную статью):{$links}
 L;
 
+        // Слот может принимать набор типов или любой справочник — перечисляем
+        // всё, что счёт готов принять, иначе модель сочтёт счёт безаналитичным
         $acc = [];
         foreach ($accounts as $a) {
-            $an = array_filter([$a->info_1_type, $a->info_2_type]);
+            $an = [];
+            foreach ([1, 2] as $n) {
+                $declared = AnalyticSlots::declared($a, $n);
+                if ($declared === null) continue;
+
+                $an[] = AnalyticSlots::isAny($declared) ? 'любая' : implode('|', AnalyticSlots::parse($declared));
+            }
+
             $acc[] = "{$a->code} — {$a->name}" . ($an ? ' [аналитика: ' . implode(', ', $an) . ']' : '');
         }
 
@@ -910,15 +918,27 @@ TXT;
         ];
     }
 
-    /** Раскладывает найденные аналитики по слотам info_1/info_2 конкретного счёта. */
+    /**
+     * Раскладывает найденные аналитики по слотам info_1/info_2 конкретного счёта.
+     *
+     * Слот выбирает AnalyticSlots: точный важнее набора, набор — «любого».
+     * Форма операции правит только первые два слота, поэтому третий здесь и не
+     * заполняем — иначе значение легло бы туда, где его не видно и не поправить.
+     */
     private function fillSlots($bi, array $resolved, string $prefix): array
     {
         $out = [$prefix . 'info_1_id' => null, $prefix . 'info_2_id' => null];
         if (!$bi) return $out;
-        foreach (['info_1_type' => 1, 'info_2_type' => 2] as $field => $slot) {
-            $type = $bi->{$field} ?? null;
-            if ($type && isset($resolved[$type])) $out[$prefix . 'info_' . $slot . '_id'] = $resolved[$type];
+
+        foreach ($resolved as $type => $id) {
+            $slot = AnalyticSlots::slotFor($bi, $type);
+            if ($slot === null || $slot > 2) continue;
+
+            $field = $prefix . 'info_' . $slot . '_id';
+            // Первый претендент занимает слот: два типа в один не поместятся
+            if ($out[$field] === null) $out[$field] = $id;
         }
+
         return $out;
     }
 

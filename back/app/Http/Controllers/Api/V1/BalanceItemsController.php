@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\BalanceItem;
+use App\Services\AnalyticSlots;
 use App\Services\ChartOfAccounts;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,8 +18,7 @@ use Illuminate\Support\Facades\DB;
  */
 class BalanceItemsController extends TenantController
 {
-    /** Типы аналитик, допустимые в слотах info_1..3 */
-    private const INFO_TYPES = ['partner', 'employee', 'department', 'cash', 'flow', 'expenses', 'product', 'revenue'];
+    /** Типы аналитик и правила слотов — в App\Services\AnalyticSlots */
 
     private function model(): BalanceItem
     {
@@ -299,15 +299,18 @@ class BalanceItemsController extends TenantController
 
     private function validated(Request $request, ?int $id = null): array
     {
-        $types = implode(',', self::INFO_TYPES);
-
+        // Слот принимает и одиночный тип, и набор, и «любой» — разбирает
+        // AnalyticSlots::normalize, поэтому здесь только форма значения
         $data = $request->validate([
             'code'                 => 'required|string|max:20',
             'name'                 => 'required|string|max:255',
             'parent_id'            => 'nullable|integer',
-            'info_1_type'          => "nullable|string|in:{$types}",
-            'info_2_type'          => "nullable|string|in:{$types}",
-            'info_3_type'          => "nullable|string|in:{$types}",
+            'info_1_type'          => 'nullable',
+            'info_2_type'          => 'nullable',
+            'info_3_type'          => 'nullable',
+            'info_1_type.*'        => 'string',
+            'info_2_type.*'        => 'string',
+            'info_3_type.*'        => 'string',
             'info_1_turnover_only' => 'nullable|boolean',
             'info_2_turnover_only' => 'nullable|boolean',
             'info_3_turnover_only' => 'nullable|boolean',
@@ -317,7 +320,9 @@ class BalanceItemsController extends TenantController
         $data['code'] = trim($data['code']);
         $data['name'] = trim($data['name']);
         foreach (['info_1_type', 'info_2_type', 'info_3_type'] as $f) {
-            $data[$f] = $data[$f] ?? null;
+            // Неизвестные типы normalize отбрасывает молча: слот с мусором
+            // всё равно ничего бы не принял
+            $data[$f] = AnalyticSlots::normalize($data[$f] ?? null);
         }
         foreach (['info_1_turnover_only', 'info_2_turnover_only', 'info_3_turnover_only', 'has_quantity'] as $f) {
             $data[$f] = !empty($data[$f]);

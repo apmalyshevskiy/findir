@@ -7,17 +7,7 @@ import OperationChanges from './OperationChanges'
 import SharedInfoSelect from './InfoSelect'
 import { BusyLabel } from './Busy'
 import LockIcon from './LockIcon'
-
-const INFO_LABELS = {
-  partner:    'Контрагент',
-  product:    'Товар/Услуга',
-  cash:       'Касса/Счёт',
-  employee:   'Сотрудник',
-  revenue:    'Статья дохода',
-  expenses:   'Статья расхода',
-  department: 'Отдел',
-  flow:       'Статья движения',
-}
+import { slotTypes, slotLabel, slotItems } from '../utils/analyticSlots'
 
 // Выбор аналитики.
 //
@@ -25,16 +15,18 @@ const INFO_LABELS = {
 // более старая, чем в документах, и уже разошедшаяся с ней: не было ни поиска
 // по ИНН, ни недавних. Теперь общий компонент, а от прежней копии осталась
 // только подпись поля.
-const SearchableInfoSelect = ({ items, value, onChange, label, infoType, onItemCreated }) => (
+const SearchableInfoSelect = ({ items, value, onChange, label, infoType, infoTypes, onItemCreated }) => (
   <SharedInfoSelect
     items={items}
     value={value}
     onChange={onChange}
     label={label}
     infoType={infoType}
+    infoTypes={infoTypes}
     // Кэш справочников на форме разложен по типам, а общий компонент про этот
-    // кэш не знает — тип подставляем здесь
-    onItemCreated={(item, replacedId) => onItemCreated?.(infoType, item, replacedId)}
+    // кэш не знает — тип подставляем здесь. Берём его у самого элемента: в
+    // слоте с набором справочников заведённый элемент может быть любого из них
+    onItemCreated={(item, replacedId) => onItemCreated?.(item?.type || infoType, item, replacedId)}
   />
 )
 
@@ -120,10 +112,11 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
       if (src) {
         const inBi  = items.find(b => b.id == src.in_bi_id)
         const outBi = items.find(b => b.id == src.out_bi_id)
+        // Слот может принимать набор справочников — грузим все разрешённые
         const types = [...new Set([
-          inBi?.info_1_type, inBi?.info_2_type,
-          outBi?.info_1_type, outBi?.info_2_type,
-        ].filter(Boolean))]
+          ...slotTypes(inBi?.info_1_type),  ...slotTypes(inBi?.info_2_type),
+          ...slotTypes(outBi?.info_1_type), ...slotTypes(outBi?.info_2_type),
+        ])]
 
         // Ждём и справочники аналитики: пока их нет, поля выбранного
         // контрагента и статьи стоят пустыми, и форма выглядит недозаполненной
@@ -140,7 +133,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
 
   const loadInfoForBi = (biId, prevCache) => {
     const bi = balanceItems.find(b => b.id == biId)
-    const types = [bi?.info_1_type, bi?.info_2_type].filter(Boolean)
+    const types = [...new Set([...slotTypes(bi?.info_1_type), ...slotTypes(bi?.info_2_type)])]
     types.forEach(type => {
       if (!prevCache[type]) {
         getInfo({ type }).then(r => {
@@ -182,6 +175,33 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
     const linked = bothHaveQty && (f[other] === '' || f[other] === f[mine])
     return { ...f, [mine]: value, ...(linked ? { [other]: value } : {}) }
   })
+
+  /**
+   * Поле аналитики одного слота.
+   *
+   * Слот объявляет не тип, а набор справочников: один — как было всегда,
+   * несколько или любой — список собирается из всех разрешённых. Подпись поля
+   * и выбор справочника при создании элемента идут оттуда же.
+   */
+  const slotField = (bi, n, side) => {
+    const declared = bi?.[`info_${n}_type`]
+    if (!declared) return null
+
+    const types = slotTypes(declared)
+    const field = `${side}_info_${n}_id`
+
+    return (
+      <SearchableInfoSelect
+        items={slotItems(declared, infoCache)}
+        value={form[field]}
+        onChange={(val) => setForm({ ...form, [field]: val })}
+        label={`${slotLabel(declared)} (${bi.code})`}
+        infoType={types.length === 1 ? types[0] : undefined}
+        infoTypes={types}
+        onItemCreated={handleItemCreated}
+      />
+    )
+  }
 
   const quantityField = (side, bi) => bi?.has_quantity && (
     <div>
@@ -245,16 +265,8 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
-      {inBi?.info_1_type && (
-        <SearchableInfoSelect items={infoCache[inBi.info_1_type]} value={form.in_info_1_id}
-          onChange={(val) => setForm({...form, in_info_1_id: val})}
-          label={`${INFO_LABELS[inBi.info_1_type]} (${inBi.code})`} infoType={inBi.info_1_type} onItemCreated={handleItemCreated} />
-      )}
-      {inBi?.info_2_type && (
-        <SearchableInfoSelect items={infoCache[inBi.info_2_type]} value={form.in_info_2_id}
-          onChange={(val) => setForm({...form, in_info_2_id: val})}
-          label={`${INFO_LABELS[inBi.info_2_type]} (${inBi.code})`} infoType={inBi.info_2_type} onItemCreated={handleItemCreated} />
-      )}
+      {slotField(inBi, 1, 'in')}
+      {slotField(inBi, 2, 'in')}
       {quantityField('in', inBi)}
     </>
   )
@@ -273,16 +285,8 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
-      {outBi?.info_1_type && (
-        <SearchableInfoSelect items={infoCache[outBi.info_1_type]} value={form.out_info_1_id}
-          onChange={(val) => setForm({...form, out_info_1_id: val})}
-          label={`${INFO_LABELS[outBi.info_1_type]} (${outBi.code})`} infoType={outBi.info_1_type} onItemCreated={handleItemCreated} />
-      )}
-      {outBi?.info_2_type && (
-        <SearchableInfoSelect items={infoCache[outBi.info_2_type]} value={form.out_info_2_id}
-          onChange={(val) => setForm({...form, out_info_2_id: val})}
-          label={`${INFO_LABELS[outBi.info_2_type]} (${outBi.code})`} infoType={outBi.info_2_type} onItemCreated={handleItemCreated} />
-      )}
+      {slotField(outBi, 1, 'out')}
+      {slotField(outBi, 2, 'out')}
       {quantityField('out', outBi)}
     </>
   )

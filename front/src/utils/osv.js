@@ -13,15 +13,20 @@ export const calcNet = (debit, credit) => (debit || 0) - (credit || 0)
 /**
  * Дерево аналитик от сервера (children[].children[]) — в плоский список.
  * Разворачиваем только раскрытые узлы: свёрнутых на экране не видно.
+ *
+ * Ключ узла — путь от счёта, а не пара «счёт + элемент»: один и тот же элемент
+ * может стоять на двух уровнях сразу (счёт вправе объявить один справочник в
+ * двух слотах), и по короткому ключу раскрытие родителя раскрывало бы заодно
+ * его же строку внутри.
  */
-export const flattenServerTree = (nodes, expandedSet, biId, depth = 0) => {
+export const flattenServerTree = (nodes, expandedSet, biId, depth = 0, parentKey = '') => {
   let result = []
   nodes.forEach(node => {
-    const nodeKey = `${biId}-${node.info_id}-${node.info_type}`
+    const nodeKey = `${parentKey || biId}-${node.info_id}-${node.info_type}`
     const isExp   = expandedSet.has(nodeKey)
     result.push({ ...node, depth, _key: nodeKey, _expanded: isExp })
     if (node.children?.length > 0 && isExp) {
-      result = result.concat(flattenServerTree(node.children, expandedSet, biId, depth + 1))
+      result = result.concat(flattenServerTree(node.children, expandedSet, biId, depth + 1, nodeKey))
     }
   })
   return result

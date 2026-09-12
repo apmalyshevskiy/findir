@@ -32,6 +32,36 @@ const INFO_TYPES = [
   { value: 'flow',       label: 'Статьи движения' },
 ]
 
+/**
+ * Разрезы по номеру аналитики счёта — вторая группировка оборотки.
+ *
+ * Разрез по справочнику показывает элементы одного типа: счёт, у которого во
+ * второй аналитике объявлены «контрагент, товар», в разрезе «Контрагенты»
+ * покажет только контрагентов, а суммы по номенклатуре оттуда же уйдут в строку
+ * счёта. Разрез по номеру разворачивает аналитику целиком — и контрагенты, и
+ * номенклатура встают одним списком, каждая строка со своей подписью
+ * справочника.
+ *
+ * Токены уходят на сервер вперемешку с типами, в том же info_types[]. В коде
+ * это слот счёта, в интерфейсе — «Аналитика 2»: слово «слот» человеку ничего
+ * не говорит, а номер стоит у него же в карточке счёта.
+ */
+const SLOT_TYPES = [
+  { value: 'slot1', label: 'Аналитика 1' },
+  { value: 'slot2', label: 'Аналитика 2' },
+  { value: 'slot3', label: 'Аналитика 3' },
+]
+
+const GROUP_MODES = [
+  { key: 'type', label: 'по справочникам', title: 'Разрезы по типам справочников: контрагенты, номенклатура, статьи' },
+  { key: 'slot', label: 'по номеру',       title: 'Разрезы по номеру аналитики счёта — как в его карточке. «Аналитика 2» разворачивается целиком, даже когда в ней лежат разные справочники' },
+]
+
+const typeLabel = (value) =>
+  INFO_TYPES.find(t => t.value === value)?.label ||
+  SLOT_TYPES.find(t => t.value === value)?.label ||
+  value
+
 // ─── Шапка таблицы ────────────────────────────────────────────────────────────
 // Обе строки заданной высоты: только так вторая встаёт ровно под первой при
 // липкой шапке (top-0 и top-8 — те же 32 пикселя, что даёт h-8).
@@ -95,6 +125,7 @@ export default function BalanceSheetPage() {
   // null у проекта — «ещё не выбирали»: отличаем от осознанного «Все проекты».
   const [filter, setFilter]             = usePersistedPeriod('balance-sheet')
   const [projectFilter, setProjectFilter] = usePersistedState('osv:project', null)
+  const [groupMode, setGroupMode]       = usePersistedState('osv:group-mode', 'type')
   const [infoTypes, setInfoTypes]       = usePersistedState('osv:info-types', [])
   const [hierarchyTypes, setHierarchyTypes] = usePersistedState('osv:hierarchy-types', new Set(), SET_CODEC)
   const [biFilter, setBiFilter]         = usePersistedState('osv:bi', '')
@@ -135,8 +166,20 @@ export default function BalanceSheetPage() {
       })
   }, [])
 
-  // Загружаем справочники для всех выбранных типов аналитик
+  // Загружаем справочники для всех выбранных разрезов — расшифровка по строке
+  // аналитики ищет по ним вложенные элементы.
+  //
+  // У разреза по слоту заранее неизвестно, из каких справочников там элементы,
+  // поэтому берём всё разом и кладём под общий ключ: запрос без типа возвращает
+  // весь справочник
   useEffect(() => {
+    if (infoTypes.some(t => SLOT_TYPES.some(s => s.value === t))) {
+      if (!infoDictionaries['*']) {
+        getInfo({}).then(res => setInfoDictionaries(prev => ({ ...prev, '*': res.data.data })))
+      }
+      return
+    }
+
     infoTypes.forEach(type => {
       if (!infoDictionaries[type]) {
         getInfo({ type }).then(res =>
@@ -168,7 +211,22 @@ export default function BalanceSheetPage() {
   }
 
 
-  // Добавить/убрать тип аналитики
+  /**
+   * Смена вида группировки сбрасывает выбранные разрезы.
+   *
+   * Перенести их нельзя: «Контрагенты» — это разный слот у разных счетов, а
+   * «Аналитика 2» — разные справочники. Пересечения между видами нет, и
+   * догадка за человека тут была бы неверной в половине случаев
+   */
+  const switchGroupMode = (mode) => {
+    if (mode === groupMode) return
+
+    setGroupMode(mode)
+    setInfoTypes([])
+    setHierarchyTypes(new Set())
+  }
+
+  // Добавить/убрать разрез
   const toggleInfoType = (type) => {
     setInfoTypes(prev => {
       if (prev.includes(type)) {
@@ -336,12 +394,14 @@ export default function BalanceSheetPage() {
 
       const validIds = [infoId, ...getDescendants(infoId)].map(String)
 
-      ops = ops.filter(op =>
-        (op.in_info_1_id && validIds.includes(String(op.in_info_1_id))) ||
-        (op.in_info_2_id && validIds.includes(String(op.in_info_2_id))) ||
-        (op.out_info_1_id && validIds.includes(String(op.out_info_1_id))) ||
-        (op.out_info_2_id && validIds.includes(String(op.out_info_2_id)))
-      )
+      // Все три слота с обеих сторон: третий раньше не проверялся, и
+      // расшифровка по аналитике из него отдавала операции целиком
+      const fields = [
+        'in_info_1_id',  'in_info_2_id',  'in_info_3_id',
+        'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
+      ]
+
+      ops = ops.filter(op => fields.some(f => op[f] && validIds.includes(String(op[f]))))
     }
 
     ops.sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -407,6 +467,7 @@ export default function BalanceSheetPage() {
 
   const isDirty =
     infoTypes.length > 0 ||
+    groupMode !== 'type' ||
     hierarchyAccounts ||
     !!biFilter ||
     displayMode !== 'amount' ||
@@ -416,6 +477,7 @@ export default function BalanceSheetPage() {
 
   const resetSettings = () => {
     setInfoTypes([])
+    setGroupMode('type')
     setHierarchyTypes(new Set())
     setHierarchyAccounts(false)
     setDisplayMode('amount')
@@ -758,8 +820,22 @@ export default function BalanceSheetPage() {
         {/* ── Строка 2: аналитика ── */}
         <div className="flex items-start gap-2 flex-wrap pt-1">
           <span className="text-xs text-gray-500 font-medium mt-1.5">Аналитика:</span>
+
+          {/* Вид группировки: по справочникам или по номеру аналитики счёта */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-[11px] font-medium">
+            {GROUP_MODES.map(m => (
+              <button key={m.key} type="button" title={m.title}
+                onClick={() => switchGroupMode(m.key)}
+                className={`px-2.5 py-1 transition-colors ${
+                  groupMode === m.key ? 'bg-blue-900 text-white' : 'text-gray-500 hover:bg-gray-50'
+                }`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           <div className="flex flex-wrap gap-1.5">
-            {INFO_TYPES.filter(t => t.value).map(t => {
+            {(groupMode === 'slot' ? SLOT_TYPES : INFO_TYPES.filter(t => t.value)).map(t => {
               const selected = infoTypes.includes(t.value)
               const order    = infoTypes.indexOf(t.value)
               return (
@@ -785,7 +861,7 @@ export default function BalanceSheetPage() {
             {infoTypes.length > 0 && (
               <div className="flex gap-1.5 flex-wrap">
                 {infoTypes.map((type, idx) => {
-                  const label  = INFO_TYPES.find(t => t.value === type)?.label || type
+                  const label  = typeLabel(type)
                   const isHier = hierarchyTypes.has(type)
                   return (
                     <div key={type}
@@ -989,7 +1065,10 @@ export default function BalanceSheetPage() {
                             <span className={child.depth === 0 && hasInnerChildren ? "text-xs text-gray-700 font-semibold" : "text-xs text-gray-600 font-medium"}>
                               {child.info_name}
                             </span>
-                            {infoTypes.length > 1 && (
+                            {/* В разрезе по слоту подпись справочника нужна
+                                всегда: на одном уровне стоят элементы разных
+                                типов, и без неё не видно, что есть что */}
+                            {(infoTypes.length > 1 || groupMode === 'slot') && (
                               <span className="ml-1.5 text-[10px] text-gray-300">
                                 {INFO_TYPES.find(t => t.value === child.info_type)?.label}
                               </span>

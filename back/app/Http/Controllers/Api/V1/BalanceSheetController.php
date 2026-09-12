@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\BalanceItem;
+use App\Services\AnalyticSlots;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -11,9 +12,15 @@ use Illuminate\Support\Facades\DB;
  *
  * Параметры запроса:
  *   date_from, date_to, bi_id (фильтр по счёту)
- *   info_types[] — массив типов аналитик в нужном порядке, например:
+ *   info_types[] — массив разрезов в нужном порядке, например:
  *     ?info_types[]=product&info_types[]=department
  *     → первый уровень: Номенклатура, второй: Склад/Отдел
+ *
+ *   Разрез — это либо тип справочника, либо слот счёта: `slot1`, `slot2`,
+ *   `slot3`. Слот разворачивается целиком, какие бы справочники в нём ни
+ *   лежали: у счёта со слотом «контрагент, товар» контрагенты и номенклатура
+ *   встают одним списком. Разрез по типу так не может — он выбирает слот под
+ *   этот тип и показывает только его элементы.
  *
  * Ответ children у каждого счёта:
  *   Одноуровневый если info_types=1, двухуровневый если info_types=2.
@@ -68,19 +75,17 @@ class BalanceSheetController extends TenantController
         $biTurnoverOnly = [];
         foreach ($balanceItems as $id => $bi) {
             foreach ($infoTypes as $infoType) {
-                if ($bi->info_1_type === $infoType) {
-                    $biInfoFields[$id][$infoType]  = 'info_1_id';
-                    $biTurnoverOnly[$id][$infoType] = (bool) $bi->info_1_turnover_only;
-                } elseif ($bi->info_2_type === $infoType) {
-                    $biInfoFields[$id][$infoType]  = 'info_2_id';
-                    $biTurnoverOnly[$id][$infoType] = (bool) $bi->info_2_turnover_only;
-                } elseif ($bi->info_3_type === $infoType) {
-                    $biInfoFields[$id][$infoType]  = 'info_3_id';
-                    $biTurnoverOnly[$id][$infoType] = (bool) $bi->info_3_turnover_only;
-                } else {
-                    $biInfoFields[$id][$infoType]  = null;
-                    $biTurnoverOnly[$id][$infoType] = false;
-                }
+                $token = AnalyticSlots::slotToken($infoType);
+
+                // Разрез по слоту берёт слот как он есть — лишь бы счёт его
+                // объявил. Разрез по типу ищет слот под этот справочник:
+                // точный слот важнее набора, набор — «любого»
+                $slot = $token !== null
+                    ? (AnalyticSlots::declared($bi, $token) !== null ? $token : null)
+                    : AnalyticSlots::slotFor($bi, $infoType);
+
+                $biInfoFields[$id][$infoType]   = $slot ? "info_{$slot}_id" : null;
+                $biTurnoverOnly[$id][$infoType] = $slot ? (bool) $bi->{"info_{$slot}_turnover_only"} : false;
             }
         }
 
@@ -167,7 +172,11 @@ class BalanceSheetController extends TenantController
         $infoItems = $infoItemsAll->keyBy('id');
         $infoTree  = [];
         foreach ($infoTypes as $type) {
-            $infoTree[$type] = $infoItemsAll->where('type', $type)->values();
+            $slot = AnalyticSlots::slotToken($type);
+
+            $infoTree[$type] = $slot === null
+                ? $infoItemsAll->where('type', $type)->values()
+                : $infoItemsAll->filter($this->usedInSlot($map, $slot, $infoItems))->values();
         }
 
         // ── Иерархия счетов: нужна для сортировки по коду ────────────────────
@@ -255,6 +264,37 @@ class BalanceSheetController extends TenantController
     }
 
     /**
+     * Отбор элементов справочника для разреза по слоту: что реально в нём лежит.
+     *
+     * У разреза по типу список берётся из самого справочника — там он один и
+     * ограничен. В слоте лежат элементы каких угодно типов, и подать все восемь
+     * справочников целиком нельзя: обход иерархии сравнивает каждый элемент с
+     * каждым родителем. Берём только встреченные id и их предков — предки нужны,
+     * чтобы у элемента было под кем встать в дереве.
+     *
+     * @return callable  Фильтр для коллекции info
+     */
+    private function usedInSlot(array $map, int $slot, $infoItems): callable
+    {
+        $field = "info_{$slot}_id";
+        $keep  = [];
+
+        foreach ($map as $rowsByKey) {
+            foreach ($rowsByKey as $vals) {
+                $id = (int) ($vals[$field] ?? 0);
+
+                // Цикл в parent_id оборвётся на уже добавленном предке
+                while ($id > 0 && !isset($keep[$id])) {
+                    $keep[$id] = true;
+                    $id = (int) ($infoItems[$id]->parent_id ?? 0);
+                }
+            }
+        }
+
+        return fn($item) => isset($keep[$item->id]);
+    }
+
+    /**
      * Рекурсивно строим дерево аналитик по заданному порядку типов.
      *
      * @param array $turnoverOnlyMap  info_type => bool  (для текущего счёта)
@@ -281,10 +321,31 @@ class BalanceSheetController extends TenantController
             );
         }
 
-        // Плоская группировка: info_id => [rows]
+        // Плоская группировка: info_id => [rows].
+        //
+        // Слот может принимать набор типов или любой справочник — тогда в одном
+        // поле лежат разнородные значения. В разрез по типу идут только значения
+        // нужного типа; остальные считаются для этого разреза незаполненными и
+        // попадают в общую строку. Выбрасывать их нельзя: сумма по счёту
+        // перестала бы сходиться с суммой строк под ним.
+        //
+        // Разрез по слоту, наоборот, показывает всё, что в слоте лежит: тип
+        // здесь не отбор, а подпись у строки. Отсеиваем только удалённые
+        // элементы — их не под кем показать
+        $currentSlot = AnalyticSlots::slotToken($currentType);
+
         $flatGrouped = [];
         foreach ($details as $vals) {
             $infoId = (int) ($vals[$currentField] ?? 0);
+
+            $fits = $currentSlot !== null
+                ? isset($infoItems[$infoId])
+                : (($infoItems[$infoId]->type ?? null) === $currentType);
+
+            if ($infoId && !$fits) {
+                $infoId = 0;
+            }
+
             $flatGrouped[$infoId][] = $vals;
         }
 
@@ -404,7 +465,10 @@ class BalanceSheetController extends TenantController
 
         return [
             'info_id'        => $item->id,
-            'info_type'      => $infoTypes[$level],
+            // Тип самого элемента, а не разреза: в разрезе по типу это одно и
+            // то же, а в разрезе по слоту только элемент и знает, из какого он
+            // справочника — фронт подписывает этим строку
+            'info_type'      => $item->type ?? $infoTypes[$level],
             'info_name'      => $item->name,
             'turnover_only'  => $turnoverOnly,   // ← фронт использует для прочерков
             'opening_debit'  => $opening >= 0 ? $opening : 0,
@@ -446,9 +510,23 @@ class BalanceSheetController extends TenantController
         return true;
     }
 
+    /**
+     * Порядок строк аналитики.
+     *
+     * Сначала по справочнику: в разрезе по слоту на одном уровне стоят элементы
+     * разных типов, и вперемешку их не прочитать — контрагенты идут подряд,
+     * номенклатура подряд. Разрез по типу от этого не меняется: там тип у всех
+     * строк один, и сравнение сразу уходит к sort_order.
+     */
     private function sortInfoNodes(array &$nodes, $infoItems): void
     {
-        usort($nodes, function ($a, $b) use ($infoItems) {
+        $rank = array_flip(AnalyticSlots::TYPES);
+
+        usort($nodes, function ($a, $b) use ($infoItems, $rank) {
+            $typeA = $rank[$a['info_type']] ?? count($rank);
+            $typeB = $rank[$b['info_type']] ?? count($rank);
+            if ($typeA !== $typeB) return $typeA - $typeB;
+
             $itemA = $infoItems->get($a['info_id']);
             $itemB = $infoItems->get($b['info_id']);
             $sortA = $itemA?->sort_order ?? 0;

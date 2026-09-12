@@ -8,6 +8,7 @@ import { getBalanceItems } from '../api/operations'
 import { classifyStatement, applyRules } from '../api/ai'
 import Layout from '../components/Layout'
 import InfoSelect from '../components/InfoSelect'
+import { slotLabel, slotAccepts, slotSelect } from '../utils/analyticSlots'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n) => n == null ? '—' : new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
@@ -24,11 +25,6 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
     const ktBi = balanceItems.find(b => b.id == op.out_bi_id)
     const dtInfo1Type = dtBi?.info_1_type || null
     const ktInfo1Type = ktBi?.info_1_type || null
-    const LBL = {
-      partner: 'Контрагент', employee: 'Сотрудник', department: 'Отдел',
-      cash: 'Счёт', flow: 'Статья ДДС', expenses: 'Статья расхода',
-      product: 'Товар/Услуга', revenue: 'Статья дохода',
-    }
     const acctOption = (b) => (
       <option key={b.id} value={b.id}>{b.code} {b.name.replace(/^[А-ЯA-Z]\d+\s/, '')}</option>
     )
@@ -55,9 +51,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
           {/* info_1 ноги Дт */}
           {dtInfo1Type ? (
             <div>
-              <div className="text-[10px] text-gray-400 mb-0.5">{LBL[dtInfo1Type] || dtInfo1Type}</div>
-              <InfoSelect items={infoCache[dtInfo1Type] || []} value={op.in_info_1_id}
-                infoType={dtInfo1Type} onItemCreated={() => onInfoCreated?.(dtInfo1Type)}
+              <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(dtInfo1Type)}</div>
+              <InfoSelect {...slotSelect(dtInfo1Type, infoCache, onInfoCreated)} value={op.in_info_1_id}
                 onChange={v => onChange({ ...op, in_info_1_id: v })} placeholder="Выбрать..." />
             </div>
           ) : <div />}
@@ -81,9 +76,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
           {/* info_1 ноги Кт */}
           {ktInfo1Type && (
             <div>
-              <div className="text-[10px] text-gray-400 mb-0.5">{LBL[ktInfo1Type] || ktInfo1Type}</div>
-              <InfoSelect items={infoCache[ktInfo1Type] || []} value={op.out_info_1_id}
-                infoType={ktInfo1Type} onItemCreated={() => onInfoCreated?.(ktInfo1Type)}
+              <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(ktInfo1Type)}</div>
+              <InfoSelect {...slotSelect(ktInfo1Type, infoCache, onInfoCreated)} value={op.out_info_1_id}
                 onChange={v => onChange({ ...op, out_info_1_id: v })} placeholder="Выбрать..." />
             </div>
           )}
@@ -109,14 +103,8 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
   const counterInfo1Field = direction === 'in' ? 'out_info_1_id' : 'in_info_1_id'
   const counterInfo2Field = direction === 'in' ? 'out_info_2_id' : 'in_info_2_id'
 
-  const INFO_LABELS = {
-    partner: 'Контрагент', employee: 'Сотрудник', department: 'Отдел',
-    cash: 'Счёт', flow: 'Статья ДДС', expenses: 'Статья расхода',
-    product: 'Товар/Услуга', revenue: 'Статья дохода',
-  }
-
   // Когда меняем корреспондирующий счёт — сбрасываем аналитику
-  // и пробуем подобрать партнёра по ИНН если info_1_type = partner
+  // и пробуем подобрать партнёра по ИНН если слот принимает контрагента
   const handleCounterBiChange = (biId) => {
     const newBi = balanceItems.find(b => b.id == biId)
 
@@ -153,9 +141,9 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
     //  - expenses → статья расхода (suggested_expense_id);
     //  - partner  → контрагент по ИНН.
     let autoInfo1 = null
-    if (newBi?.info_1_type === 'expenses') {
+    if (slotAccepts(newBi?.info_1_type, 'expenses')) {
       autoInfo1 = suggestedExpenseId || null
-    } else if (newBi?.info_1_type === 'partner' && counterpartyInn) {
+    } else if (slotAccepts(newBi?.info_1_type, 'partner') && counterpartyInn) {
       const partners = infoCache['partner'] || []
       const found = partners.find(p => p.inn && p.inn.trim() === counterpartyInn.trim())
       if (found) autoInfo1 = found.id
@@ -197,12 +185,10 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Статья ДДС — info_2 стороны А100 */}
         {a100Info2Type && (
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">{INFO_LABELS[a100Info2Type] || a100Info2Type}</div>
+            <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(a100Info2Type)}</div>
             <InfoSelect
-              items={infoCache[a100Info2Type] || []}
+              {...slotSelect(a100Info2Type, infoCache, onInfoCreated)}
               value={op[a100Info2Field]}
-              infoType={a100Info2Type}
-              onItemCreated={() => onInfoCreated?.(a100Info2Type)}
               onChange={v => onChange({ ...op, [a100Info2Field]: v })}
               placeholder="Выбрать..."
             />
@@ -245,22 +231,20 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {counterInfo1Type && (
           <div>
             <div className="text-[10px] text-gray-400 mb-0.5">
-              {INFO_LABELS[counterInfo1Type] || counterInfo1Type}
+              {slotLabel(counterInfo1Type)}
               {/* Подсказка если ИНН есть но партнёр не найден */}
-              {counterInfo1Type === 'partner' && counterpartyInn && !op[counterInfo1Field] && (
+              {slotAccepts(counterInfo1Type, 'partner') && counterpartyInn && !op[counterInfo1Field] && (
                 <span className="ml-1 text-amber-500" title={`ИНН ${counterpartyInn} не найден в справочнике`}>⚠</span>
               )}
-              {counterInfo1Type === 'partner' && counterpartyInn && op[counterInfo1Field] && (
+              {slotAccepts(counterInfo1Type, 'partner') && counterpartyInn && op[counterInfo1Field] && (
                 <span className="ml-1 text-emerald-500" title={`Найден по ИНН ${counterpartyInn}`}>✓</span>
               )}
             </div>
             <InfoSelect
-              items={infoCache[counterInfo1Type] || []}
+              {...slotSelect(counterInfo1Type, infoCache, onInfoCreated)}
               value={op[counterInfo1Field]}
-              infoType={counterInfo1Type}
-              onItemCreated={() => onInfoCreated?.(counterInfo1Type)}
               onChange={v => onChange({ ...op, [counterInfo1Field]: v })}
-              placeholder={counterInfo1Type === 'partner' && counterpartyInn ? `ИНН ${counterpartyInn}...` : 'Выбрать...'}
+              placeholder={slotAccepts(counterInfo1Type, 'partner') && counterpartyInn ? `ИНН ${counterpartyInn}...` : 'Выбрать...'}
             />
           </div>
         )}
@@ -268,12 +252,10 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Аналитика 2 корреспондирующего счёта */}
         {counterInfo2Type && (
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">{INFO_LABELS[counterInfo2Type] || counterInfo2Type}</div>
+            <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(counterInfo2Type)}</div>
             <InfoSelect
-              items={infoCache[counterInfo2Type] || []}
+              {...slotSelect(counterInfo2Type, infoCache, onInfoCreated)}
               value={op[counterInfo2Field]}
-              infoType={counterInfo2Type}
-              onItemCreated={() => onInfoCreated?.(counterInfo2Type)}
               onChange={v => onChange({ ...op, [counterInfo2Field]: v })}
               placeholder="Выбрать..."
             />

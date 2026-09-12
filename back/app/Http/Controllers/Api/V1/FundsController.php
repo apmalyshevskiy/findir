@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Services\AnalyticSlots;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -46,8 +47,13 @@ class FundsController extends TenantController
 
         // Закрытые счета из расчёта фондов выпадают вместе со своими деньгами:
         // распределять то, чего человек не видит, он и не должен
+        // Отбор в SQL по равенству больше не годится: слот хранит набор типов,
+        // и счёт с «касса, контрагент» под `= cash` не попадал бы. План счетов
+        // маленький — фильтруем в PHP тем же правилом, что и везде
         $cashBiIds  = $this->scope
-            ->exclude($this->db()->table('balance_items')->where('info_1_type', 'cash'), 'id')
+            ->exclude($this->db()->table('balance_items'), 'id')
+            ->get(['id', 'info_1_type'])
+            ->filter(fn($b) => AnalyticSlots::accepts($b->info_1_type, 'cash'))
             ->pluck('id')->all();
         $incomeArts = array_map('intval', json_decode($scheme->income_flow_ids ?? '[]', true) ?: []);
 

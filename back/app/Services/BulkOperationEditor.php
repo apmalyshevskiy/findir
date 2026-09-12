@@ -203,9 +203,18 @@ final class BulkOperationEditor
                 if ($eff[$p] === $oldId) continue;
 
                 $new = $accounts[$eff[$p]] ?? null;
-                $old = $accounts[$oldId]   ?? null;
-                foreach ([1, 2, 3] as $n) {
-                    if (($new->{"info_{$n}_type"} ?? null) !== ($old->{"info_{$n}_type"} ?? null)) {
+
+                // Значение остаётся, если слот нового счёта его принимает.
+                // Сравнивать объявления слотов было грубее: счёт с набором
+                // «контрагент, сотрудник» терял бы контрагента, который ему
+                // вполне подходит
+                foreach (AnalyticSlots::SLOTS as $n) {
+                    $cur  = $op->{"{$p}_info_{$n}_id"} ?? null;
+                    $type = $cur ? ($infoTypeById[$cur] ?? null) : null;
+
+                    if (!$cur) continue;
+
+                    if (!AnalyticSlots::accepts(AnalyticSlots::declared($new, $n), $type)) {
                         $patch["{$p}_info_{$n}_id"] = null;
                     }
                 }
@@ -227,11 +236,11 @@ final class BulkOperationEditor
                     // Требовать объявленный слот здесь значило бы навсегда
                     // запереть такое значение в операции.
                     if ($infoId === null) {
-                        foreach ([1, 2, 3] as $n) {
+                        foreach (AnalyticSlots::SLOTS as $n) {
                             $field = "{$p}_info_{$n}_id";
                             $cur   = $op->{$field} ?? null;
 
-                            $declared  = ($acc->{"info_{$n}_type"} ?? null) === $type;
+                            $declared  = AnalyticSlots::accepts(AnalyticSlots::declared($acc, $n), $type);
                             $holdsType = $cur && ($infoTypeById[$cur] ?? null) === $type;
 
                             if ($declared || $holdsType) {
@@ -243,13 +252,11 @@ final class BulkOperationEditor
                     }
 
                     // Запись значения — только в объявленный слот: писать мимо
-                    // схемы счёта и есть то, что породило осиротевшие значения
-                    foreach ([1, 2, 3] as $n) {
-                        if (($acc->{"info_{$n}_type"} ?? null) === $type) {
-                            $patch["{$p}_info_{$n}_id"] = $infoId;
-                            $placed++;
-                            break;
-                        }
+                    // схемы счёта и есть то, что породило осиротевшие значения.
+                    // Слот выбирает AnalyticSlots: точный важнее набора, набор — «любого»
+                    if ($slot = AnalyticSlots::slotFor($acc, $type)) {
+                        $patch["{$p}_info_{$slot}_id"] = $infoId;
+                        $placed++;
                     }
                 }
             }

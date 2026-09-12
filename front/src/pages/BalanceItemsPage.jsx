@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import Layout from '../components/Layout'
 import ChartOfAccountsPicker from '../components/ChartOfAccountsPicker'
 import { getBalanceItemsList, createBalanceItem, updateBalanceItem, deleteBalanceItem } from '../api/balanceItems'
+import { isAnySlot, slotTypes } from '../utils/analyticSlots'
 
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const lc = 'block text-[11px] text-gray-500 mb-0.5'
 
 const INFO_TYPES = [
-  { v: '',           label: '— нет' },
   { v: 'partner',    label: 'Контрагент' },
   { v: 'cash',       label: 'Касса/Счёт' },
   { v: 'flow',       label: 'Статья ДДС' },
@@ -17,7 +17,80 @@ const INFO_TYPES = [
   { v: 'employee',   label: 'Сотрудник' },
   { v: 'department', label: 'Отдел' },
 ]
-const typeLabel = (v) => INFO_TYPES.find(t => t.v === (v || ''))?.label || v
+const typeLabel = (v) => INFO_TYPES.find(t => t.v === v)?.label || v
+
+/** Подпись набора для списка счетов: «Контрагент · Сотрудник», «Любой справочник» */
+const slotSummary = (declared) => {
+  if (!declared) return ''
+  if (isAnySlot(declared)) return 'Любой справочник'
+
+  return slotTypes(declared).map(typeLabel).join(' · ')
+}
+
+/**
+ * Настройка одного слота: ничего, один справочник, несколько или любой.
+ *
+ * Три состояния переключателя вместо выпадающего списка: «нет» и «любой» —
+ * это решения, а не пункты меню наравне с контрагентом, и выбор нескольких
+ * галочками виден целиком, без раскрытия списка.
+ */
+function SlotEditor({ n, value, onChange, turnoverOnly, onTurnoverOnly }) {
+  const any   = isAnySlot(value)
+  const types = any ? [] : slotTypes(value)
+  const mode  = any ? 'any' : (types.length ? 'pick' : 'none')
+
+  const toggle = (t) => {
+    const next = types.includes(t) ? types.filter(x => x !== t) : [...types, t]
+    onChange(next.join(','))
+  }
+
+  const setMode = (m) => onChange(m === 'any' ? 'any' : (m === 'none' ? '' : (types.join(',') || 'partner')))
+
+  return (
+    <div className="border border-gray-100 rounded-lg p-2.5">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-gray-400 w-6">{n}.</span>
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+          {[{ k: 'none', t: 'Нет' }, { k: 'pick', t: 'Выбрать' }, { k: 'any', t: 'Любой' }].map(m => (
+            <button key={m.k} type="button" onClick={() => setMode(m.k)}
+              className={`px-2.5 py-1 transition-colors ${
+                mode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+              }`}>
+              {m.t}
+            </button>
+          ))}
+        </div>
+
+        <label className={`flex items-center gap-1.5 text-xs ${value ? 'text-gray-600' : 'text-gray-300'}`}>
+          <input type="checkbox" className="rounded" disabled={!value}
+            checked={turnoverOnly} onChange={e => onTurnoverOnly(e.target.checked)} />
+          только обороты (без сальдо)
+        </label>
+      </div>
+
+      {mode === 'pick' && (
+        <div className="flex flex-wrap gap-1.5 mt-2 pl-9">
+          {INFO_TYPES.map(t => (
+            <button key={t.v} type="button" onClick={() => toggle(t.v)}
+              className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                types.includes(t.v)
+                  ? 'bg-blue-50 border-blue-300 text-blue-800'
+                  : 'border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {mode === 'any' && (
+        <p className="text-[11px] text-gray-500 mt-1.5 pl-9">
+          В операции и документе сюда выбирается элемент любого справочника.
+        </p>
+      )}
+    </div>
+  )
+}
 
 const EMPTY = {
   code: '', name: '', parent_id: '',
@@ -101,8 +174,10 @@ export default function BalanceItemsPage() {
     }
   }
 
+  // Слоты в списке счетов разделяем запятой: точка уже разделяет типы внутри
+  // одного слота, и «Контрагент · Сотрудник · Касса» читалось бы как три слота
   const analytics = (i) => [i.info_1_type, i.info_2_type, i.info_3_type]
-    .filter(Boolean).map(typeLabel).join(' · ')
+    .filter(Boolean).map(slotSummary).join(', ')
 
   return (
     <Layout>
@@ -177,21 +252,18 @@ export default function BalanceItemsPage() {
             {/* Аналитика */}
             <div>
               <span className={lc}>Аналитика счёта (до трёх разрезов)</span>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {[1, 2, 3].map(n => (
-                  <div key={n} className="flex items-center gap-3 flex-wrap">
-                    <span className="text-xs text-gray-400 w-6">{n}.</span>
-                    <select className={`${ic} min-w-[190px]`} value={form[`info_${n}_type`]}
-                      onChange={e => setForm(f => ({ ...f, [`info_${n}_type`]: e.target.value }))}>
-                      {INFO_TYPES.map(t => <option key={t.v} value={t.v}>{t.label}</option>)}
-                    </select>
-                    <label className={`flex items-center gap-1.5 text-xs ${form[`info_${n}_type`] ? 'text-gray-600' : 'text-gray-300'}`}>
-                      <input type="checkbox" className="rounded" disabled={!form[`info_${n}_type`]}
-                        checked={!!form[`info_${n}_turnover_only`]}
-                        onChange={e => setForm(f => ({ ...f, [`info_${n}_turnover_only`]: e.target.checked }))} />
-                      только обороты (без сальдо)
-                    </label>
-                  </div>
+                  <SlotEditor key={n} n={n}
+                    value={form[`info_${n}_type`]}
+                    onChange={v => setForm(f => ({
+                      ...f,
+                      [`info_${n}_type`]: v,
+                      // Слот опустел — «только обороты» вместе с ним
+                      [`info_${n}_turnover_only`]: v ? f[`info_${n}_turnover_only`] : false,
+                    }))}
+                    turnoverOnly={!!form[`info_${n}_turnover_only`]}
+                    onTurnoverOnly={v => setForm(f => ({ ...f, [`info_${n}_turnover_only`]: v }))} />
                 ))}
               </div>
             </div>

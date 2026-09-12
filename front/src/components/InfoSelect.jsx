@@ -51,6 +51,9 @@ export default function InfoSelect({
   value,
   onChange,
   infoType,
+  // Слот может принимать набор справочников — тогда приходит список типов.
+  // От него зависит и подсказка типа у элемента, и в какой справочник заводить
+  infoTypes,
   placeholder = 'Выбрать...',
   emptyLabel = '',
   label = '',
@@ -63,7 +66,8 @@ export default function InfoSelect({
   const [search, setSearch] = useState('')
   const [open, setOpen]     = useState(false)
   const [pos, setPos]       = useState({ top: 0, left: 0, width: 240 })
-  const [card, setCard]     = useState(null)   // null | 'create' | 'edit'
+  const [card, setCard]     = useState(null)      // null | 'create' | 'edit'
+  const [newType, setNewType] = useState(null)    // в какой справочник заводим
 
   const inputRef = useRef(null)
   const dropRef  = useRef(null)
@@ -73,8 +77,17 @@ export default function InfoSelect({
   const loading = items === undefined
   const list    = items || []
 
+  // Справочники, из которых выбираем. Один — как было всегда; несколько —
+  // слот счёта объявлен набором
+  const types = infoTypes?.length ? infoTypes : (infoType ? [infoType] : [])
+  const mixed = types.length > 1
+
+  // Недавние помним по слоту: у набора своя привычка, не общая с одиночным
+  // справочником того же типа
+  const recentKey = types.join('+')
+
   // Заводить и править элементы можно, только если известен их тип
-  const editable = !!infoType && !disabled
+  const editable = types.length > 0 && !disabled
 
   useEffect(() => {
     const away = (e) => {
@@ -136,10 +149,10 @@ export default function InfoSelect({
 
   // Недавние — только пока не начали печатать: при поиске нужен весь
   // справочник, а не короткий список того, что попадалось раньше
-  const recent = !search && infoType ? recentItems(infoType, list).filter(i => String(i.id) !== String(value)) : []
+  const recent = !search && recentKey ? recentItems(recentKey, list).filter(i => String(i.id) !== String(value)) : []
 
   const pick = (id) => {
-    pushRecent(infoType, id)
+    pushRecent(recentKey, id)
     onChange(id)
     setOpen(false)
     setSearch('')
@@ -150,11 +163,25 @@ export default function InfoSelect({
   // добавить рядом второй такой же
   const saved = (item, replacedId) => {
     onItemCreated?.(item, replacedId)
-    pushRecent(infoType, item.id)
+    pushRecent(recentKey, item.id)
     onChange(item.id)
     setCard(null)
+    setNewType(null)
     setSearch('')
     setOpen(false)
+  }
+
+  /**
+   * «+ Создать» в слоте с набором справочников.
+   *
+   * Сначала спрашиваем, куда заводить: в смешанном списке это не угадать, а
+   * положить молча в самый частый справочник — значит спрятать элемент там,
+   * где его потом не найдут. Если справочник один, вопроса нет, как и раньше.
+   */
+  const startCreate = () => {
+    setOpen(false)
+    setNewType(mixed ? null : types[0])
+    setCard('create')
   }
 
   const keys = (e) => {
@@ -177,6 +204,13 @@ export default function InfoSelect({
       <span className={i.depth === 0 ? 'font-medium text-gray-800' : 'text-gray-600'}>
         <Highlight text={i.name} q={search} />
       </span>
+      {/* В смешанном списке «Иванов» бывает и контрагентом, и сотрудником —
+          без пометки справочника их не различить */}
+      {mixed && i.type && (
+        <span className="text-[10px] text-gray-400 bg-gray-100 rounded px-1.5 py-0.5 shrink-0">
+          {INFO_LABELS[i.type] || i.type}
+        </span>
+      )}
       {i.code && <span className="ml-auto text-xs text-gray-400 shrink-0">{i.code}</span>}
     </div>
   )
@@ -256,23 +290,49 @@ export default function InfoSelect({
               «Справочники», теряя набранное, неправильно */}
           {editable && (
             <div className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 cursor-pointer border-t border-gray-100 flex items-center gap-1.5 sticky bottom-0 bg-white"
-              onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('create') }}>
+              onMouseDown={e => { e.preventDefault(); startCreate() }}>
               <span className="text-blue-500">+</span>
-              Создать{search ? ` «${search}»` : `: ${INFO_LABELS[infoType] || infoType}`}
+              Создать{search ? ` «${search}»` : (mixed ? '' : `: ${INFO_LABELS[types[0]] || types[0]}`)}
             </div>
           )}
         </div>,
         document.body,
       )}
 
-      {card && (
+      {/* Слот принимает несколько справочников — спрашиваем, в какой заводить */}
+      {card === 'create' && !newType && (
+        <div className="fixed inset-0 z-[10000] bg-black/20 flex items-center justify-center p-4"
+          onMouseDown={() => setCard(null)}>
+          <div className="bg-white rounded-xl shadow-xl border border-gray-100 p-5 w-80"
+            onMouseDown={e => e.stopPropagation()}>
+            <p className="text-sm font-medium text-gray-800 mb-1">В какой справочник?</p>
+            <p className="text-xs text-gray-500 mb-3">
+              {search ? `Новый элемент «${search}»` : 'Новый элемент'} — этот счёт принимает несколько.
+            </p>
+            <div className="flex flex-col gap-1">
+              {types.map(t => (
+                <button key={t} type="button" onClick={() => setNewType(t)}
+                  className="text-left px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 border border-gray-100">
+                  {INFO_LABELS[t] || t}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setCard(null)}
+              className="mt-3 text-xs text-gray-400 hover:text-gray-700">Отмена</button>
+          </div>
+        </div>
+      )}
+
+      {card && (card === 'edit' || newType) && (
         <InfoItemCard
-          infoType={infoType}
+          // При правке тип берём у самого элемента: в смешанном слоте он может
+          // отличаться от того, что выбрали бы для нового
+          infoType={card === 'edit' ? (selected?.type || types[0]) : newType}
           item={card === 'edit' ? selected : null}
           items={list}
           initialName={card === 'create' ? search : ''}
           onSaved={saved}
-          onClose={() => setCard(null)}
+          onClose={() => { setCard(null); setNewType(null) }}
         />
       )}
     </div>

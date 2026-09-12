@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Services\AnalyticSlots;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +41,9 @@ class FundPlanDocController extends TenantController
 
         // Закрытые счета в расчёт фондов не входят — см. FundsController
         $cashBiIds  = $this->scope
-            ->exclude($this->db()->table('balance_items')->where('info_1_type', 'cash'), 'id')
+            ->exclude($this->db()->table('balance_items'), 'id')
+            ->get(['id', 'info_1_type'])
+            ->filter(fn($b) => AnalyticSlots::accepts($b->info_1_type, 'cash'))
             ->pluck('id')->all();
         $incomeArts = array_map('intval', json_decode($scheme->income_flow_ids ?? '[]', true) ?: []);
 
