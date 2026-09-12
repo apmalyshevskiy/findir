@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3 3 27.4 27.4" width="32" height="32" role="img" aria-label="FINDIR">
+  <title>FINDIR</title>
+  <!--
+    Знак «две записи»: одна операция — всегда две стороны. Квадраты идут
+    внахлёст, и жёлтым горит только место пересечения — там, где сумма
+    проходит и по дебету, и по кредиту.
+
+    Синий на тёмной панели вкладок теряется, поэтому у знака есть светлая
+    версия: браузеры применяют prefers-color-scheme и к SVG-иконке вкладки.
+  -->
+  <style>
+    .field  { fill: #1E3A8A; }
+    .line   { stroke: #1E3A8A; }
+    .cross  { stroke: #E9A81E; }
+    @media (prefers-color-scheme: dark) {
+      .field { fill: #93ACFF; }
+      .line  { stroke: #93ACFF; }
+      .cross { stroke: #F5C45C; }
+    }
+  </style>
+  <defs>
+    <clipPath id="findir-cross">
+      <rect x="4.5" y="4.5" width="16" height="16" rx="4.2"/>
+    </clipPath>
+  </defs>
+
+  <rect class="field" x="4.5" y="4.5" width="16" height="16" rx="4.2"/>
+  <rect class="line" x="11.5" y="11.5" width="16" height="16" rx="4.2" fill="none" stroke-width="2.8"/>
+  <g clip-path="url(#findir-cross)">
+    <rect class="cross" x="11.5" y="11.5" width="16" height="16" rx="4.2" fill="none" stroke-width="2.8"/>
+  </g>
+</svg>

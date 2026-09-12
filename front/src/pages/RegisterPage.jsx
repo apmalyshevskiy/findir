@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 import { rememberAccount } from '../utils/accounts'
+import Logo from '../components/Logo'
 
 // Допустим домен из одного символа: «a» → findir_a.
 // Дефис разрешён только внутри — не в начале и не в конце.
@@ -116,8 +117,9 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-blue-900">FINDIR</h1>
+        <div className="flex flex-col items-center mb-8">
+          <Logo size={56} className="mb-3" />
+          <h1 className="text-4xl font-semibold tracking-[0.1em] text-blue-900">FINDIR</h1>
           <p className="text-gray-500 mt-2">Financial Director</p>
         </div>
 

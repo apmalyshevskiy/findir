@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Fragment, useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
+import Logo from './Logo'
 import { TopProgress } from './Busy'
 import api from '../api/client'
 import { listAccounts, clearAccounts } from '../utils/accounts'
@@ -165,7 +166,14 @@ export default function Layout({ children }) {
       <header className="bg-white border-b border-gray-200">
         <div className={`${SHELL} py-3 flex flex-wrap justify-between items-center gap-x-3 gap-y-2`}>
           <div className="flex items-center gap-2 md:gap-3 flex-wrap">
-            <h1 className="text-xl font-bold text-blue-900">FINDIR</h1>
+            {/* Знак не ссылка: раздел «Дашборд» открыт не всякой должности,
+                и логотип, ведущий в отказ по правам, — плохая кнопка */}
+            <div className="flex items-center gap-2 shrink-0">
+              <Logo size={24} />
+              {/* Разрядка — вместо отдельного шрифта под логотип: слово из шести
+                  прописных без неё выглядит сжатым рядом со знаком */}
+              <h1 className="text-xl font-semibold tracking-[0.09em] text-blue-900">FINDIR</h1>
+            </div>
 
             {/* Название компании и переключение баз — см. TenantSwitcher */}
             <TenantSwitcher />
