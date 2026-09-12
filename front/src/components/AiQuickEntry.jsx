@@ -625,7 +625,26 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged }) 
                     onAllDone={finishItems}
                   />
                 )}
-                {isLast && (t.bulk || []).map((b, k) => (
+                {/* Правка, которую не собрать: показываем причину. Молчаливый
+                    пропуск оставлял человека с обещанием кнопки, которой нет */}
+                {isLast && (t.bulk || []).filter(b => b.problem).map((b, k) => (
+                  <div key={`bp${k}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-700 mb-1">Массовую правку применить нельзя</p>
+                    <p className="text-sm text-gray-800">{b.problem}</p>
+                    {b.hint && <p className="text-xs text-blue-700 mt-1">{b.hint}</p>}
+                    {(b.filter?.account_code || b.filter?.date_from || b.filter?.content_like) && (
+                      <p className="text-[11px] text-gray-500 mt-1.5">
+                        Условие было:
+                        {b.filter.account_code && <> счёт {b.filter.account_code}</>}
+                        {b.filter.date_from && <> · с {b.filter.date_from}</>}
+                        {b.filter.date_to && <> по {b.filter.date_to}</>}
+                        {b.filter.content_like && <> · содержание содержит «{b.filter.content_like}»</>}
+                      </p>
+                    )}
+                  </div>
+                ))}
+
+                {isLast && (t.bulk || []).filter(b => !b.problem).map((b, k) => (
                   <div key={`b${k}`} className="rounded-lg border border-amber-300 bg-amber-50/60 p-3">
                     <p className="text-xs font-medium text-amber-900 mb-1">
                       Массовая правка уже проведённых операций

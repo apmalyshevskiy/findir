@@ -211,7 +211,9 @@ class BudgetController extends TenantController
 
         $data = $request->validate([
             'budget_document_id' => 'required|integer',
-            'article_id'         => 'required|integer',
+            // min:1 отсекает строку «Без статьи»: планировать по ней нечего,
+            // она показывает то, что ещё предстоит разнести по статьям
+            'article_id'         => 'required|integer|min:1',
             'section'            => 'nullable|string|in:revenue,cost,expenses',
             'cash_id'            => 'nullable|integer',
             'period_date'        => 'required|date',
@@ -245,7 +247,7 @@ class BudgetController extends TenantController
         $this->initTenant($request);
 
         $data = $request->validate([
-            'article_id'  => 'sometimes|integer',
+            'article_id'  => 'sometimes|integer|min:1',
             'period_date' => 'sometimes|date',
             'content'     => 'nullable|string|max:500',
             'amount'      => 'sometimes|numeric',
@@ -425,6 +427,9 @@ class BudgetController extends TenantController
             $openingBalances = [];
         }
 
+        // Обороты без заполненной статьи получают свою строку — см. withUnassigned
+        $articles = $this->withUnassigned($articles, $fact);
+
         // ── Справочник касс (при by_cash) ─────────────────────────────────
         $cashItems = [];
         if ($byCash && ($doc->type === 'dds' || $doc->type === 'pdc')) {
@@ -550,8 +555,11 @@ class BudgetController extends TenantController
 
         $fact = [];
         foreach ($rows as $row) {
-            $cashKey = $byCash ? ($row->cash_id ?? 0) : 0;
-            $key = $row->article_id . ':' . $cashKey . ':' . $row->period_date;
+            $cashKey   = $byCash ? ($row->cash_id ?? 0) : 0;
+            // Статья ДДС не заполнена — сумма идёт в строку «Без статьи»
+            $articleId = $row->article_id ?? self::UNASSIGNED;
+
+            $key = $articleId . ':' . $cashKey . ':' . $row->period_date;
             $fact[$key] = (float)$row->total;
         }
 
@@ -721,7 +729,11 @@ class BudgetController extends TenantController
                 ->get();
 
             foreach ($rows as $row) {
-                $key = $section . ':' . $row->article_id . ':0:' . $row->period_date;
+                // Статья не заполнена — сумма идёт в строку «Без статьи»,
+                // а не растворяется между статьями. См. UNASSIGNED
+                $articleId = $row->article_id ?? self::UNASSIGNED;
+
+                $key = $section . ':' . $articleId . ':0:' . $row->period_date;
                 $fact[$key] = (float)$row->total * $sign;
             }
         }
@@ -730,6 +742,77 @@ class BudgetController extends TenantController
     }
 
     // ── Утилиты ──────────────────────────────────────────────────────────────
+
+    /**
+     * Строка «Без статьи»: обороты, у которых аналитика не заполнена.
+     *
+     * Такие обороты есть всегда — выписку загрузили, статью проставить забыли.
+     * Раньше их сумма попадала в итог месяца, но не показывалась ни в одной
+     * строке: колонка не сходилась по вертикали, и найти недостающее было
+     * негде. Теперь у них своя строка, из которой видно сумму, а по клику —
+     * сами операции, где статью и дозаполняют.
+     *
+     * Ноль в качестве идентификатора безопасен: в справочниках нумерация
+     * начинается с единицы, поэтому со строкой реальной статьи он не сойдётся.
+     */
+    private const UNASSIGNED = 0;
+
+    /** Есть ли в факте суммы без статьи (в разделе БДР или во всём ДДС) */
+    private function hasUnassigned(array $fact, ?string $section = null): bool
+    {
+        $prefix = ($section === null ? '' : $section . ':') . self::UNASSIGNED . ':';
+
+        foreach ($fact as $key => $value) {
+            // Копейку считаем нулём: строка ради копеечного расхождения
+            // мозолила бы глаза в каждом бюджете
+            if (str_starts_with((string) $key, $prefix) && abs((float) $value) >= 0.005) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** Узел строки «Без статьи». Всегда последний: это не статья, а остаток */
+    private function unassignedNode(): array
+    {
+        return [
+            'id'         => self::UNASSIGNED,
+            'code'       => '',
+            'name'       => 'Без статьи',
+            'parent_id'  => null,
+            'sort_order' => PHP_INT_MAX,
+            'unassigned' => true,
+        ];
+    }
+
+    /**
+     * Добавить «Без статьи» туда, где такие суммы есть.
+     *
+     * Пустую строку в каждый бюджет не добавляем: у аккуратно заполненной
+     * компании её быть не должно, и её отсутствие — сигнал, что всё разнесено.
+     */
+    private function withUnassigned(array $articles, array $fact): array
+    {
+        // БДР: список разделов, у каждого своё дерево
+        if (isset($articles[0]['group'])) {
+            foreach ($articles as &$group) {
+                if ($this->hasUnassigned($fact, $group['group'])) {
+                    $group['items'][] = $this->unassignedNode();
+                }
+            }
+            unset($group);
+
+            return $articles;
+        }
+
+        // ДДС и ПДС: одно дерево статей
+        if ($this->hasUnassigned($fact)) {
+            $articles[] = $this->unassignedNode();
+        }
+
+        return $articles;
+    }
 
     /**
      * Строит дерево из плоского списка с parent_id.

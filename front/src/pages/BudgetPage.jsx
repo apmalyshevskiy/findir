@@ -9,6 +9,7 @@ import { createInfo, updateInfo } from '../api/info'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
 import usePersistedState from '../hooks/usePersistedState'
+import { localDate } from '../utils/period'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
@@ -16,7 +17,9 @@ const fmtDate = (d) => { if (!d) return ''; const dt = new Date(d); return dt.to
 const monthLabel = (ds) => new Date(ds + 'T00:00:00').toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
 const isCurrentMonth = (ds) => { const n = new Date(), d = new Date(ds + 'T00:00:00'); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() }
 const isFutureMonth = (ds) => new Date(ds + 'T00:00:00') > new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-const endOfMonth = (ds) => { const d = new Date(ds + 'T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); return d.toISOString().slice(0, 10) }
+// Дата собирается из местных полей: toISOString уводил последний день месяца
+// на сутки назад в поясах восточнее Гринвича — см. utils/period.localDate
+const endOfMonth = (ds) => { const d = new Date(ds + 'T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); return localDate(d) }
 
 // ── Дерево ─────────────────────────────────────────────────────────────────
 const flattenArticles = (articles, depth = 0) => {
@@ -104,8 +107,8 @@ function PlanCellSimple({ value, onSave, disabled }) {
 function CreateDocModal({ projects, onClose, onCreate }) {
   const [name, setName] = useState(''); const [type, setType] = useState('dds')
   const [projectId, setProjectId] = useState(projects[0]?.id || '')
-  const [periodFrom, setPeriodFrom] = useState(() => { const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10) })
-  const [periodTo, setPeriodTo] = useState(() => { const d = new Date(); d.setMonth(11, 31); return d.toISOString().slice(0, 10) })
+  const [periodFrom, setPeriodFrom] = useState(() => { const d = new Date(); d.setMonth(0, 1); return localDate(d) })
+  const [periodTo, setPeriodTo] = useState(() => { const d = new Date(); d.setMonth(11, 31); return localDate(d) })
   const [saving, setSaving] = useState(false)
   const handleSubmit = async () => { if (!name.trim() || !projectId) return; setSaving(true); try { const r = await createBudgetDocument({ name, type, period_from: periodFrom, period_to: periodTo, project_id: projectId }); onCreate(r.data.data) } finally { setSaving(false) } }
   return (
@@ -828,13 +831,16 @@ export default function BudgetPage() {
                   }
                   const isParent = article.hasChildren
                   const isEditing = editArticle?.rowKey ? editArticle.rowKey === article.rowKey : editArticle?.id === article.id
+                  // Обороты, которым статью не проставили. Это не статья:
+                  // её не правят и по ней не планируют — по ней разносят
+                  const unassigned = !!article.unassigned
                   return (
                     <Fragment key={article.rowKey}>
                     {/* Разделитель заметнее прежнего и подсветка на всю строку:
                         глазу нужно чем-то держаться, пока он идёт от названия
                         статьи к цифре */}
-                    <tr className={`border-b border-gray-100 hover:bg-blue-50/40 ${isParent ? 'bg-gray-50/50 font-medium' : ''} group/row`}>
-                      <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-gray-700 whitespace-nowrap overflow-hidden"
+                    <tr className={`border-b border-gray-100 hover:bg-blue-50/40 ${isParent ? 'bg-gray-50/50 font-medium' : ''} ${unassigned ? 'bg-amber-50/70' : ''} group/row`}>
+                      <td className={`sticky left-0 z-10 px-3 py-1.5 text-gray-700 whitespace-nowrap overflow-hidden ${unassigned ? 'bg-amber-50' : 'bg-white'}`}
                         style={{ paddingLeft: 12 + article.depth * 20, maxWidth: articleW }}>
                         <div className="flex items-center gap-1 overflow-hidden">
                           {isParent && (
@@ -846,14 +852,21 @@ export default function BudgetPage() {
                           )}
                           {/* Длинное название обрезаем, а не раздвигаем им
                               колонку: полное видно в подсказке */}
-                          <span title={article.name} className={`truncate ${article.depth === 0 ? 'font-medium' : ''}`}>{article.depth > 0 && !isParent && <span className="text-gray-300 mr-1">└</span>}{article.name}</span>
-                          <button
-                            onClick={() => openEditArticle(article)}
-                            className="opacity-0 group-hover/row:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-0.5 ml-1"
-                            title="Редактировать статью"
-                          >
-                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-                          </button>
+                          <span title={unassigned ? 'Обороты, которым не проставлена статья. Нажмите на сумму — откроются эти операции' : article.name}
+                            className={`truncate ${article.depth === 0 ? 'font-medium' : ''} ${unassigned ? 'text-amber-800' : ''}`}>
+                            {article.depth > 0 && !isParent && !unassigned && <span className="text-gray-300 mr-1">└</span>}
+                            {unassigned && <span className="text-amber-500 mr-1">⚠</span>}
+                            {article.name}
+                          </span>
+                          {!unassigned && (
+                            <button
+                              onClick={() => openEditArticle(article)}
+                              className="opacity-0 group-hover/row:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-0.5 ml-1"
+                              title="Редактировать статью"
+                            >
+                              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                            </button>
+                          )}
                         </div>
                       </td>
                       {periodDates.map(pd => {
@@ -861,7 +874,9 @@ export default function BudgetPage() {
                         const factVal = getArticleValue(article.id, pd, fact, sec)
                         const planVal = getArticleValue(article.id, pd, plan, sec)
                         const future = isFutureMonth(pd)
-                        const editable = selectedDoc?.status === 'draft'
+                        // По «Без статьи» план не ставят: это не план, а долг
+                        // по разноске. Появится статья — появится и план
+                        const editable = selectedDoc?.status === 'draft' && !unassigned
                         const key = sec ? `${sec}:${article.id}:0:${pd}` : `${article.id}:0:${pd}`
                         const count = planDetails[key]?.length || 0
                         const isCopied = clipboard && clipboard.articleId === article.id && clipboard.periodDate === pd && clipboard.section === sec

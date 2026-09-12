@@ -216,10 +216,39 @@ class OperationDraftService
         $out = [];
         foreach ($updates as $u) {
             $spec = $this->normalizeBulk($u, $dicts, $accounts);
-            if (!$spec) continue;
+
+            /**
+             * Правку не собрать — показываем почему.
+             *
+             * Раньше такие предложения молча выбрасывались: модель писала
+             * «нажмите кнопку», а кнопки не было — ни её, ни объяснения.
+             * Человеку оставалось гадать, что пошло не так.
+             */
+            if (isset($spec['problem'])) { $out[] = $spec + ['count' => 0, 'sample' => []]; continue; }
 
             $q = $this->bulkQuery($db, $spec['filter']);
             $spec['count']  = (clone $q)->count();
+
+            if ($spec['count'] === 0) {
+                $spec['problem'] = 'Под это условие не попало ни одной операции.';
+
+                // Чаще всего лишним оказывается условие по содержанию: модель
+                // берёт слово из колонки аналитики, а в тексте его нет
+                if ($spec['filter']['content_like']) {
+                    $wider = $spec['filter'];
+                    $wider['content_like'] = null;
+                    $n = $this->bulkQuery($db, $wider)->count();
+
+                    if ($n > 0) {
+                        $spec['hint'] = "Без условия по содержанию под отбор попадает операций: {$n}."
+                            . ' Скажите «убери условие по тексту», если нужны они.';
+                    }
+                }
+
+                $out[] = $spec;
+                continue;
+            }
+
             $spec['sample'] = (clone $q)->orderBy('date')->limit(3)
                 ->get(['id', 'date', 'amount', 'content'])
                 ->map(fn($o) => [
@@ -227,28 +256,47 @@ class OperationDraftService
                     'amount' => (float) $o->amount, 'content' => mb_substr((string) $o->content, 0, 60),
                 ])->all();
 
-            if ($spec['count'] > 0) $out[] = $spec;
+            $out[] = $spec;
         }
         return $out;
     }
 
-    /** Условия и значения из ответа модели → проверенная спецификация с id. */
-    private function normalizeBulk(array $u, array $dicts, $accounts): ?array
+    /**
+     * Условия и значения из ответа модели → проверенная спецификация с id.
+     *
+     * Ничего не отбрасывает молча: если правку собрать нельзя, возвращает ту же
+     * структуру с ключом problem — человек должен видеть причину, а не пустоту
+     * на месте обещанной кнопки.
+     */
+    private function normalizeBulk(array $u, array $dicts, $accounts): array
     {
-        $f = $u['filter'] ?? [];
+        $f    = $u['filter'] ?? [];
         $code = trim((string) ($f['account_code'] ?? ''));
         $acc  = $code !== '' ? $this->findAccount($accounts, $code) : null;
-        if ($code !== '' && !$acc) return null;                 // счёт не опознан — не гадаем
+
+        $empty = ['filter' => [], 'set' => [], 'reason' => (string) ($u['reason'] ?? '')];
+
+        if ($code !== '' && !$acc) {
+            return $empty + ['problem' => "Счёт «{$code}» не нашёлся в плане счетов."];
+        }
 
         $side = in_array($f['side'] ?? null, ['debit', 'credit', 'any'], true) ? $f['side'] : 'any';
 
         $set = [];
+        $unknown = [];
         foreach (($u['set'] ?? []) as $type => $name) {
             if (!$name || !in_array($type, self::ANALYTIC_TYPES, true) || !isset($dicts[$type])) continue;
+
             $id = $this->matchByName($dicts[$type], (string) $name);
             if ($id) $set[$type] = ['id' => $id, 'name' => $dicts[$type][$id]];
+            else     $unknown[] = (string) $name;
         }
-        if (!$set) return null;                                  // нечего проставлять
+
+        if (!$set) {
+            return $empty + ['problem' => $unknown
+                ? 'Не нашёл в справочниках: «' . implode('», «', $unknown) . '». Заведите элемент или назовите существующий.'
+                : 'Не указано, что именно проставить.'];
+        }
 
         $filter = [
             'date_from'    => $this->dateOrNull($f['date_from'] ?? null),
@@ -258,9 +306,11 @@ class OperationDraftService
             'side'         => $side,
             'content_like' => trim((string) ($f['content_like'] ?? '')) ?: null,
         ];
+
         // Фильтр без единого условия затронул бы всю базу — отклоняем
         if (!array_filter([$filter['date_from'], $filter['date_to'], $filter['account_id'], $filter['content_like']])) {
-            return null;
+            return ['filter' => $filter, 'set' => $set, 'reason' => (string) ($u['reason'] ?? ''),
+                    'problem' => 'Условие отбора пустое — такая правка затронула бы всю базу. Назовите период или счёт.'];
         }
 
         return ['filter' => $filter, 'set' => $set, 'reason' => (string) ($u['reason'] ?? '')];
@@ -659,6 +709,15 @@ L;
      (revenue, expenses, flow, partner, product, employee, department, cash).
    Заполняй только те условия, которые реально названы; остальные — null.
 14b. В reply опиши, ЧТО БУДЕТ изменено, а не «изменено». Решение применяет пользователь.
+14c. НЕ пиши «нажмите кнопку», если ты не вернул запись в bulk_updates: кнопку
+   рисует система по этой записи, и без неё человек ищет несуществующее.
+14d. content_like ставь ТОЛЬКО если слова точно есть в содержании операции.
+   Название статьи, счёта или колонки из отчёта в содержание не попадает —
+   по такому условию не найдётся ничего. Когда сомневаешься, ограничься
+   счётом и периодом: система покажет, сколько операций попало, и человек
+   уточнит отбор следующим сообщением.
+14e. Правка перезаписывает аналитику у ВСЕХ попавших операций, а не только у
+   пустых. Если просят «дозаполнить пустые» — предупреди об этом в reply.
 
 ДИАЛОГ:
 12. Это диалог. Пользователь может уточнять и исправлять предыдущий вариант

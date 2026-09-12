@@ -5,6 +5,7 @@ import {
 } from '../../api/budget'
 import { getDocument } from '../../api/documents'
 import { getInfo } from '../../api/info'
+import { localDate } from '../../utils/period'
 import OperationForm from '../OperationForm'
 import AmountInput from '../AmountInput'
 import LockIcon from '../LockIcon'
@@ -25,11 +26,22 @@ const periodLabelShort = (pd, granularity) => {
   return new Date(pd + 'T00:00:00').toLocaleString('ru-RU', { month: 'short', year: '2-digit' })
 }
 
-// Конец периода — для запроса операций факта
+/**
+ * Конец периода — для запроса операций факта.
+ *
+ * Дату собираем из местных полей, а не через toISOString: полночь последнего
+ * дня месяца в поясе восточнее Гринвича приходится на предыдущие сутки по UTC,
+ * и запрос обрывался на 30-м числе. Операции, проведённые 31-го — а это дата
+ * закрытия месяца, — в расшифровку не попадали вовсе.
+ */
 const endOfPeriod = (pd, granularity) => {
   if (granularity === 'day') return pd
-  const d = new Date(pd + 'T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0)
-  return d.toISOString().slice(0, 10)
+
+  const d = new Date(pd + 'T00:00:00')
+  d.setMonth(d.getMonth() + 1)
+  d.setDate(0)
+
+  return localDate(d)
 }
 
 // Плоский список статей для select (с поддержкой групп БДР)
@@ -75,13 +87,20 @@ const buildArticleOptions = (articles, sectionFilter = null) => {
 //   onClose       - закрыть drawer
 //   onUpdate      - перезагрузить отчёт после изменений
 // ══════════════════════════════════════════════════════════════════════════════
+/** Идентификатор строки «Без статьи» — см. BudgetController::UNASSIGNED */
+const UNASSIGNED_ID = 0
+
 export default function BudgetDrawer({
   mode, articleId, articleName, periodDate, periodLabel, section, docId, docType,
   articles, descendantAllMap, periodDates, granularity = 'month',
   factDrillConfig, onClose, onUpdate,
 }) {
-  const [tab, setTab] = useState(mode || 'plan')
-  useEffect(() => { setTab(mode || 'plan') }, [mode, articleId, periodDate])
+  // «Без статьи» — только факт: планировать по строке, которой нет в
+  // справочнике, нечего, её разносят по настоящим статьям
+  const isUnassigned = articleId === UNASSIGNED_ID
+
+  const [tab, setTab] = useState(isUnassigned ? 'fact' : (mode || 'plan'))
+  useEffect(() => { setTab(isUnassigned ? 'fact' : (mode || 'plan')) }, [mode, articleId, periodDate, isUnassigned])
 
   // Подгрузка factOps в FactTab — управляем через ключ перезагрузки
   const [factReloadKey, setFactReloadKey] = useState(0)
@@ -126,10 +145,19 @@ export default function BudgetDrawer({
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
           </div>
           <div className="text-xs text-gray-400 mb-3">{periodLabel}</div>
-          <div className="flex gap-1">
-            <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'plan' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => setTab('plan')}>План</button>
-            <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'fact' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => setTab('fact')}>Факт</button>
-          </div>
+          {isUnassigned ? (
+            /* У «Без статьи» плана нет и быть не может — вкладку не показываем,
+               вместо неё объясняем, что с этими операциями делать */
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Операциям не проставлена статья, поэтому в бюджете их сумма ни к чему не относится.
+              Откройте операцию, заполните статью — строка уменьшится.
+            </p>
+          ) : (
+            <div className="flex gap-1">
+              <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'plan' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => setTab('plan')}>План</button>
+              <button className={`px-3 py-1.5 text-xs font-medium rounded-lg ${tab === 'fact' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => setTab('fact')}>Факт</button>
+            </div>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto">
           {tab === 'plan' ? (
@@ -142,7 +170,7 @@ export default function BudgetDrawer({
           ) : (
             <FactTab
               articleId={articleId} periodDate={periodDate} docType={docType}
-              descendantAllMap={descendantAllMap}
+              section={section} descendantAllMap={descendantAllMap}
               factDrillConfig={factDrillConfig}
               granularity={granularity}
               reloadKey={factReloadKey}
@@ -521,7 +549,10 @@ function DrawerRow({ item, articleOptions, sign = 1, onUpdate, onDelete }) {
 // Вкладка «Факт»
 // Сама грузит операции из API на основе factDrillConfig, docType и descendantAllMap
 // ══════════════════════════════════════════════════════════════════════════════
-function FactTab({ articleId, periodDate, docType, descendantAllMap, factDrillConfig, granularity, reloadKey, onEditOp, onOpenDoc }) {
+/** Счёт БДР, с которого раздел берёт факт */
+const SECTION_ACCOUNT = { revenue: 'П587', cost: 'П588', expenses: 'П589' }
+
+function FactTab({ articleId, periodDate, docType, section, descendantAllMap, factDrillConfig, granularity, reloadKey, onEditOp, onOpenDoc }) {
   const [ops, setOps] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -545,21 +576,38 @@ function FactTab({ articleId, periodDate, docType, descendantAllMap, factDrillCo
         const validIds = allIds && allIds.size > 0 ? allIds : new Set([articleId])
         const validIdsStr = new Set([...validIds].map(String))
 
+        /**
+         * Строка «Без статьи» (id = 0) собирает обороты, которым аналитику не
+         * проставили. Сравнение по списку id здесь не работает: у таких
+         * операций поле пустое. Смотрим ту сторону проводки, что попала на
+         * нужный счёт, — иначе в расшифровку затесались бы операции, у которых
+         * пусто на противоположной стороне и статья на нужной.
+         */
+        const empty = (v) => v === null || v === undefined || v === '' || v === 0
+        const isUnassigned = articleId === UNASSIGNED_ID
+
+        const hit = (op, biId, infoField) => isUnassigned
+          ? (String(op.in_bi_id) === String(biId)  && empty(op[`in_${infoField}`]))
+            || (String(op.out_bi_id) === String(biId) && empty(op[`out_${infoField}`]))
+          : validIdsStr.has(String(op[`in_${infoField}`])) || validIdsStr.has(String(op[`out_${infoField}`]))
+
         let result = []
 
         if (docType === 'bdr') {
-          // БДР: три счёта, каждый со своим info_field
-          for (const [, c] of Object.entries(factDrillConfig)) {
+          // БДР: три счёта, каждый со своим info_field.
+          // Для «Без статьи» берём только счёт своего раздела, иначе в
+          // расшифровке строки «Доходы» оказались бы и расходы без статьи,
+          // и сумма списка не сошлась бы с цифрой, по которой кликнули
+          const entries = Object.entries(factDrillConfig)
+            .filter(([code]) => !isUnassigned || !section || code === SECTION_ACCOUNT[section])
+
+          for (const [, c] of entries) {
             const [resIn, resOut] = await Promise.all([
               getOperations({ in_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
               getOperations({ out_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
             ])
-            const infoField = c.info_field
-            const inKey = `in_${infoField}`
-            const outKey = `out_${infoField}`
             const biOps = [...(resIn.data.data || []), ...(resOut.data.data || [])]
-            const filtered = biOps.filter(op => validIdsStr.has(String(op[inKey])) || validIdsStr.has(String(op[outKey])))
-            result.push(...filtered)
+            result.push(...biOps.filter(op => hit(op, c.bi_id, c.info_field)))
           }
           result = result.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
         } else {
@@ -572,7 +620,7 @@ function FactTab({ articleId, periodDate, docType, descendantAllMap, factDrillCo
           ])
           const all = [...(resIn.data.data || []), ...(resOut.data.data || [])]
           const dedup = all.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
-          result = dedup.filter(op => validIdsStr.has(String(op.in_info_2_id)) || validIdsStr.has(String(op.out_info_2_id)))
+          result = dedup.filter(op => hit(op, biId, 'info_2_id'))
         }
 
         result.sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -584,7 +632,7 @@ function FactTab({ articleId, periodDate, docType, descendantAllMap, factDrillCo
       }
     }
     load()
-  }, [articleId, periodDate, docType, granularity, factDrillConfig?.bi_id, reloadKey])
+  }, [articleId, periodDate, docType, section, granularity, factDrillConfig?.bi_id, reloadKey])
 
   if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Загрузка операций...</div>
   if (!ops || ops.length === 0) return <div className="text-center py-12 text-gray-400 text-sm">Операций не найдено</div>
