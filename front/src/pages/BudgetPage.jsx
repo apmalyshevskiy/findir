@@ -143,6 +143,7 @@ export default function BudgetPage() {
   const [report, setReport] = useState(null); const [loading, setLoading] = useState(false)
   const [byCash, setByCash] = useState(false)
   const [viewMode, setViewMode] = useState('plan_fact') // 'plan' | 'fact' | 'plan_fact' | 'plan_fact_delta'
+  const [showEmpty, setShowEmpty] = useState(false)     // показывать статьи, где по всей строке нули
   const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
@@ -347,6 +348,9 @@ export default function BudgetPage() {
         sort_order: addArticle.sort_order || 0,
       })
       setAddArticle(null)
+      // По новой статье ещё нет ни плана, ни факта — при скрытых пустых она
+      // пропала бы сразу после создания, и это читалось бы как ошибка
+      setShowEmpty(true)
       loadReport(true)
     } catch (err) { console.error('Ошибка создания статьи:', err) }
     finally { setArticleSaving(false) }
@@ -368,6 +372,17 @@ export default function BudgetPage() {
   }, [report])
 
   const selectedDoc = documents.find(d => d.id === selectedDocId)
+
+  /**
+   * В черновике пустые статьи нужны: план как раз и вписывают в пустые ячейки,
+   * а прятать строки, ради которых открыли документ, — значит показать пустой
+   * экран. В утверждённом бюджете планировать уже нечего, и нули только мешают.
+   *
+   * Это исходное состояние переключателя, а не запрет: выбор человека держится,
+   * пока он не сменит документ.
+   */
+  useEffect(() => { setShowEmpty(selectedDoc?.status === 'draft') }, [selectedDocId, selectedDoc?.status])
+
   const periodDates = report?.period_dates || []; const plan = report?.plan || {}; const fact = report?.fact || {}
   const planDetails = report?.plan_details || {}; const openBal = report?.opening_balances || {}; const cashItems = report?.cash_items || []
 
@@ -470,7 +485,58 @@ export default function BudgetPage() {
   const cashOpenings = useMemo(() => { if (!byCash) return {}; const r = {}; for (const [c, ob] of Object.entries(openBal)) r[c] = ob?.auto ?? 0; return r }, [openBal, byCash])
   const cashBalances = useMemo(() => { if (!byCash || !cashItems.length) return {}; const r = {}; for (const ci of cashItems) { const a = []; let p = cashOpenings[ci.id] ?? cashOpenings[String(ci.id)] ?? 0; for (const pd of periodDates) { const o = p; let m = 0; for (const [k, v] of Object.entries(fact)) if (k.split(':')[1] === String(ci.id) && k.endsWith(':' + pd)) m += v; a.push({ opening: o, move: m, closing: o + m }); p = o + m }; r[ci.id] = a }; return r }, [byCash, cashItems, cashOpenings, periodDates, fact])
 
-  const visibleArticles = useMemo(() => { const r = []; let skip = null; for (const a of flatArticles) { if (skip !== null && a.depth > skip) continue; skip = null; r.push(a); if (a.hasChildren && !expanded.has(a.rowKey)) skip = a.depth }; return r }, [flatArticles, expanded])
+  /**
+   * Статьи, по которым есть хоть одна ненулевая цифра.
+   *
+   * Ключ суммы — «группа:статья:касса:месяц» в БДР и «статья:касса:месяц» в
+   * ДДС, поэтому статью узнаём по разбору ключа: один проход по планам и фактам
+   * вместо перебора сумм на каждую строку.
+   *
+   * Смотрим и план, и факт независимо от выбранного вида. Строка, пустая в
+   * плане, но с фактом, в режиме «План» всё равно показывает факт за месяцы до
+   * начала бюджета — спрятать её значило бы убрать с экрана видимую цифру.
+   */
+  const articlesWithNumbers = useMemo(() => {
+    const own = new Set()
+    for (const src of [plan, fact]) {
+      for (const [k, v] of Object.entries(src)) {
+        if (!v) continue
+        const p = k.split(':')
+        own.add(p.length >= 4 ? `${p[0]}|${p[1]}` : `|${p[0]}`)
+      }
+    }
+    return own
+  }, [plan, fact])
+
+  // Родитель не пуст, если цифры есть хоть у кого-то из потомков: иначе ветка
+  // схлопнулась бы вместе с наполненными статьями внутри
+  const hasNumbers = useCallback((a) => {
+    const sec = a.section || ''
+    for (const id of (descendantAllMap[a.id] || [a.id])) {
+      if (articlesWithNumbers.has(`${sec}|${id}`)) return true
+    }
+    return false
+  }, [articlesWithNumbers, descendantAllMap])
+
+  /**
+   * Пустые статьи скрыты: в справочнике их заводят на все случаи, а в отчёте
+   * они дают экраны нулей, за которыми не видно работающих.
+   *
+   * Всегда на месте, сколько бы ни было нулей: заголовки групп, строка «Без
+   * статьи» (она про недоразнесённое, её как раз надо видеть) и статья, которую
+   * прямо сейчас правят, — иначе строка исчезала бы из-под курсора.
+   */
+  const isHidden = useCallback(
+    (a) => !showEmpty && !a.isGroup && !a.unassigned && a.rowKey !== editArticle?.rowKey && !hasNumbers(a),
+    [showEmpty, editArticle, hasNumbers],
+  )
+
+  const visibleArticles = useMemo(() => { const r = []; let skip = null; for (const a of flatArticles) { if (skip !== null && a.depth > skip) continue; skip = null; if (isHidden(a)) continue; r.push(a); if (a.hasChildren && !expanded.has(a.rowKey)) skip = a.depth }; return r }, [flatArticles, expanded, isHidden])
+
+  const hiddenCount = useMemo(
+    () => showEmpty ? flatArticles.filter(a => !a.isGroup && !a.unassigned && !hasNumbers(a)).length : flatArticles.filter(isHidden).length,
+    [flatArticles, isHidden, showEmpty, hasNumbers],
+  )
 
   const renderHeaderSub = (pd) => {
     const fm = isFactMonth(pd)
@@ -630,6 +696,22 @@ export default function BudgetPage() {
             <button key={m.k} className={`px-2.5 py-1.5 text-[11px] font-medium ${viewMode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setViewMode(m.k)}>{m.l}</button>
           ))}
         </div>
+        {/* Пустые статьи: скрыты, но их всегда можно вернуть на экран */}
+        {selectedDoc && hiddenCount > 0 && (
+          <button
+            onClick={() => setShowEmpty(v => !v)}
+            title={showEmpty
+              ? 'Убрать статьи, где по всей строке нули'
+              : 'Показать и те статьи, по которым нет ни плана, ни факта'}
+            className={`ml-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
+              showEmpty
+                ? 'bg-blue-900 text-white border-blue-900'
+                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+            }`}>
+            {showEmpty ? `Скрыть пустые (${hiddenCount})` : `Все статьи (+${hiddenCount})`}
+          </button>
+        )}
+
         {selectedDoc && (
           <div className="flex items-center gap-1.5 ml-2">
             <span className="text-[11px] text-gray-400">Показать с:</span>
