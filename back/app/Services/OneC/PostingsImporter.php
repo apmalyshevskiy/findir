@@ -70,6 +70,12 @@ final class PostingsImporter
     /** id → элемент справочника (name, type) */
     private array $infoById = [];
 
+    /** id → название проекта; null — ещё не читали */
+    private ?array $projectNames = null;
+
+    /** «таблица:id» → название, дочитанное ради расхождений */
+    private array $lazyNames = [];
+
     private array $warnings = [];
 
     public function __construct(
@@ -336,6 +342,8 @@ final class PostingsImporter
             'credit'        => $credit,
             'operation_id'  => null,
             'problem'       => null,
+            // Чем операция в учёте разошлась с проводкой — заполняется сравнением
+            'changes'       => [],
         ];
 
         // Порядок проверок — от непоправимого к поправимому: пока счёт не
@@ -349,10 +357,11 @@ final class PostingsImporter
             return $row;
         }
 
-        [$status, $operationId] = $this->compare($row);
+        [$status, $operationId, $changes] = $this->compare($row);
 
         $row['operation_id'] = $operationId;
         $row['status']       = $status;
+        $row['changes']      = $changes;
 
         if ($status !== 'loaded' && $this->locked($entry['date'])) {
             $row['status']  = 'locked';
@@ -549,7 +558,7 @@ final class PostingsImporter
      * Состояние проводки у нас: не загружали, загружали и не менялась,
      * загружали и данные разошлись.
      *
-     * @return array{0: string, 1: ?int}
+     * @return array{0: string, 1: ?int, 2: array}
      */
     private function compare(array $row): array
     {
@@ -558,19 +567,148 @@ final class PostingsImporter
             ->where('external_id', $row['id'])
             ->first();
 
-        if (!$op) return ['new', null];
+        if (!$op) return ['new', null, []];
 
-        $same = Carbon::parse($op->date)->format('Y-m-d H:i:s') === $row['date']
-            && $this->money((float) $op->amount)       === $this->money((float) $row['amount'])
-            && (int) $op->in_bi_id                     === $row['debit']['bi_id']
-            && (int) $op->out_bi_id                    === $row['credit']['bi_id']
-            && $this->money((float) $op->in_quantity)  === $this->money($row['debit']['quantity'])
-            && $this->money((float) $op->out_quantity) === $this->money($row['credit']['quantity'])
-            && (int) $op->project_id                   === (int) $this->projectId
-            && $this->slots($op, 'in')  === $row['debit']['info']
-            && $this->slots($op, 'out') === $row['credit']['info'];
+        $changes = $this->changes($op, $row);
 
-        return [$same ? 'loaded' : 'changed', (int) $op->id];
+        return [$changes ? 'changed' : 'loaded', (int) $op->id, $changes];
+    }
+
+    /**
+     * Чем операция в учёте отличается от проводки в файле.
+     *
+     * Раньше сравнение сводилось к «да/нет», и человек видел только плашку
+     * «изменилась» — а что именно поменялось в 1С, приходилось искать глазами,
+     * открыв операцию в журнале рядом. Набор полей тот же, что и был: список
+     * расхождений и есть результат сравнения, отдельного условия больше нет.
+     *
+     * Решение принимаем по сырым значениям, а не по подписям: два разных
+     * элемента справочника вполне могут называться одинаково, и по названиям
+     * изменение потерялось бы.
+     *
+     * @return array<int, array{field: string, was: string, now: string}>
+     */
+    private function changes(Operation $op, array $row): array
+    {
+        $out = [];
+
+        $add = function (string $field, $was, $now, string $wasText, string $nowText) use (&$out) {
+            if ($was === $now) return;
+
+            $out[] = ['field' => $field, 'was' => $wasText, 'now' => $nowText];
+        };
+
+        $add('Дата',
+            Carbon::parse($op->date)->format('Y-m-d H:i:s'), $row['date'],
+            self::humanMoment($op->date), self::humanMoment($row['date']));
+
+        $add('Сумма',
+            $this->money((float) $op->amount), $this->money((float) $row['amount']),
+            self::humanAmount($op->amount), self::humanAmount($row['amount']));
+
+        $add('Счёт дебета',
+            (int) $op->in_bi_id, $row['debit']['bi_id'],
+            $this->biLabel($op->in_bi_id), $row['debit']['bi'] ?? '—');
+
+        $add('Счёт кредита',
+            (int) $op->out_bi_id, $row['credit']['bi_id'],
+            $this->biLabel($op->out_bi_id), $row['credit']['bi'] ?? '—');
+
+        $add('Количество по дебету',
+            $this->money((float) $op->in_quantity), $this->money($row['debit']['quantity']),
+            self::humanAmount($op->in_quantity), self::humanAmount($row['debit']['quantity']));
+
+        $add('Количество по кредиту',
+            $this->money((float) $op->out_quantity), $this->money($row['credit']['quantity']),
+            self::humanAmount($op->out_quantity), self::humanAmount($row['credit']['quantity']));
+
+        $add('Проект',
+            (int) $op->project_id, (int) $this->projectId,
+            $this->projectLabel($op->project_id), $this->projectLabel($this->projectId));
+
+        foreach ([['in', 'debit', 'дебета'], ['out', 'credit', 'кредита']] as [$prefix, $key, $word]) {
+            foreach ([1, 2, 3] as $slot) {
+                $was = $op->{"{$prefix}_info_{$slot}_id"} ? (int) $op->{"{$prefix}_info_{$slot}_id"} : null;
+                $now = $row[$key]['info'][$slot - 1];
+
+                $add("Аналитика {$slot} {$word}", $was, $now,
+                    $this->infoLabel($was), $this->infoLabel($now));
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Название счёта для расхождения.
+     *
+     * Кэш `bi` держит только сопоставленные счета — операция же могла попасть на
+     * счёт, соответствие которому потом убрали, и тогда в сравнении стоял бы
+     * голый номер. Недостающее дочитываем по одному и запоминаем: расхождения
+     * редки, а одни и те же счета в них повторяются.
+     */
+    private function biLabel(?int $id): string
+    {
+        if (!$id) return '—';
+
+        $item = $this->bi[$id] ?? null;
+        if ($item) return $item->code . ' ' . $item->name;
+
+        // Закрытый должностью счёт не называем — только номер
+        if ($this->scope->hides($id)) return '#' . $id;
+
+        return $this->lazyName('balance_items', $id, fn($r) => $r->code . ' ' . $r->name, ['code', 'name']);
+    }
+
+    private function infoLabel(?int $id): string
+    {
+        if (!$id) return '—';
+
+        $item = $this->infoById[$id] ?? null;
+        if ($item) return $item->name;
+
+        return $this->lazyName('info', $id, fn($r) => $r->name, ['name']);
+    }
+
+    /** Название по id из таблицы тенанта, с запоминанием промахов */
+    private function lazyName(string $table, int $id, callable $label, array $columns): string
+    {
+        $key = $table . ':' . $id;
+
+        if (!array_key_exists($key, $this->lazyNames)) {
+            $rowDb = DB::connection($this->conn)->table($table)
+                ->where('id', $id)->select($columns)->first();
+
+            $this->lazyNames[$key] = $rowDb ? $label($rowDb) : '#' . $id;
+        }
+
+        return $this->lazyNames[$key];
+    }
+
+    /** Названия проектов читаем лениво: расхождение по проекту — редкость */
+    private function projectLabel(?int $id): string
+    {
+        if (!$id) return 'без проекта';
+
+        if ($this->projectNames === null) {
+            $this->projectNames = DB::connection($this->conn)
+                ->table('projects')->pluck('name', 'id')->all();
+        }
+
+        return $this->projectNames[$id] ?? '#' . $id;
+    }
+
+    private static function humanAmount($value): string
+    {
+        return number_format((float) $value, 2, ',', ' ');
+    }
+
+    /** Дата проводки: время показываем, только если оно не полночь */
+    private static function humanMoment($value): string
+    {
+        $date = Carbon::parse($value);
+
+        return $date->format($date->format('H:i') === '00:00' ? 'd.m.Y' : 'd.m.Y H:i');
     }
 
     private function slots(Operation $op, string $prefix): array

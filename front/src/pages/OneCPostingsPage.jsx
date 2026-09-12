@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import Layout from '../components/Layout'
 import InfoItemCard from '../components/InfoItemCard'
 import { INFO_LABELS } from '../utils/infoLabels'
+import OperationForm from '../components/OperationForm'
 import { getBalanceItemsList } from '../api/balanceItems'
+import { getOperations } from '../api/operations'
 import { getInfo } from '../api/info'
 import {
   getOneCSettings, saveOneCSettings, saveOneCAnalytics,
@@ -92,6 +94,9 @@ export default function OneCPostingsPage() {
 
   const [binding, setBinding]   = useState(null)  // ключ субконто, которое правим
   const [creating, setCreating] = useState(null)  // {key, name, type} — заводим элемент
+
+  const [diffRow, setDiffRow]   = useState(null)  // проводка, чьи расхождения смотрим
+  const [editOp, setEditOp]     = useState(null)  // операция, открытая из проводки
 
   useEffect(() => {
     getBalanceItemsList().then(r => setChart(r.data.data || r.data || [])).catch(() => {})
@@ -212,6 +217,25 @@ export default function OneCPostingsPage() {
       .finally(() => setBusy(false))
   }
 
+  /**
+   * Открыть операцию, которую сделали по этой проводке.
+   *
+   * Читаем её целиком: форма правки работает с операцией, а не с проводкой, и
+   * показывает то, что сейчас в учёте, — рядом с окном сравнения это и есть
+   * ответ на вопрос «что изменилось».
+   */
+  const openOperation = (id) => {
+    setBusy(true); setError('')
+
+    getOperations({ ids: String(id) })
+      .then(r => {
+        const op = (r.data.data || [])[0]
+        op ? setEditOp(op) : setError(`Операция №${id} не найдена — возможно, её удалили`)
+      })
+      .catch(e => setError(e.response?.data?.message || 'Не удалось прочитать операцию'))
+      .finally(() => setBusy(false))
+  }
+
   const stats     = preview?.stats || {}
   const notSet    = (preview?.accounts || []).filter(a => !a.bi_id && !a.skipped).length
   const unresolved = subconto.filter(s => !s.info_id && s.source !== 'binding').length
@@ -297,12 +321,16 @@ export default function OneCPostingsPage() {
                 rows={rows}
                 picked={picked}
                 onPick={(id, on) => setPicked(p => ({ ...p, [id]: on }))}
-                onPickAll={(on) => {
-                  const next = {}
-                  rows.forEach(r => { if (STATUS[r.status]?.pick) next[r.id] = on })
-                  setPicked(next)
-                }}
+                // Отмечаем то, что передала таблица: при отборе это только
+                // показанные строки, остальные отметки остаются как были
+                onPickAll={(on, visible) => setPicked(p => {
+                  const next = { ...p }
+                  visible.forEach(r => { if (STATUS[r.status]?.pick) next[r.id] = on })
+                  return next
+                })}
                 onBind={setBinding}
+                onDiff={setDiffRow}
+                onOpenOperation={openOperation}
                 stats={stats}
               />
 
@@ -324,6 +352,24 @@ export default function OneCPostingsPage() {
             </>
           )}
         </div>
+      )}
+
+      {diffRow && (
+        <DiffModal
+          row={diffRow}
+          onOpen={() => { const id = diffRow.operation_id; setDiffRow(null); openOperation(id) }}
+          onClose={() => setDiffRow(null)}
+        />
+      )}
+
+      {/* Правка операции прямо отсюда: после сохранения файл разбираем заново —
+          состояние проводки могло смениться на «уже загружена» */}
+      {editOp && (
+        <OperationForm
+          operation={editOp}
+          onSuccess={() => { setEditOp(null); if (file) run(file) }}
+          onCancel={() => setEditOp(null)}
+        />
       )}
 
       {binding && subByKey[binding] && (
@@ -391,6 +437,66 @@ function Tabs({ tab, onTab, counts }) {
  * счёт ещё не разобран или слотов несколько, выбрать тип придётся, и выбрать
  * можно любой: справочник заводят под задачу, а не под наши догадки.
  */
+/**
+ * Что разошлось между операцией в учёте и проводкой в файле.
+ *
+ * Две колонки, а не одна строка «было → стало»: расхождение бывает и в счёте, и
+ * в аналитике сразу, и читать их проще столбцом. Слева то, что сейчас в учёте —
+ * его и можно поправить, открыв операцию; справа то, что говорит 1С, — оно
+ * применится, если отметить проводку и загрузить заново.
+ */
+function DiffModal({ row, onOpen, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[88vh] flex flex-col"
+        onClick={e => e.stopPropagation()}>
+
+        <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-gray-800">{row.document || 'Проводка из 1С'}</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {fmtDate(row.date)} · {money(row.amount)} · операция №{row.operation_id}
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1">&times;</button>
+        </div>
+
+        <div className="overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500">
+              <tr>
+                <th className="px-5 py-2 text-left font-medium">Что</th>
+                <th className="px-3 py-2 text-left font-medium">Сейчас в учёте</th>
+                <th className="px-5 py-2 text-left font-medium">В файле 1С</th>
+              </tr>
+            </thead>
+            <tbody>
+              {row.changes.map((c, i) => (
+                <tr key={i} className="border-t border-gray-100 align-top">
+                  <td className="px-5 py-2 text-gray-500 whitespace-nowrap">{c.field}</td>
+                  <td className="px-3 py-2 text-gray-800">{c.was}</td>
+                  <td className="px-5 py-2 text-amber-900 font-medium">{c.now}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100 flex items-center gap-3 flex-wrap">
+          <button type="button" onClick={onOpen}
+            className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
+            Открыть операцию №{row.operation_id}
+          </button>
+          <span className="text-xs text-gray-500">
+            Отметьте проводку и загрузите — операция станет такой, как в файле
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClose }) {
   const suggested = sub.types || []
 
@@ -738,27 +844,70 @@ function ResultCard({ result }) {
 }
 
 /** Таблица проводок: что получится из каждой и можно ли её взять. */
-function PostingsCard({ rows, picked, onPick, onPickAll, onBind, stats }) {
-  const pickable = rows.filter(r => STATUS[r.status]?.pick)
+/**
+ * Таблица проводок с отбором по состоянию.
+ *
+ * Плашки состояний в шапке — они же кнопки отбора: в выгрузке за месяц из
+ * пятисот проводок изменились две дюжины, и искать их глазами среди уже
+ * загруженных бессмысленно. Щелчок оставляет только это состояние, повторный
+ * возвращает всё.
+ *
+ * Отметки при отборе не сбрасываются: человек может пройтись по состояниям и
+ * набрать список из разных. Поэтому «загрузить отмеченные» считает по всем
+ * проводкам, а не по видимым, — и если отмеченное есть за пределами отбора, об
+ * этом сказано прямо в шапке.
+ */
+function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenOperation, stats }) {
+  const [only, setOnly] = useState(null)
+
+  const shown    = only ? rows.filter(r => r.status === only) : rows
+  const pickable = shown.filter(r => STATUS[r.status]?.pick)
   const allOn    = pickable.length > 0 && pickable.every(r => picked[r.id])
+
+  // Отмеченное, которого сейчас не видно: иначе кнопка загрузки называет число,
+  // которого на экране не найти
+  const hiddenPicked = only
+    ? rows.filter(r => r.status !== only && picked[r.id] && STATUS[r.status]?.pick).length
+    : 0
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2 flex-wrap">
         {ORDER.filter(s => stats[s] > 0).map(s => (
-          <span key={s} className="flex items-center gap-1.5 text-sm text-gray-600">
+          <button key={s} type="button"
+            onClick={() => setOnly(only === s ? null : s)}
+            title={only === s ? 'Показать все проводки' : `Показать только: ${STATUS[s].label}`}
+            className={`flex items-center gap-1.5 text-sm rounded-lg px-1.5 py-0.5 transition-colors ${
+              only === s ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+            }`}>
             <Chip status={s} /> {stats[s]}
-          </span>
+          </button>
         ))}
-        <span className="text-xs text-gray-400 ml-auto">Щёлкните по аналитике, чтобы привязать её</span>
+
+        {only && (
+          <button type="button" onClick={() => setOnly(null)}
+            className="text-xs text-blue-700 hover:underline">
+            × показать все
+          </button>
+        )}
+
+        <span className="text-xs text-gray-400 ml-auto">
+          {hiddenPicked > 0
+            ? `Вне отбора отмечено ещё: ${hiddenPicked}`
+            : 'Щёлкните по аналитике, чтобы привязать её'}
+        </span>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-gray-500">
             <tr>
+              {/* Галочка в шапке отмечает только видимое: при отборе «изменилась»
+                  она не должна заодно поднимать пять сотен загруженных */}
               <th className="px-3 py-2 w-8">
-                <input type="checkbox" checked={allOn} onChange={e => onPickAll(e.target.checked)} />
+                <input type="checkbox" checked={allOn}
+                  title={only ? `Отметить показанные (${pickable.length})` : 'Отметить все'}
+                  onChange={e => onPickAll(e.target.checked, shown)} />
               </th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Дата</th>
               <th className="px-3 py-2 text-left font-medium">Документ</th>
@@ -769,7 +918,12 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, stats }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => {
+            {only && shown.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">
+                В состоянии «{STATUS[only]?.label}» проводок не осталось
+              </td></tr>
+            )}
+            {shown.map(r => {
               const st = STATUS[r.status] || STATUS.new
               return (
                 <tr key={r.id} className={`border-t border-gray-100 align-top ${st.pick ? '' : 'bg-gray-50/60'}`}>
@@ -791,6 +945,22 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, stats }) {
                   <td className="px-3 py-2">
                     <Chip status={r.status} />
                     {r.problem && <div className="text-xs text-gray-600 mt-1">{r.problem}</div>}
+
+                    {/* Что именно разошлось — главный вопрос по такой проводке,
+                        поэтому ссылка стоит прямо под плашкой */}
+                    {r.changes?.length > 0 && (
+                      <button type="button" onClick={() => onDiff(r)}
+                        className="block text-xs text-blue-700 hover:underline mt-1">
+                        что изменилось ({r.changes.length})
+                      </button>
+                    )}
+
+                    {r.operation_id && (
+                      <button type="button" onClick={() => onOpenOperation(r.operation_id)}
+                        className="block text-xs text-gray-500 hover:text-blue-700 hover:underline mt-0.5">
+                        операция №{r.operation_id}
+                      </button>
+                    )}
                   </td>
                 </tr>
               )
