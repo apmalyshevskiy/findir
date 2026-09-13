@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { getOperationChanges } from '../api/operations'
 import { getDocumentChanges } from '../api/documents'
 import { SkeletonRows, Spinner } from './Busy'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 /**
  * Движения по счетам — то, что видят отчёты.
@@ -92,7 +93,7 @@ export default function OperationChanges({ operationId, documentId }) {
                       </span>
                     </td>
                     <td className="py-2 pr-3 whitespace-nowrap">
-                      <span className="font-mono text-gray-700">{r.bi_code}</span>{' '}
+                      <span className={`${ACCOUNT_CODE} text-gray-700`}>{r.bi_code}</span>{' '}
                       <span className="text-gray-500">{r.bi_name}</span>
                     </td>
                     <td className="py-2 pr-3 text-gray-500">

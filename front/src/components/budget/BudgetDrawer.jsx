@@ -10,6 +10,7 @@ import OperationForm from '../OperationForm'
 import AmountInput from '../AmountInput'
 import LockIcon from '../LockIcon'
 import { sectionSign, parsePlanAmount, formatPlanAmount } from '../../utils/budgetSign'
+import { ACCOUNT_CODE } from '../../utils/accountCode'
 import { DocumentForm } from '../../pages/DocumentsPage'
 
 // ── Утилиты форматирования ─────────────────────────────────────────────────
@@ -673,7 +674,7 @@ function FactTab({ articleId, periodDate, docType, section, descendantAllMap, fa
                     <div className="flex-1 min-w-0">
                       {op.in_hidden
                         ? <span className="text-[10px] inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium" title="Счёт закрыт для вашей должности"><LockIcon className="w-2.5 h-2.5" />Скрыто</span>
-                        : <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-mono font-medium">{op.in_bi_code}</span>}
+                        : <span className={`text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded ${ACCOUNT_CODE}`}>{op.in_bi_code}</span>}
                       {op.in_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_1_name}</div>}
                       {op.in_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.in_info_2_name}</div>}
                     </div>
@@ -681,7 +682,7 @@ function FactTab({ articleId, periodDate, docType, section, descendantAllMap, fa
                     <div className="flex-1 min-w-0">
                       {op.out_hidden
                         ? <span className="text-[10px] inline-flex items-center gap-1 bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium" title="Счёт закрыт для вашей должности"><LockIcon className="w-2.5 h-2.5" />Скрыто</span>
-                        : <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-mono font-medium">{op.out_bi_code}</span>}
+                        : <span className={`text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded ${ACCOUNT_CODE}`}>{op.out_bi_code}</span>}
                       {op.out_info_1_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_1_name}</div>}
                       {op.out_info_2_name && <div className="text-[10px] text-gray-400 mt-0.5 pl-0.5">↳ {op.out_info_2_name}</div>}
                     </div>

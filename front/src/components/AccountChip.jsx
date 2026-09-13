@@ -11,6 +11,7 @@
 
 import LockIcon from './LockIcon'
 import { Highlight } from '../utils/infoSearch'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 const TONE = {
   debit:  'bg-green-50 text-green-700',
@@ -34,7 +35,7 @@ export default function AccountChip({ code, name, hidden, side = 'debit', size =
 
   return (
     <>
-      <span className={`${size} ${TONE[side]} px-1.5 py-0.5 rounded font-mono font-medium`}>
+      <span className={`${size} ${TONE[side]} px-1.5 py-0.5 rounded ${ACCOUNT_CODE}`}>
         <Highlight text={code} q={q} />
       </span>
       <span className={`${size} text-gray-600`}>

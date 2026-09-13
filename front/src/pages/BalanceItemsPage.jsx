@@ -3,6 +3,7 @@ import Layout from '../components/Layout'
 import ChartOfAccountsPicker from '../components/ChartOfAccountsPicker'
 import { getBalanceItemsList, createBalanceItem, updateBalanceItem, deleteBalanceItem } from '../api/balanceItems'
 import { isAnySlot, slotTypes } from '../utils/analyticSlots'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const lc = 'block text-[11px] text-gray-500 mb-0.5'
@@ -306,7 +307,7 @@ export default function BalanceItemsPage() {
               <tbody>
                 {tree.map(i => (
                   <tr key={i.id} className="border-b border-gray-50 hover:bg-gray-50/60 group">
-                    <td className="px-4 py-2 font-mono text-xs text-gray-700" style={{ paddingLeft: 16 + i.depth * 16 }}>
+                    <td className={`px-4 py-2 text-xs text-gray-700 ${ACCOUNT_CODE}`} style={{ paddingLeft: 16 + i.depth * 16 }}>
                       {i.depth > 0 && <span className="text-gray-300 mr-1">└</span>}{i.code}
                     </td>
                     <td className="px-3 py-2 text-gray-800">

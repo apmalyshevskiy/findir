@@ -16,6 +16,7 @@ import usePersistedPeriod from '../hooks/usePersistedPeriod'
 import usePersistedState from '../hooks/usePersistedState'
 import { INFO_LABELS } from '../utils/infoLabels'
 import { slotTypes, slotLabel, slotItems, slotAccepts, slotAllTypes } from '../utils/analyticSlots'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 // Расчёт себестоимости
 const calculateCostApi = (data) => api.post('/documents/calculate-cost', data)
@@ -204,7 +205,7 @@ const BiSelect = ({ items = [], value, onChange, disabled, placeholder = 'Выб
               <div key={i.id}
                 className="px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 flex items-center gap-2"
                 onMouseDown={() => { onChange(i.id); setOpen(false); setSearch('') }}>
-                <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded text-gray-600">{i.code}</span>
+                <span className={`${ACCOUNT_CODE} text-xs bg-gray-100 px-1.5 py-0.5 rounded text-gray-600`}>{i.code}</span>
                 <span className="text-gray-700">{i.name}</span>
               </div>
             ))
@@ -1415,7 +1416,7 @@ export default function DocumentsPage() {
                     <td className="px-4 py-3 text-gray-700">
                       <div>{doc.info_1_name || <span className="text-gray-300">не указан</span>}</div>
                       {doc.bi_code && (
-                        <div className="text-xs text-gray-400 font-mono">{doc.bi_code}</div>
+                        <div className={`text-xs text-gray-400 ${ACCOUNT_CODE}`}>{doc.bi_code}</div>
                       )}
                     </td>
                     <td className="px-4 py-3">

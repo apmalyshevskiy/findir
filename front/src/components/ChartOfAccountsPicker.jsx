@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getAccountCatalog, addAccountsFromCatalog } from '../api/balanceItems'
 import { SkeletonRows } from './Busy'
 import { INFO_LABELS } from '../utils/infoLabels'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 /**
  * Добавление счетов из каталога.
@@ -102,7 +103,7 @@ export default function ChartOfAccountsPicker({ onClose, onAdded }) {
                           onChange={() => toggle(a.code)} />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-baseline gap-2 flex-wrap">
-                            <span className={`font-mono text-xs ${a.exists ? 'text-gray-400' : 'text-gray-600'}`}>{a.code}</span>
+                            <span className={`${ACCOUNT_CODE} text-xs ${a.exists ? 'text-gray-400' : 'text-gray-600'}`}>{a.code}</span>
                             <span className={`text-sm ${a.exists ? 'text-gray-400' : 'text-gray-800'}`}>{a.name}</span>
                             {a.exists && <span className="text-[11px] text-gray-400">уже есть</span>}
                             {a.is_default && !a.exists && (

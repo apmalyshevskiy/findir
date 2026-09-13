@@ -7,6 +7,7 @@ import {
 } from '../api/classificationRules'
 import { getInfo } from '../api/info'
 import { getBalanceItems } from '../api/operations'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 import Layout from '../components/Layout'
 
 const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
@@ -196,7 +197,7 @@ export default function ClassificationRulesPage() {
                       <td className="py-2.5 pr-4 font-mono text-xs">{p.category}</td>
                       <td className="py-2.5 pr-4">
                         {p.counter_account_code
-                          ? <span><span className="font-mono text-gray-500">{p.counter_account_code}</span>{acc ? ` — ${acc.name}` : ''}</span>
+                          ? <span><span className={`${ACCOUNT_CODE} text-gray-500`}>{p.counter_account_code}</span>{acc ? ` — ${acc.name}` : ''}</span>
                           : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="py-2.5 pr-4">{flow ? flow.name : (p.flow_info_id ? `#${p.flow_info_id}` : <span className="text-gray-300">—</span>)}</td>

@@ -18,6 +18,7 @@ import { BusyLabel, BusyOverlay, SkeletonRows } from '../components/Busy'
 import AccountChip from '../components/AccountChip'
 import LockIcon from '../components/LockIcon'
 import { Highlight } from '../utils/infoSearch'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
@@ -894,7 +895,7 @@ export default function OperationsPage() {
                       {acc.hidden
                         ? <span className="text-xs text-gray-400 inline-flex items-center gap-1.5"><LockIcon className="w-3 h-3" />Счета, закрытые для вашей должности</span>
                         : <>
-                            <span className="text-xs font-mono font-medium text-gray-700 mr-2">{acc.code}</span>
+                            <span className={`text-xs text-gray-700 mr-2 ${ACCOUNT_CODE}`}>{acc.code}</span>
                             <span className="text-xs text-gray-400">{acc.name}</span>
                           </>}
                     </td>

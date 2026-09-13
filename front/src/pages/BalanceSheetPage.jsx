@@ -16,6 +16,7 @@ import { presetRange } from '../utils/period'
 import AccountChip from '../components/AccountChip'
 import LockIcon from '../components/LockIcon'
 import { calcNet, flattenServerTree, flattenAccountTree, osvSheet } from '../utils/osv'
+import { ACCOUNT_CODE } from '../utils/accountCode'
 
 // Хранение Set в localStorage — через массив
 const SET_CODEC = { serialize: (s) => [...s], deserialize: (a) => new Set(a) }
@@ -1015,11 +1016,8 @@ export default function BalanceSheetPage() {
                           </button>
                         )}
                       </div>
-                      {/* Код — обычным шрифтом, а не моноширинным: системный
-                          моноширинный рисует кириллическую букву другим кеглем,
-                          чем цифры, и «А100» выглядело сломанным. Столбиком
-                          коды всё равно встают — цифры в таблицах табличные */}
-                      <span className={`text-xs font-semibold tracking-wide ${isAggregate ? 'text-gray-500' : 'text-gray-700'}`}>
+                      {/* Набор кода — общее правило, см. utils/accountCode */}
+                      <span className={`text-xs ${ACCOUNT_CODE} ${isAggregate ? 'text-gray-500' : 'text-gray-700'}`}>
                         {row.code}
                       </span>
                       <span className={`text-xs ml-1 ${isAggregate ? 'text-gray-400 font-medium' : 'text-gray-500'}`}>
