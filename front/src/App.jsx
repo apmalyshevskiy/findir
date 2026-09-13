@@ -26,6 +26,7 @@ import DataImportPage from './pages/DataImportPage'
 import OneCPostingsPage from './pages/OneCPostingsPage'
 import FundPlanningPage from './pages/FundPlanningPage'
 import FundSchemesPage from './pages/FundSchemesPage'
+import HelpPage from './pages/HelpPage'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -64,6 +65,9 @@ export default function App() {
         <Route path="/onec-postings"        element={<PrivateRoute><OneCPostingsPage /></PrivateRoute>} />
         <Route path="/fund-planning"        element={<PrivateRoute><FundPlanningPage /></PrivateRoute>} />
         <Route path="/fund-schemes"         element={<PrivateRoute><FundSchemesPage /></PrivateRoute>} />
+        {/* Справка доступна всем вошедшим: она про программу, а не про данные,
+            и прятать её за правами не от чего */}
+        <Route path="/help"                 element={<PrivateRoute><HelpPage /></PrivateRoute>} />
       </Routes>
     </BrowserRouter>
   )

@@ -7,6 +7,7 @@ import {
 } from '../api/dashboard'
 import { getProjects } from '../api/projects'
 import Layout from '../components/Layout'
+import FirstSteps from '../components/FirstSteps'
 import { SERIES_PALETTE } from '../components/RevenueChart'
 import MetricWidget from '../components/widgets/MetricWidget'
 import ChartWidget from '../components/widgets/ChartWidget'
@@ -210,6 +211,9 @@ export default function DashboardPage() {
 
   return (
     <Layout>
+      {/* Первые шаги — выше виджетов и до тех пор, пока не пройдены все */}
+      <FirstSteps />
+
       <div className="space-y-5">
         {/* Тулбар */}
         <div className="flex items-end justify-between flex-wrap gap-4">

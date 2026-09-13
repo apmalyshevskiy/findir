@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\PaymentClassificationRuleController;
 use App\Http\Controllers\Api\V1\CategoryPostingController;
 use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\OnboardingController;
 use App\Http\Controllers\Api\V1\FundsController;
 use App\Http\Controllers\Api\V1\FundSchemeController;
 use App\Http\Controllers\Api\V1\FundPlanDocController;
@@ -61,6 +62,9 @@ Route::prefix('v1')->group(function () {
     Route::get('/dashboard/revenue-series', [DashboardController::class, 'revenueSeries']);
     Route::get('/dashboard/layout',         [DashboardController::class, 'getLayout']);
     Route::put('/dashboard/layout',         [DashboardController::class, 'saveLayout']);
+
+    // Первые шаги: состояние считается по данным, хранить нечего
+    Route::get('/onboarding',               [OnboardingController::class, 'index']);
 
     // Массовая правка выбранных операций — до /operations/{id}
     Route::post('/operations/bulk-preview',          [BulkOperationsController::class, 'preview']);

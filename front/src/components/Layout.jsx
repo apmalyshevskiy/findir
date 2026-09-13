@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Fragment, useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
+import HelpDrawer from './HelpDrawer'
 import Logo from './Logo'
 import { TopProgress } from './Busy'
 import api from '../api/client'
@@ -35,6 +36,7 @@ export default function Layout({ children }) {
   }, [location.pathname])
 
   const [openMenu, setOpenMenu] = useState(null)   // label открытого выпадающего раздела
+  const [helpOpen, setHelpOpen] = useState(false)
   const navRef = useRef(null)
 
   // Отказ по правам — плашкой поверх страницы. Ловим событие от axios: так
@@ -245,6 +247,12 @@ export default function Layout({ children }) {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Справка про текущую страницу — одним нажатием и не уходя с неё */}
+            <button onClick={() => setHelpOpen(true)} title="Справка по этой странице"
+              className="w-6 h-6 rounded-full border border-gray-200 text-gray-400 text-xs font-medium hover:border-blue-300 hover:text-blue-600 transition-colors">
+              ?
+            </button>
+
             <span className="text-sm text-gray-500">
               {user.name}
               {/* Должность рядом с именем: человек должен понимать, почему
@@ -264,6 +272,8 @@ export default function Layout({ children }) {
           <button onClick={() => setForbidden('')} className="text-amber-400 hover:text-amber-700">✕</button>
         </div>
       )}
+
+      {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} />}
 
       <main className={`${SHELL} py-4 md:py-6`}>{children}</main>
     </div>
