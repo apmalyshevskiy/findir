@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\Integration;
 use App\Models\Tenant\IntegrationRun;
+use App\Services\History\History;
 use App\Services\Integrations\IntegrationRegistry;
 use App\Services\Integrations\OneC\OneCBp3FileDriver;
 use App\Services\OneC\PostingsFile;
@@ -197,6 +198,10 @@ class OneCController extends TenantController
     public function import(Request $request)
     {
         $this->initTenant($request);
+
+        // Загрузка правит десятки операций разом — в журнале это должно читаться
+        // одной строкой «загрузка 1С», а не россыпью безымянных правок
+        app(History::class)->source('onec');
 
         $request->validate(['only' => 'array', 'only.*' => 'string']);
 

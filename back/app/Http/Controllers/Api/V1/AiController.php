@@ -110,6 +110,7 @@ class AiController extends TenantController
     public function applyBulk(Request $request)
     {
         $this->initTenant($request);
+        app(\App\Services\History\History::class)->source('ai');
 
         $data = $request->validate([
             'filter'              => 'required|array',

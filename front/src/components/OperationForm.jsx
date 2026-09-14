@@ -4,6 +4,8 @@ import { getInfo } from '../api/info'
 import { getProjects } from '../api/projects'
 import AmountInput from './AmountInput'
 import OperationChanges from './OperationChanges'
+import ObjectHistory from './ObjectHistory'
+import { pushRecent } from '../utils/recent'
 import SharedInfoSelect from './InfoSelect'
 import { BusyLabel } from './Busy'
 import LockIcon from './LockIcon'
@@ -32,8 +34,17 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, infoTyp
 
 // `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
 export default function OperationForm({ operation, initial, onSuccess, onCancel, onOpenDocument }) {
-  const [tab, setTab] = useState('fields')   // 'fields' | 'changes'
+  const [tab, setTab] = useState('fields')   // 'fields' | 'changes' | 'history'
   const isEdit = !!(operation && operation.id)
+
+  // Открыли на просмотр — значит, к ней захотят вернуться. Пишем при открытии,
+  // а не при сохранении: список нужен как раз для тех, что закрыли не сохранив
+  useEffect(() => {
+    if (!isEdit) return
+
+    const parts = [Number(operation.amount).toLocaleString('ru-RU'), operation.content].filter(Boolean)
+    pushRecent('operation', operation.id, parts.join(' · ') || `Операция #${operation.id}`)
+  }, [operation?.id])
   // Операцию, рождённую документом, сервер править не даст — и правильно:
   // документ пересоздаёт свои проводки при каждом проведении
   const fromDocument = !!(operation?.table_name === 'documents' && operation?.table_id)
@@ -362,6 +373,11 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
             <h3 className="text-lg font-semibold text-gray-800">
               {isEdit ? 'Редактировать операцию' : 'Новая операция'}
             </h3>
+            {/* У операций, заведённых до появления автора, он пуст — тогда
+                строки просто нет: пустое «внёс —» ничего не сообщает */}
+            {isEdit && operation.created_by_name && (
+              <span className="text-xs text-gray-400">внёс {operation.created_by_name}</span>
+            )}
             {/* Форма открывается сразу, а справочники подтягиваются следом:
                 видно, что поля ещё наполняются, а не пусты по существу */}
             <BusyLabel active={dictLoading}>Загружаю справочники</BusyLabel>
@@ -380,11 +396,17 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
                     : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
                   Движения
                 </button>
+                <button type="button" onClick={() => setTab('history')}
+                  className={tab === 'history'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  История
+                </button>
               </div>
             )}
           </div>
           <div className={`items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0 ${
-            tab === 'changes' ? 'hidden' : 'flex'
+            tab === 'fields' ? 'flex' : 'hidden'
           }`}>
             <button type="button" onClick={() => changeLayout('classic')}
               className={`px-2.5 py-1 rounded-md transition-colors ${layout === 'classic' ? 'bg-white shadow-sm text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}>
@@ -397,9 +419,15 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
           </div>
         </div>
 
-        {tab === 'changes' ? (
+        {tab === 'changes' || tab === 'history' ? (
           <div className="p-6 space-y-4">
-            <OperationChanges operationId={operation.id} />
+            {tab === 'changes'
+              ? <OperationChanges operationId={operation.id} />
+              : <ObjectHistory entity="operation" id={operation.id}
+                  /* После возврата форму закрываем: в полях «Реквизитов»
+                     остались прежние значения, и сохранение затёрло бы
+                     возврат. Список за окном перечитается сам */
+                  onRestored={onSuccess} />}
             <div className="flex justify-end pt-2">
               <button type="button" onClick={onCancel}
                 className="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">

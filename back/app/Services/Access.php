@@ -92,6 +92,9 @@ class Access
             'classification-rules'   => 'dictionaries',
 
             'settings'               => 'settings',
+            // Журнал изменений — инструмент разбирательства, а не ежедневной
+            // работы: кто отвечает за настройки, тот и разбирается
+            'change-log'             => 'settings',
 
             'users'                  => 'users',
             'roles'                  => 'users',

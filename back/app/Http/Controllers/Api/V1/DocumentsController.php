@@ -5,6 +5,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Tenant\Document;
 use App\Models\Tenant\DocumentItem;
 use App\Services\Documents\DocumentService;
+use App\Services\History\History;
+use App\Services\History\HistoryPresenter;
+use App\Services\History\HistoryRestorer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -229,7 +232,10 @@ class DocumentsController extends TenantController
         $doc = $this->model()->newQuery()->make();
         $doc->fill($this->docData($data));
         $doc->status     = 'draft';
-        $doc->created_by = $this->getCurrentUserId($request);
+        // Общий способ из TenantController: он читает пользователя из атрибута,
+        // который уже положил middleware, а не ходит в базу за тем же самым.
+        // Своя копия здесь однажды разошлась бы, как разошлась в бюджетах
+        $doc->created_by = $this->currentUserId($request);
 
         // Для outgoing_invoice копируем поля из project (если не переданы явно)
         DocumentService::fillFromProject($doc);
@@ -240,6 +246,10 @@ class DocumentsController extends TenantController
 
         // Пересчитываем сумму шапки из строк (чтобы она отображалась в списке)
         $this->recalcAmount($doc);
+
+        // Версия пишется здесь, а не событием модели: снимок должен включать
+        // строки, а к моменту события они ещё не сохранены
+        app(History::class)->recordFrom($doc, [], 'created');
 
         $doc->load([
             'balanceItem', 'info1', 'info2', 'info3',
@@ -277,6 +287,10 @@ class DocumentsController extends TenantController
 
         if ($this->payloadHasHidden($data)) return $this->hiddenAccountError('документе');
 
+        // Снимаем состояние до правки: «что изменилось» у документа можно
+        // узнать только сравнением снимков — строки правятся отдельно от шапки
+        $before = $doc->historySnapshot();
+
         $doc->fill($this->docData($data));
         $doc->save();
 
@@ -284,6 +298,8 @@ class DocumentsController extends TenantController
 
         // Пересчитываем сумму шапки из строк
         $this->recalcAmount($doc);
+
+        app(History::class)->recordFrom($doc->refresh(), $before);
 
         $doc->load([
             'balanceItem', 'info1', 'info2', 'info3',
@@ -314,7 +330,9 @@ class DocumentsController extends TenantController
             return response()->json(['message' => 'Нельзя провести документ без строк.'], 422);
         }
 
+        $before = $doc->historySnapshot();
         DocumentService::post($doc);
+        app(History::class)->recordFrom($doc->refresh(), $before);
 
         $doc->refresh()->load([
             'balanceItem', 'info1', 'info2', 'info3',
@@ -343,9 +361,46 @@ class DocumentsController extends TenantController
             return response()->json(['message' => 'Документ не проведён.'], 422);
         }
 
+        $before = $doc->historySnapshot();
         DocumentService::cancel($doc);
+        app(History::class)->recordFrom($doc->refresh(), $before);
 
         return response()->json(['data' => $this->formatDocument($doc->fresh())]);
+    }
+
+    // ─── GET /documents/{id}/history ──────────────────────────
+
+    /** Кто и когда правил документ. Строки считаются частью документа. */
+    public function history(Request $request, int $id): JsonResponse
+    {
+        $this->initTenant($request);
+
+        $doc = $this->model()->newQuery()->withTrashed()->findOrFail($id);
+        if ($this->docHidden($doc)) return $this->docNotFound();
+
+        return response()->json([
+            'data' => (new HistoryPresenter($this->dbName))->forObject('document', $id),
+        ]);
+    }
+
+    // ─── POST /documents/{id}/restore/{version} ───────────────
+
+    /**
+     * Вернуть документ к версии: шапку, строки и состояние проведения.
+     *
+     * Проверки в HistoryRestorer: закрытый период по обеим датам, закрытые
+     * должностью счета, удалённые элементы справочников — в шапке и в каждой
+     * строке.
+     */
+    public function restore(Request $request, int $id, int $version): JsonResponse
+    {
+        $this->initTenant($request);
+        app(History::class)->source('manual');
+
+        $res = (new HistoryRestorer($this->dbName, $this->scope, $this->editLockDate()))
+            ->restore('document', $id, $version);
+
+        return response()->json($res, $res['ok'] ? 200 : 422);
     }
 
     // ─── GET /documents/{id}/changes ──────────────────────────
@@ -405,7 +460,11 @@ class DocumentsController extends TenantController
         // Нельзя удалять документ в закрытом периоде
         if ($resp = $this->lockError($doc->date)) return $resp;
 
+        // Снимок до удаления: из него документ и восстановят, когда дойдут руки
+        // до второго шага. Записываем до вызова — после строк уже не прочесть
+        $snapshot = $doc->historySnapshot();
         DocumentService::delete($doc);
+        app(History::class)->record($doc, 'deleted', [], null, $snapshot);
 
         return response()->json(['message' => 'Документ удалён']);
     }
@@ -546,21 +605,6 @@ class DocumentsController extends TenantController
         }
     }
 
-    /**
-     * Получить ID текущего пользователя из Bearer токена.
-     */
-    private function getCurrentUserId(Request $request): ?int
-    {
-        $plainToken = $request->bearerToken();
-        if (!$plainToken) return null;
-
-        $row = DB::table('personal_access_tokens')
-            ->where('token', hash('sha256', $plainToken))
-            ->value('tokenable_id');
-
-        return $row ? (int) $row : null;
-    }
-
     private function formatDocument(Document $doc, bool $withItems = false): array
     {
         $result = [
@@ -577,6 +621,7 @@ class DocumentsController extends TenantController
             'type_head_side'    => $this->types()[$doc->type]->head_side ?? 'credit',
             'status'            => $doc->status,
             'created_by'        => $doc->created_by,
+            'created_by_name'   => $this->userName($doc->created_by),
             'bi_id'             => $doc->bi_id,
             'bi_code'           => $doc->balanceItem?->code,
             'bi_name'           => $doc->balanceItem?->name,

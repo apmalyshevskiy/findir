@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\Info;
+use App\Services\History\History;
+use App\Services\History\HistoryPresenter;
+use App\Services\History\HistoryRestorer;
 use Illuminate\Http\Request;
 
 class InfoController extends TenantController
@@ -25,6 +28,34 @@ class InfoController extends TenantController
         }
 
         return response()->json(['data' => $query->get()]);
+    }
+
+    /** GET /info/{id}/history — кто и когда правил элемент справочника */
+    public function history(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        return response()->json([
+            'data' => (new HistoryPresenter($this->dbName))->forObject('info', $id),
+        ]);
+    }
+
+    /**
+     * POST /info/{id}/restore/{version} — вернуть элемент к версии.
+     *
+     * Удалённый при этом оживает: если человек возвращает версию, он хочет
+     * элемент обратно. Смена вида справочника задним числом не пройдёт, пока
+     * на элемент ссылаются операции.
+     */
+    public function restore(Request $request, int $id, int $version)
+    {
+        $this->initTenant($request);
+        app(History::class)->source('manual');
+
+        $res = (new HistoryRestorer($this->dbName, $this->scope, $this->editLockDate()))
+            ->restore('info', $id, $version);
+
+        return response()->json($res, $res['ok'] ? 200 : 422);
     }
 
     public function store(Request $request)

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Services\BulkOperationEditor;
+use App\Services\History\History;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -36,6 +37,9 @@ class BulkOperationsController extends TenantController
     public function update(Request $request)
     {
         $this->initTenant($request);
+        // Одна пачка на всю правку: в журнале это одно действие человека
+        app(History::class)->source('bulk');
+
         [$ids, $set, $side] = $this->validated($request);
 
         if (!$set) {

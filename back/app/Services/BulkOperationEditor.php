@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Tenant\Operation;
+use App\Services\History\History;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -75,6 +77,7 @@ final class BulkOperationEditor
                 }
                 DB::connection($db)->table('operations')->where('id', $p['id'])
                     ->update($p['patch'] + ['updated_at' => now()]);
+                $this->recordHistory($db, $p['id'], $p['before'], $p['patch']);
                 $undo[] = ['id' => $p['id'], 'before' => $p['before']];
                 $updated++;
             }
@@ -116,8 +119,11 @@ final class BulkOperationEditor
             if (!$op) { $skipped++; continue; }                       // операция удалена
             if ($lockDate && substr((string) $op->date, 0, 10) <= $lockDate) { $skipped++; continue; }
 
+            $wasValues = (array) DB::connection($db)->table('operations')->where('id', $id)->first();
+
             DB::connection($db)->table('operations')->where('id', $id)
                 ->update($before + ['updated_at' => now()]);
+            $this->recordHistory($db, $id, array_intersect_key($wasValues, $before), $before);
             $restored++;
         }
 
@@ -125,6 +131,32 @@ final class BulkOperationEditor
             ->update(['reverted_at' => now(), 'updated_at' => now()]);
 
         return ['ok' => true, 'restored' => $restored, 'skipped' => $skipped];
+    }
+
+    /**
+     * Версия операции для журнала изменений.
+     *
+     * Массовая правка идёт построителем запросов — одним `UPDATE` на операцию,
+     * без модели, — и события модели её не видят. Поэтому версию пишем руками,
+     * перечитав операцию целиком: снимок обязан быть полным, иначе из него
+     * нечего будет восстанавливать.
+     */
+    private function recordHistory(string $db, int $id, array $before, array $patch): void
+    {
+        $row = DB::connection($db)->table('operations')->where('id', $id)->first();
+        if (!$row) return;
+
+        $model = (new Operation)->setConnection($db)->newFromBuilder((array) $row);
+
+        $diff = [];
+        foreach ($patch as $field => $now) {
+            $was = $before[$field] ?? null;
+            if ((string) $was === (string) $now) continue;
+
+            $diff[] = ['field' => $field, 'was' => $was, 'now' => $now];
+        }
+
+        if ($diff) app(History::class)->record($model, 'updated', $diff);
     }
 
     public function writeLog(string $db, array $filter, array $set, array $undo, int $affected, string $description): int

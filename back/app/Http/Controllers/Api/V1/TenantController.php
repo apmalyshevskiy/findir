@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\AccountScope;
+use App\Services\History\History;
 use App\Services\TenantService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,11 @@ abstract class TenantController extends Controller
         $this->tenantId = TenantService::tenantIdFromRequest($request);
         $this->dbName   = TenantService::connect($this->tenantId);
         $this->scope    = AccountScope::for($this->dbName, $this->currentUserId($request));
+
+        // Автора изменений журнал берёт отсюда: через initTenant проходит
+        // каждый запрос к данным тенанта, и другого места, где известны сразу
+        // и человек, и база, нет
+        app(History::class)->actor($this->currentUserId($request));
     }
 
     /**
@@ -49,6 +55,18 @@ abstract class TenantController extends Controller
             ->value('tokenable_id');
 
         return $id ? (int) $id : null;
+    }
+
+    /** id → имя сотрудника. Читается один раз на запрос: список короткий */
+    private ?array $userNames = null;
+
+    protected function userName(?int $id): ?string
+    {
+        if (!$id) return null;
+
+        $this->userNames ??= DB::connection($this->dbName)->table('users')->pluck('name', 'id')->all();
+
+        return $this->userNames[$id] ?? null;
     }
 
     /** Ответ на попытку прочитать или тронуть закрытый счёт. */

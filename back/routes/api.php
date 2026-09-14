@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\CategoryPostingController;
 use App\Http\Controllers\Api\V1\SettingsController;
 use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\OnboardingController;
+use App\Http\Controllers\Api\V1\ChangeLogController;
 use App\Http\Controllers\Api\V1\FundsController;
 use App\Http\Controllers\Api\V1\FundSchemeController;
 use App\Http\Controllers\Api\V1\FundPlanDocController;
@@ -66,6 +67,9 @@ Route::prefix('v1')->group(function () {
     // Первые шаги: состояние считается по данным, хранить нечего
     Route::get('/onboarding',               [OnboardingController::class, 'index']);
 
+    // Журнал изменений — общий по всем объектам
+    Route::get('/change-log',               [ChangeLogController::class, 'index']);
+
     // Массовая правка выбранных операций — до /operations/{id}
     Route::post('/operations/bulk-preview',          [BulkOperationsController::class, 'preview']);
     Route::post('/operations/bulk-update',           [BulkOperationsController::class, 'update']);
@@ -78,6 +82,10 @@ Route::prefix('v1')->group(function () {
     Route::put('/operations/{id}',    [OperationsController::class, 'update']);
     Route::post('/operations/{id}/posting', [OperationsController::class, 'setPosting']);
     Route::get ('/operations/{id}/changes', [OperationsController::class, 'changes']);
+    // История правок объекта. Раздел прав берётся по первому сегменту пути,
+    // поэтому маршруты живут при своих объектах, а не общим /history
+    Route::get ('/operations/{id}/history', [OperationsController::class, 'history']);
+    Route::post('/operations/{id}/restore/{version}', [OperationsController::class, 'restore']);
     Route::delete('/operations/{id}', [OperationsController::class, 'destroy']);
 
     // Банковская выписка
@@ -110,6 +118,8 @@ Route::prefix('v1')->group(function () {
     Route::post('/dictionary-templates/{key}/apply', [DictionaryTemplatesController::class, 'apply']);
 
     Route::get('/info',               [InfoController::class, 'index']);
+    Route::get('/info/{id}/history',  [InfoController::class, 'history']);
+    Route::post('/info/{id}/restore/{version}', [InfoController::class, 'restore']);
     Route::post('/info',              [InfoController::class, 'store']);
     Route::put('/info/{id}',          [InfoController::class, 'update']);
     Route::delete('/info/{id}',       [InfoController::class, 'destroy']);
@@ -139,6 +149,8 @@ Route::prefix('v1')->group(function () {
     Route::put('/documents/{id}',              [DocumentsController::class, 'update']);
     Route::delete('/documents/{id}',           [DocumentsController::class, 'destroy']);
     Route::get ('/documents/{id}/changes',     [DocumentsController::class, 'changes']);
+    Route::get ('/documents/{id}/history',     [DocumentsController::class, 'history']);
+    Route::post('/documents/{id}/restore/{version}', [DocumentsController::class, 'restore']);
     Route::post('/documents/{id}/post',        [DocumentsController::class, 'post']);
     Route::post('/documents/{id}/cancel',      [DocumentsController::class, 'cancel']);
 

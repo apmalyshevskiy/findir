@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\Operation;
+use App\Services\History\History;
+use App\Services\History\HistoryPresenter;
+use App\Services\History\HistoryRestorer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -210,9 +213,63 @@ class OperationsController extends TenantController
         return $out;
     }
 
+    /**
+     * GET /operations/{id}/history — кто и когда правил операцию.
+     *
+     * Не путать с /changes: там движения по счетам, то есть что операция дала
+     * в отчёты. Здесь — что с самой операцией делали люди.
+     */
+    public function history(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $op = $this->model()->newQuery()->withTrashed()->findOrFail($id);
+
+        // Замазанную операцию не раскрываем и через историю: иначе закрытый
+        // счёт читался бы окольным путём
+        if ($this->scope->hidesAny([$op->in_bi_id, $op->out_bi_id])) {
+            return $this->hiddenAccountError();
+        }
+
+        return response()->json([
+            'data' => (new HistoryPresenter($this->dbName))->forObject('operation', $id),
+        ]);
+    }
+
+    /**
+     * POST /operations/{id}/restore/{version} — вернуть операцию к версии.
+     *
+     * Проверки внутри HistoryRestorer: закрытый период по обеим датам,
+     * закрытые должностью счета, удалённые элементы справочников. Отказ
+     * приходит списком причин, а не одним «нельзя».
+     */
+    public function restore(Request $request, int $id, int $version)
+    {
+        $this->initTenant($request);
+        app(History::class)->source('manual');
+
+        $res = (new HistoryRestorer($this->dbName, $this->scope, $this->editLockDate()))
+            ->restore('operation', $id, $version);
+
+        return response()->json($res, $res['ok'] ? 200 : 422);
+    }
+
+    /**
+     * Откуда пришла правка — для журнала изменений.
+     *
+     * Операция и так несёт свой источник (выписка, помощник, документ), и
+     * выдумывать второй незачем: журнал показывает то же слово, что стоит в
+     * самой операции.
+     */
+    private function historySource(Request $request): void
+    {
+        app(History::class)->source($request->input('source') ?: 'manual');
+    }
+
     public function store(Request $request)
     {
         $this->initTenant($request);
+        $this->historySource($request);
 
         $data = $request->validate([
             'date'          => 'required|date',
@@ -249,6 +306,9 @@ class OperationsController extends TenantController
         $op = $this->model()->newQuery()->create(array_merge($data, $this->quantities($data), [
             'source'    => $data['source'] ?? 'manual',
             'is_posted' => $data['is_posted'] ?? true,
+            // Автора берём из токена, а не из тела запроса: иначе им можно
+            // было бы назваться кем угодно
+            'created_by' => $this->currentUserId($request),
         ]));
 
         $op->load(['inBalanceItem', 'outBalanceItem', 'inInfo1', 'inInfo2', 'outInfo1', 'outInfo2']);
@@ -259,6 +319,7 @@ class OperationsController extends TenantController
     public function update(Request $request, int $id)
     {
         $this->initTenant($request);
+        $this->historySource($request);
 
         $op = $this->model()->newQuery()->findOrFail($id);
 
@@ -493,6 +554,10 @@ class OperationsController extends TenantController
             'content'         => $op->content,
             'note'            => $op->note,
             'source'          => $op->source,
+            'created_by'      => $op->created_by,
+            // Имя, а не только номер: список показывает автора, и второй
+            // запрос за справочником сотрудников ему не нужен
+            'created_by_name' => $this->userName($op->created_by),
             'is_posted'       => (bool) $op->is_posted,
             'table_name'      => $op->table_name,   // ← добавлено: для определения источника
             'table_id'        => $op->table_id,     // ← добавлено: ID документа-источника

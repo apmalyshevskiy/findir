@@ -323,6 +323,27 @@ export default function OperationsPage() {
     getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
   }
 
+  /**
+   * Открыть операцию по ссылке `?open=123`.
+   *
+   * Так на неё ссылаются журнал изменений и список недавних: операция правится
+   * окном поверх журнала, отдельного адреса у неё нет. Читаем её отдельным
+   * запросом, а не ищем в загруженном списке: она могла быть за пределами
+   * выбранного периода — тогда ссылка вела бы в никуда.
+   */
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('open')
+    if (!id) return
+
+    getOperations({ ids: id })
+      .then(r => {
+        const op = (r.data.data || [])[0]
+        if (op) { setEditOperation(op); setShowForm(true) }
+      })
+      .catch(() => { /* удалена или закрыта должностью — журнал скажет сам */ })
+      .finally(() => window.history.replaceState({}, '', '/operations'))
+  }, [])
+
   const handleEdit = (op) => { setDraftOperation(null); setEditOperation(op); setShowForm(true) }
   const handleUseDraft = (payload) => { setEditOperation(null); setDraftOperation(payload); setShowForm(true) }
   const handleFormClose = () => { setShowForm(false); setEditOperation(null); setDraftOperation(null) }
@@ -398,6 +419,22 @@ export default function OperationsPage() {
   const totalAll      = summary?.amount ?? operations.reduce((sum, op) => sum + parseFloat(op.amount), 0)
   const totalSelected = operations.filter(op => selected.has(op.id)).reduce((sum, op) => sum + parseFloat(op.amount), 0)
   const hasMore       = operations.length < totalCount
+
+  /**
+   * Показывать ли автора у операций.
+   *
+   * Считаем по самому списку, а не по числу сотрудников: пока в базе работает
+   * один человек, колонка с его именем сверху донизу — шум. Имя появляется,
+   * как только в списке встречается чужая операция или авторов больше одного.
+   */
+  const showAuthors = useMemo(() => {
+    let me = null
+    try { me = Number(JSON.parse(localStorage.getItem('user') || '{}').id) || null } catch { /* нет данных */ }
+
+    const authors = [...new Set(operations.map(op => Number(op.created_by)).filter(Boolean))]
+
+    return authors.length > 1 || (authors.length === 1 && authors[0] !== me)
+  }, [operations])
 
   /**
    * Чем операция зацепилась за поиск.
@@ -762,6 +799,15 @@ export default function OperationsPage() {
                     </div>
                     <div className="text-xs text-gray-400 font-mono pt-0.5">
                       <span className={qId === op.id ? hitCell : ''}>{op.id}</span>
+                      {/* Автор — второй строкой под номером, а не отдельной
+                          колонкой: сетка и так из восьми колонок, а имя нужно
+                          лишь там, где в компании правда несколько человек */}
+                      {showAuthors && op.created_by_name && (
+                        <div className="text-[10px] text-gray-400 font-sans leading-tight mt-0.5 truncate"
+                          title={`Внёс: ${op.created_by_name}`}>
+                          {op.created_by_name.split(' ')[0]}
+                        </div>
+                      )}
                     </div>
                     <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
                     <div>

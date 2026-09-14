@@ -10,8 +10,40 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Document extends Model
 {
     use SoftDeletes;
+    use \App\Services\History\HasHistory;
 
     protected $table = 'documents';
+
+    public function historyEntity(): string
+    {
+        return 'document';
+    }
+
+    /**
+     * Версию документа пишет DocumentService, а не событие модели.
+     *
+     * Событие приходит, когда сохранена шапка, а строки ещё нет, — снимок
+     * получился бы без них. И правка одних строк, не тронувшая шапку, события
+     * вовсе не даёт, а версией быть обязана.
+     */
+    protected static function historyAuto(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Снимок документа — вместе со строками.
+     *
+     * Документ без строк восстановить нечем: шапка хранит только итог, а что
+     * именно поставили и по какой цене — в строках. Читаем их с той же связи,
+     * что и всё приложение, чтобы порядок совпадал с экраном.
+     */
+    public function historySnapshot(): array
+    {
+        return $this->attributesToArray() + [
+            'items' => $this->items()->get()->map->attributesToArray()->all(),
+        ];
+    }
 
     protected $fillable = [
         'date', 'number', 'external_number', 'external_date',

@@ -4,7 +4,9 @@ import Layout from '../components/Layout'
 import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
 import InfoTypeBadge from '../components/InfoTypeBadge'
 import InfoSelect from '../components/InfoSelect'
+import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
+import { pushRecent } from '../utils/recent'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -86,8 +88,25 @@ export default function InfoPage() {
   const [expenseOptions, setExpenseOptions] = useState([])
   const [copiedId, setCopiedId] = useState(null)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
 
   useEffect(() => { loadItems() }, [filterType])
+
+  /**
+   * Открыть элемент по ссылке `?open=123` — из журнала изменений и недавних.
+   *
+   * Ждём список: форма правки заполняется из самого элемента, а искать его
+   * отдельным запросом ради этого незачем — справочник и так уже загружен.
+   */
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get('open'))
+    if (!id || !items.length) return
+
+    const item = items.find(i => Number(i.id) === id)
+    if (item) openEdit(item)
+
+    window.history.replaceState({}, '', '/info')
+  }, [items])
 
   // Список статей расходов для выпадашки «Статья расходов по умолчанию» (тип flow).
   // Грузим при каждом открытии формы — список items при активном фильтре по типу
@@ -121,6 +140,8 @@ export default function InfoPage() {
 
   const openEdit = (item) => {
     setEditItem(item)
+    setShowHistory(false)   // у нового элемента своя история, старую не показываем
+    pushRecent('info', item.id, item.name)
     setForm({
       name:        item.name,
       type:        item.type,
@@ -525,6 +546,23 @@ export default function InfoPage() {
                   {loading ? 'Сохранение...' : editItem ? 'Обновить' : 'Сохранить'}
                 </button>
               </div>
+
+              {/* Свёрнута: карточку открывают, чтобы поправить, а не читать
+                  прошлое. Но раньше здесь истории не было вовсе — она жила
+                  только в карточке из выпадающих списков */}
+              {editItem && (
+                <div className="pt-3 border-t border-gray-100">
+                  {showHistory
+                    ? <ObjectHistory entity="info" id={editItem.id}
+                        /* Закрываем и перечитываем: в полях формы остались
+                           прежние значения, сохранение затёрло бы возврат */
+                        onRestored={() => { setShowForm(false); loadItems() }} />
+                    : <button type="button" onClick={() => setShowHistory(true)}
+                        className="text-xs text-blue-700 hover:underline">
+                        История изменений
+                      </button>}
+                </div>
+              )}
             </form>
           </div>
         </div>

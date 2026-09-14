@@ -10,6 +10,8 @@ import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import { SkeletonRows } from '../components/Busy'
 import OperationChanges from '../components/OperationChanges'
+import ObjectHistory from '../components/ObjectHistory'
+import { pushRecent } from '../utils/recent'
 import SharedInfoSelect from '../components/InfoSelect'
 import PeriodPicker from '../components/PeriodPicker'
 import usePersistedPeriod from '../hooks/usePersistedPeriod'
@@ -275,7 +277,16 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   const isPosted = doc?.status === 'posted'
 
   const [type, setType] = useState(typeProp || null)
-  const [tab, setTab]   = useState('fields')   // 'fields' | 'changes'
+  const [tab, setTab]   = useState('fields')   // 'fields' | 'changes' | 'history'
+
+  // Открытый документ попадает в «Недавние» — вернуться к нему после
+  // случайного закрытия иначе значит искать его в списке заново
+  useEffect(() => {
+    if (!doc?.id) return
+
+    const parts = [type?.name, doc.number ? `№ ${doc.number}` : null, doc.info_1_name].filter(Boolean)
+    pushRecent('document', doc.id, parts.join(' ') || `Документ #${doc.id}`)
+  }, [doc?.id, type?.name])
 
   useEffect(() => {
     if (typeProp) { setType(typeProp); return }
@@ -660,6 +671,10 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
               <span className="lowercase">{type?.name || 'документ'}</span>
               {isPosted && <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Проведён</span>}
             </h2>
+            {/* Автор хранился с самого начала, но на экран не выходил */}
+            {isEdit && doc?.created_by_name && (
+              <span className="text-xs text-gray-400">создал {doc.created_by_name}</span>
+            )}
             {/* Движения есть только у сохранённого документа — их порождает
                 проведение. В операцию, созданную документом, не зайти, поэтому
                 смотрят их отсюда */}
@@ -677,15 +692,26 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                     : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
                   Движения
                 </button>
+                <button type="button" onClick={() => setTab('history')}
+                  className={tab === 'history'
+                    ? 'text-blue-900 font-medium border-b-2 border-blue-900 pb-0.5'
+                    : 'text-gray-400 hover:text-gray-600 pb-0.5'}>
+                  История
+                </button>
               </div>
             )}
           </div>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
 
-        {tab === 'changes' ? (
+        {tab === 'changes' || tab === 'history' ? (
           <div className="p-6 space-y-4">
-            <OperationChanges documentId={doc.id} />
+            {tab === 'changes'
+              ? <OperationChanges documentId={doc.id} />
+              : <ObjectHistory entity="document" id={doc.id}
+                  /* Закрываем: в полях формы остались прежние шапка и строки,
+                     сохранение затёрло бы возврат */
+                  onRestored={onCancel} />}
             <div className="flex justify-end pt-2">
               <button type="button" onClick={onCancel}
                 className="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">

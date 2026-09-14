@@ -16,6 +16,10 @@ class AppServiceProvider extends ServiceProvider
             \Stancl\Tenancy\Contracts\TenantWithDatabase::class,
             \App\Models\Tenant::class
         );
+
+        // Журнал изменений держит контекст запроса — кто правит и откуда
+        // пришла правка, — поэтому один на запрос
+        $this->app->singleton(\App\Services\History\History::class);
     }
 
     public function boot(): void

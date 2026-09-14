@@ -2,14 +2,21 @@
 
 namespace App\Models\Tenant;
 
+use App\Services\History\HasHistory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Operation extends Model
 {
     use SoftDeletes;
+    use HasHistory;
 
     protected $table = 'operations';
+
+    public function historyEntity(): string
+    {
+        return 'operation';
+    }
 
     protected $fillable = [
     'date', 'project_id', 'amount', 'quantity',
@@ -22,6 +29,8 @@ class Operation extends Model
     'out_info_1_id', 'out_info_2_id', 'out_info_3_id',
     'note', 'content', 'source', 'is_posted',
     'external_id', 'external_date',
+    // Заполняется контроллером из токена, не из тела запроса
+    'created_by',
 ];
     protected $casts = [
         'date'          => 'datetime',

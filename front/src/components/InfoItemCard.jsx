@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getInfo, createInfo, updateInfo } from '../api/info'
 import { INFO_LABELS } from '../utils/infoLabels'
+import ObjectHistory from './ObjectHistory'
 
 /**
  * Карточка элемента справочника поверх формы.
@@ -57,6 +58,7 @@ const flatten = (nodes, depth = 0) => {
  */
 export default function InfoItemCard({ infoType, item = null, items = [], initialName = '', onSaved, onClose }) {
   const isEdit = !!item
+  const [showHistory, setShowHistory] = useState(false)
 
   const [fields, setFields] = useState(() => item ? {
     name:               item.name || '',
@@ -212,6 +214,19 @@ export default function InfoItemCard({ infoType, item = null, items = [], initia
               Отмена
             </button>
           </div>
+
+          {/* История — только у заведённого элемента и свёрнутая: карточку
+              открывают, чтобы поправить, а не читать прошлое */}
+          {isEdit && (
+            <div className="pt-2 border-t border-gray-100">
+              {showHistory
+                ? <ObjectHistory entity="info" id={item.id} onRestored={onClose} />
+                : <button type="button" onClick={() => setShowHistory(true)}
+                    className="text-xs text-blue-700 hover:underline">
+                    История изменений
+                  </button>}
+            </div>
+          )}
         </div>
       </div>
     </div>

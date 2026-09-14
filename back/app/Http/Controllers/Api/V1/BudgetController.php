@@ -101,7 +101,9 @@ class BudgetController extends TenantController
 
         $doc = $this->docModel()->newQuery()->create(array_merge($data, [
             'status'     => 'draft',
-            'created_by' => $request->attributes->get('user_id'),
+            // Было attributes->get('user_id') — такого атрибута никто не кладёт,
+            // и автор у всех бюджетов оставался пустым
+            'created_by' => $this->currentUserId($request),
         ]));
 
         return response()->json(['data' => $doc], 201);

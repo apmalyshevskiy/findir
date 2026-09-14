@@ -2,6 +2,8 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { Fragment, useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
 import HelpDrawer from './HelpDrawer'
+import RecentMenu from './RecentMenu'
+import ObjectOpener from './ObjectOpener'
 import Logo from './Logo'
 import { TopProgress } from './Busy'
 import api from '../api/client'
@@ -140,6 +142,9 @@ export default function Layout({ children }) {
         { path: '/roles',                label: 'Должности',         section: 'users',    group: 'Доступ' },
         // Дата запрета — тоже про доступ, только не «кому», а «до какого числа»
         { path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings', group: 'Доступ' },
+        // Журнал изменений — в «Доступ»: им пользуются, когда разбираются, кто
+        // что сделал, а это тот же круг вопросов, что должности и дата запрета
+        { path: '/change-log',           label: 'Журнал изменений',  section: 'settings', group: 'Доступ' },
 
         { path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries', group: 'Прочее' },
         { path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings',     group: 'Прочее' },
@@ -247,6 +252,9 @@ export default function Layout({ children }) {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Недавно открытые — личный список, живёт в браузере */}
+            <RecentMenu />
+
             {/* Справка про текущую страницу — одним нажатием и не уходя с неё */}
             <button onClick={() => setHelpOpen(true)} title="Справка по этой странице"
               className="w-6 h-6 rounded-full border border-gray-200 text-gray-400 text-xs font-medium hover:border-blue-300 hover:text-blue-600 transition-colors">
@@ -274,6 +282,10 @@ export default function Layout({ children }) {
       )}
 
       {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} />}
+
+      {/* Открывает объект поверх любой страницы — по зову из журнала
+          изменений и списка недавних */}
+      <ObjectOpener />
 
       <main className={`${SHELL} py-4 md:py-6`}>{children}</main>
     </div>

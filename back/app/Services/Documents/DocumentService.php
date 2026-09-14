@@ -144,6 +144,9 @@ class DocumentService
                 'out_info_3_id' => null,
                 'out_quantity'  => 0,
                 'source'        => 'document',
+                // Автор операции — автор документа: сами по себе эти операции
+                // не заводят, их порождает проведение
+                'created_by'    => $document->created_by,
                 'table_name'    => null,
                 'table_id'      => null,
                 'content'       => null,
