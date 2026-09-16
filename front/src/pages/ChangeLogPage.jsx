@@ -4,6 +4,7 @@ import api from '../api/client'
 import { BusyLabel, SkeletonRows } from '../components/Busy'
 import { openObject } from '../components/ObjectOpener'
 import { localDate } from '../utils/period'
+import { dayBound, whenUtc } from '../utils/datetime'
 
 /**
  * Журнал изменений: что вообще происходило в базе.
@@ -37,14 +38,6 @@ const ENTITY_OPTIONS = [
   { value: 'info',      label: 'Справочники' },
 ]
 
-const when = (iso) => {
-  if (!iso) return ''
-  const d = new Date(String(iso).replace(' ', 'T'))
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
-  })
-}
-
 const sel = 'px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
 
 export default function ChangeLogPage() {
@@ -67,6 +60,11 @@ export default function ChangeLogPage() {
     setLoading(true); setError('')
 
     const params = { page, ...Object.fromEntries(Object.entries(q).filter(([, v]) => v !== '')) }
+
+    // Границы дня шлём с поясом: в базе время в UTC, и без сдвига ночная
+    // правка выпадала бы из своего же дня
+    if (params.date_from) params.date_from = dayBound(params.date_from)
+    if (params.date_to)   params.date_to   = dayBound(params.date_to, true)
 
     api.get('/change-log', { params })
       .then(r => {
@@ -162,7 +160,7 @@ export default function ChangeLogPage() {
               {rows.map(r => (
                 <tr key={`${r.entity}-${r.entity_id}-${r.version}`} className="border-t border-gray-100 align-top hover:bg-blue-50/30">
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600 text-xs">
-                    {when(r.created_at)}
+                    {whenUtc(r.created_at)}
                     <div className={`${ACTION_TONE[r.action] || ''} font-medium`}>{r.action_label}</div>
                   </td>
 

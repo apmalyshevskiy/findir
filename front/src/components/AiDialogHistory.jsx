@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listDialogs, removeDialog } from '../api/aiDialogs'
+import { parseUtc } from '../utils/datetime'
 
 /**
  * Прошлые диалоги с помощником.
@@ -11,15 +12,8 @@ import { listDialogs, removeDialog } from '../api/aiDialogs'
  * Список свой у каждого: сервер отдаёт только диалоги того, кто спрашивает.
  */
 
-/**
- * Время из базы — UTC: часовой пояс приложения UTC, и `now()` пишет его как
- * есть. Разбираем как UTC и показываем в поясе браузера, иначе «сегодня 14:32»
- * разъезжается с часами на экране.
- */
-export const parseUtc = (s) => {
-  const t = String(s || '').replace(' ', 'T')
-  return new Date(/Z$|[+-]\d{2}:?\d{2}$/.test(t) ? t : `${t}Z`)
-}
+// Разбор времени переехал в utils/datetime: тем же занят журнал изменений
+export { parseUtc }
 
 const fmtWhen = (iso) => {
   const d = parseUtc(iso)

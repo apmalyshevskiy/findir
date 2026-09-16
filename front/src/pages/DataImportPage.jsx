@@ -8,6 +8,7 @@ import {
   getIntegrations, previewIntegration, runIntegrationSync, getIntegrationRuns,
   getIntegrationObject,
 } from '../api/integrations'
+import { parseUtc } from '../utils/datetime'
 
 /**
  * Загрузка данных из учётных систем — в два шага.
@@ -19,9 +20,11 @@ import {
  * Настройки живут отдельно — сюда заходят каждый день, туда один раз.
  */
 
+// Когда шла загрузка — время сервера, а он в UTC; дата самой строки ниже это
+// календарное число и сдвигать его нельзя
 const fmtDateTime = (iso) => {
   if (!iso) return null
-  const d = new Date(iso)
+  const d = parseUtc(iso)
   return isNaN(d) ? null : d.toLocaleString('ru-RU', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   })

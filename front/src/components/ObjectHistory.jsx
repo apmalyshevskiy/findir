@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import api from '../api/client'
 import { SkeletonRows } from './Busy'
+import { whenUtc } from '../utils/datetime'
 
 /**
  * История правок объекта: кто, когда, откуда и что изменил.
@@ -26,14 +27,62 @@ const ACTION_TONE = {
   restored: 'bg-violet-50 text-violet-700 ring-violet-200',
 }
 
-const when = (iso) => {
-  if (!iso) return ''
-  // Сервер отдаёт время без пояса — читаем его как местное, иначе вечерняя
-  // правка съезжала бы на три часа
-  const d = new Date(String(iso).replace(' ', 'T'))
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
-  })
+/**
+ * Что стало со строкой документа.
+ *
+ * Разница по составу приезжает с сервера уже разобранной: какая строка
+ * добавилась, какая ушла, что поменялось внутри оставшейся. Одного «2 строки →
+ * 3 строки» мало — по нему не видно, что именно дописали.
+ */
+const LINE_TONE = {
+  added:   { mark: '+', cls: 'text-green-700 bg-green-50 ring-green-200' },
+  removed: { mark: '−', cls: 'text-red-700 bg-red-50 ring-red-200' },
+  changed: { mark: '~', cls: 'text-blue-700 bg-blue-50 ring-blue-200' },
+  moved:   { mark: '↕', cls: 'text-gray-600 bg-gray-50 ring-gray-200' },
+}
+
+const LINE_LABEL = {
+  added: 'добавлена', removed: 'удалена', changed: 'изменена', moved: 'перемещена',
+}
+
+function DocumentLines({ lines }) {
+  return (
+    <div className="mt-1 space-y-1">
+      {lines.map((l, i) => {
+        const tone = LINE_TONE[l.kind] || LINE_TONE.changed
+
+        return (
+          <div key={i} className="text-xs">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className={`px-1 rounded ring-1 font-mono leading-4 ${tone.cls}`}>{tone.mark}</span>
+              <span className="text-gray-500">
+                {/* Номер до правки показываем, только если строка переехала */}
+                Строка {l.was_n ? `${l.was_n} → ${l.n}` : l.n}
+              </span>
+              <span className="text-gray-800 font-medium">{l.title}</span>
+              {l.kind !== 'changed' && <span className="text-gray-500">{l.summary}</span>}
+              <span className="text-gray-400">· {LINE_LABEL[l.kind]}</span>
+            </div>
+
+            {l.changes.length > 0 && (
+              <table className="ml-6 mt-0.5">
+                <tbody>
+                  {l.changes.map((c, j) => (
+                    <tr key={j} className="align-top">
+                      <td className="pr-3 py-0.5 text-gray-500 whitespace-nowrap">{c.label}</td>
+                      <td className="pr-2 py-0.5 text-gray-400 line-through">{c.was}</td>
+                      <td className="pr-2 py-0.5 text-gray-300">→</td>
+                      <td className="py-0.5 text-gray-800 font-medium">{c.now}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 export default function ObjectHistory({ entity, id, onRestored }) {
@@ -103,13 +152,19 @@ export default function ObjectHistory({ entity, id, onRestored }) {
         </div>
       )}
 
-      {rows.map(r => (
+      {rows.map(r => {
+        // Состав строк показываем разбором, а не строкой таблицы: у него свой
+        // вид. Если разбирать нечего, он остаётся обычным «2 строки → 3 строки»
+        const lines = r.changes.find(c => c.field === 'items' && c.lines?.length)
+        const plain = r.changes.filter(c => c !== lines)
+
+        return (
         <div key={r.version} className="border-l-2 border-gray-100 pl-3">
           <div className="flex items-baseline gap-2 flex-wrap text-xs">
             <span className={`px-1.5 py-0.5 rounded ring-1 font-medium ${ACTION_TONE[r.action] || ACTION_TONE.updated}`}>
               {r.action_label}
             </span>
-            <span className="text-gray-700">{when(r.created_at)}</span>
+            <span className="text-gray-700">{whenUtc(r.created_at)}</span>
             {/* Автора может не быть: правка из расписания или очереди */}
             <span className="text-gray-500">{r.user_name || 'система'}</span>
             {r.source !== 'manual' && <span className="text-gray-400">· {r.source_label}</span>}
@@ -125,10 +180,10 @@ export default function ObjectHistory({ entity, id, onRestored }) {
             <span className={`text-gray-300 ${r.version !== latest ? '' : 'ml-auto'}`}>в. {r.version}</span>
           </div>
 
-          {r.changes.length > 0 && (
+          {plain.length > 0 && (
             <table className="mt-1.5 text-xs">
               <tbody>
-                {r.changes.map((c, i) => (
+                {plain.map((c, i) => (
                   <tr key={i} className="align-top">
                     <td className="pr-3 py-0.5 text-gray-500 whitespace-nowrap">{c.label}</td>
                     <td className="pr-2 py-0.5 text-gray-400 line-through">{c.was}</td>
@@ -139,8 +194,19 @@ export default function ObjectHistory({ entity, id, onRestored }) {
               </tbody>
             </table>
           )}
+
+          {lines && (
+            <div className="mt-1.5">
+              <div className="text-xs text-gray-500">
+                {lines.label}: <span className="text-gray-400 line-through">{lines.was}</span>
+                {' → '}<span className="text-gray-800">{lines.now}</span>
+              </div>
+              <DocumentLines lines={lines.lines} />
+            </div>
+          )}
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { SkeletonRows } from '../components/Busy'
 import {
   getUsers, createUser, updateUser, setUserPassword, deleteUser, getRoles, changeMyPassword,
 } from '../api/users'
+import { whenUtc } from '../utils/datetime'
 
 /**
  * Пользователи компании — те, кто входит в систему.
@@ -23,11 +24,8 @@ import {
 const ic  = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const lbl = 'block text-xs font-medium text-gray-500 mb-1'
 
-const fmtDate = (s) => {
-  if (!s) return 'ни разу'
-  const d = new Date(String(s).replace(' ', 'T'))
-  return isNaN(d) ? s : d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
+// Время входа записал сервер, а он живёт в UTC — см. utils/datetime
+const fmtDate = (s) => s ? whenUtc(s) : 'ни разу'
 
 const EMPTY = { name: '', email: '', password: '', role_id: '' }
 

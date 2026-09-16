@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Services\History\HistoryPresenter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -21,6 +22,20 @@ class ChangeLogController extends TenantController
 {
     private const PER_PAGE = 100;
 
+    /**
+     * Граница отбора по дате — в том же поясе, в каком лежат записи.
+     *
+     * Время правок хранится в UTC, а отбирают по местному календарю. Браузер
+     * шлёт границу днём со сдвигом (`2026-09-15T00:00:00+03:00`) — переводим её
+     * в UTC, иначе ночная правка не попадала бы в свой же день.
+     */
+    private function moment(string $value, bool $endOfDay): string
+    {
+        return str_contains($value, 'T')
+            ? Carbon::parse($value)->utc()->format('Y-m-d H:i:s')
+            : $value . ($endOfDay ? ' 23:59:59' : ' 00:00:00');
+    }
+
     public function index(Request $request)
     {
         $this->initTenant($request);
@@ -31,8 +46,8 @@ class ChangeLogController extends TenantController
         if ($request->source)    $query->where('source', $request->source);
         if ($request->batch)     $query->where('batch', $request->batch);
         if ($request->filled('user_id')) $query->where('user_id', (int) $request->user_id);
-        if ($request->date_from) $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
-        if ($request->date_to)   $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+        if ($request->date_from) $query->where('created_at', '>=', $this->moment($request->date_from, false));
+        if ($request->date_to)   $query->where('created_at', '<=', $this->moment($request->date_to, true));
 
         // Правки по закрытым должностью счетам не показываем и здесь: иначе
         // закрытый счёт читался бы через журнал

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Layout from '../components/Layout'
 import { SkeletonRows } from '../components/Busy'
 import api from '../api/client'
+import { parseUtc } from '../utils/datetime'
 
 /**
  * Расход на ИИ.
@@ -25,9 +26,10 @@ const num = (v) => Number(v || 0).toLocaleString('ru-RU')
 const monthStart = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01` }
 const today = () => new Date().toISOString().slice(0, 10)
 
+// Время вызова записал сервер, а он в UTC — см. utils/datetime
 const fmtDateTime = (s) => {
   if (!s) return '—'
-  const d = new Date(String(s).replace(' ', 'T'))
+  const d = parseUtc(s)
   return isNaN(d) ? s : d.toLocaleString('ru-RU', {
     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
   })
