@@ -50,9 +50,24 @@ const ROW_STATUS = {
   // без нужды перепроводить документ незачем
   loaded:  { label: 'уже загружена',  chip: 'bg-green-50 text-green-700 ring-green-200', row: 'bg-green-50/40',   pick: true,  auto: false },
   locked:  { label: 'период закрыт',  chip: 'bg-gray-100 text-gray-500 ring-gray-200',   row: 'bg-gray-50 opacity-70', pick: false, auto: false },
+  // Смена ещё идёт: чеки в неё придут, и документ пришлось бы перепроводить
+  // после каждой продажи
+  open:    { label: 'ещё не закрыта', chip: 'bg-gray-100 text-gray-500 ring-gray-200',   row: 'bg-gray-50 opacity-70', pick: false, auto: false },
+  empty:   { label: 'без продаж',     chip: 'bg-gray-100 text-gray-400 ring-gray-200',   row: 'bg-gray-50 opacity-70', pick: false, auto: false },
+  // Точка продаж не заполнена в настройках — счетов, куда класть, нет
+  unmapped:{ label: 'точка не настроена', chip: 'bg-amber-50 text-amber-900 ring-amber-200', row: 'bg-amber-50/40', pick: false, auto: false },
 }
 
-const ORDER = ['new', 'changed', 'deleted', 'loaded', 'locked']
+const ORDER = ['new', 'changed', 'deleted', 'loaded', 'unmapped', 'open', 'empty', 'locked']
+
+/** Колонки по умолчанию — если драйвер своих не прислал */
+const DEFAULT_COLUMNS = [
+  { key: 'number',    label: 'Документ',  kind: 'text' },
+  { key: 'date',      label: 'Дата',      kind: 'date' },
+  { key: 'supplier',  label: 'Поставщик', kind: 'partner' },
+  { key: 'warehouse', label: 'Склад',     kind: 'text' },
+  { key: 'amount',    label: 'Сумма',     kind: 'money' },
+]
 
 const RUN_STATUS = {
   ok:      { label: 'успешно',            cls: 'bg-green-50 text-green-700 ring-green-200' },
@@ -114,11 +129,15 @@ export default function DataImportPage() {
 }
 
 /**
- * Что внутри накладной и как она ложится в учёт.
+ * Что внутри объекта источника и как он ложится в учёт.
  *
- * Состав в проводки не переносится — вся накладная идёт одной строкой на
- * служебную позицию. Поэтому показываем обе стороны рядом: что закупили и
- * что из этого получилось у нас.
+ * Состав в проводки не переносится — и накладная, и смена идут одной строкой
+ * на служебную позицию. Поэтому показываем обе стороны рядом: что было в
+ * источнике и что из этого получилось у нас.
+ *
+ * Названия полей и колонок приходят с сервера: у накладной поставщик и
+ * позиции, у смены точка и чеки. Разбирать здесь, что за сущность раскрыли,
+ * значило бы держать на странице знание о каждой учётной системе.
  */
 function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
   const [data, setData]   = useState(null)
@@ -139,48 +158,32 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
   if (error)  return <div className="text-sm text-red-600">{error}</div>
   if (!data)  return <div className="text-sm text-gray-400">Запрашиваю состав...</div>
 
-  const p = data.posting || {}
+  const cols = data.columns || {}
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
 
       {/* ── Что в источнике ─────────────────────────────────────── */}
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">В накладной</div>
+        <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">{data.title || 'В источнике'}</div>
 
-        <dl className="text-xs text-gray-600 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mb-3">
-          <dt className="text-gray-400">Поставщик</dt>
-          <dd className="text-gray-800">
-            {data.supplier || '—'}
-            {data.inn && <span className="text-gray-500"> · ИНН {data.inn}</span>}
-            {data.kpp && <span className="text-gray-500"> · КПП {data.kpp}</span>}
-          </dd>
-
-          <dt className="text-gray-400">Склад</dt>
-          <dd>{data.warehouse || '—'}</dd>
-
-          <dt className="text-gray-400">Юрлицо</dt>
-          <dd>{data.legal_entity || '—'}</dd>
-
-          {data.processed_at && <><dt className="text-gray-400">Проведена</dt><dd>{data.processed_at}</dd></>}
-          {data.vat_amount > 0 && <><dt className="text-gray-400">В том числе НДС</dt><dd>{money(data.vat_amount)} ₽</dd></>}
-          {data.comment && <><dt className="text-gray-400">Комментарий</dt><dd>{data.comment}</dd></>}
-        </dl>
+        <Facts rows={data.facts} className="mb-3" />
 
         {data.items?.length > 0 ? (
           <table className="w-full text-xs">
             <thead>
               <tr className="text-gray-400 text-left">
-                <th className="py-1 pr-2 font-medium">Позиция</th>
-                <th className="py-1 pr-2 font-medium text-right">Кол-во</th>
-                <th className="py-1 pr-2 font-medium text-right">Цена</th>
-                <th className="py-1 font-medium text-right">Сумма</th>
+                <th className="py-1 pr-2 font-medium">{cols.name || 'Позиция'}</th>
+                <th className="py-1 pr-2 font-medium text-right">{cols.quantity || 'Кол-во'}</th>
+                <th className="py-1 pr-2 font-medium text-right">{cols.price || 'Цена'}</th>
+                <th className="py-1 font-medium text-right">{cols.amount || 'Сумма'}</th>
               </tr>
             </thead>
             <tbody>
               {data.items.map((it, k) => (
                 <tr key={k} className="border-t border-gray-100">
                   <td className="py-1 pr-2 text-gray-700">{it.name}</td>
+                  {/* Второй столбец бывает и числом, и временем чека */}
                   <td className="py-1 pr-2 text-right tabular-nums text-gray-600">{it.quantity}</td>
                   <td className="py-1 pr-2 text-right tabular-nums text-gray-600">{money(it.price)}</td>
                   <td className="py-1 text-right tabular-nums text-gray-800">{money(it.amount)}</td>
@@ -193,7 +196,7 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
             </tbody>
           </table>
         ) : (
-          <div className="text-xs text-gray-400">Позиции не указаны</div>
+          <div className="text-xs text-gray-400">Состав не указан</div>
         )}
       </div>
 
@@ -203,34 +206,9 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
           {data.document_id ? 'Загружено как' : 'Ляжет в учёт как'}
         </div>
 
-        <dl className="text-xs text-gray-600 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-          <dt className="text-gray-400">Проект</dt>
-          <dd className="text-gray-800">{p.project || '—'}</dd>
+        <Facts rows={data.posting?.rows} />
 
-          <dt className="text-gray-400">Дебет</dt>
-          <dd className="text-gray-800">{p.debit || '—'}</dd>
-
-          <dt className="text-gray-400">Кредит</dt>
-          <dd className="text-gray-800">{p.credit || '—'}</dd>
-
-          <dt className="text-gray-400">Номенклатура</dt>
-          <dd>{p.product || '—'}</dd>
-
-          <dt className="text-gray-400">Количество</dt>
-          <dd className="tabular-nums">{money(p.quantity)}</dd>
-
-          <dt className="text-gray-400">Цена</dt>
-          <dd className="tabular-nums">{money(p.price)} ₽</dd>
-
-          <dt className="text-gray-400">Сумма</dt>
-          <dd className="tabular-nums text-gray-900 font-medium">{money(p.amount)} ₽</dd>
-        </dl>
-
-        <p className="text-[11px] text-gray-400 mt-2 max-w-md">
-          Позиции накладной в проводки не переносятся: вся сумма идёт одной
-          строкой на служебную номенклатуру по цене 1 ₽, поэтому количество на
-          складском счёте равно рублям.
-        </p>
+        {data.note && <p className="text-[11px] text-gray-400 mt-2 max-w-md">{data.note}</p>}
 
         {data.document_id && (
           <button onClick={() => onPeek(data.document_id)}
@@ -243,11 +221,51 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
   )
 }
 
+/** Колонки, которые прижимаются вправо и набираются цифрами в колонку */
+const NUMERIC = new Set(['money', 'count'])
+
+/** Одна ячейка списка: как показать значение, говорит `kind` колонки */
+function Cell({ row, col }) {
+  const v = row[col.key]
+
+  if (col.kind === 'money') return <>{money(v)} ₽</>
+  if (col.kind === 'date')  return <span className="whitespace-nowrap">{fmtDate(v)}</span>
+  if (col.kind === 'count') return <>{v ?? 0}</>
+
+  if (col.kind === 'partner') {
+    return (
+      <span className="text-gray-700">
+        {v || '—'}
+        {row.inn && <span className="text-gray-400 text-xs"> · ИНН {row.inn}</span>}
+      </span>
+    )
+  }
+
+  return <span className="text-gray-800">{v || '—'}</span>
+}
+
+/** Список «подпись — значение»: и реквизиты источника, и будущая проводка */
+function Facts({ rows, className = '' }) {
+  if (!rows?.length) return null
+
+  return (
+    <dl className={`text-xs text-gray-600 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 ${className}`}>
+      {rows.map((f, k) => (
+        <Fragment key={k}>
+          <dt className="text-gray-400 whitespace-nowrap">{f.label}</dt>
+          <dd className="text-gray-800">{f.value}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  )
+}
+
 function ImportCard({ integration, onDone, onPeek }) {
   // Период у каждой интеграции свой: склады и банк закрывают в разные сроки
   const [period, setPeriod] = usePersistedPeriod(`import:${integration.id}`, 'month')
 
   const [rows, setRows]       = useState(null)   // null — список ещё не запрашивали
+  const [columns, setColumns] = useState(DEFAULT_COLUMNS)
   const [picked, setPicked]   = useState(() => new Set())
   const [runs, setRuns]       = useState([])
   const [busy, setBusy]       = useState('')
@@ -285,6 +303,7 @@ function ImportCard({ integration, onDone, onPeek }) {
       const r = await previewIntegration(integration.id, { entity, from: period.from, to: period.to })
       const list = r.data.data || []
       setRows(list)
+      setColumns(r.data.columns?.length ? r.data.columns : DEFAULT_COLUMNS)
       // По умолчанию отмечаем то, что что-то изменит: уже загруженное трогать
       // незачем, но отметить его вручную можно
       setPicked(new Set(list.filter(x => ROW_STATUS[x.status]?.auto).map(x => x.id)))
@@ -374,7 +393,7 @@ function ImportCard({ integration, onDone, onPeek }) {
 
             <button onClick={show} disabled={busy === 'preview'}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-              {busy === 'preview' ? 'Смотрю...' : 'Показать за период'}
+              {busy === 'preview' ? 'Загружаю...' : 'Загрузить за период'}
             </button>
           </div>
 
@@ -418,11 +437,11 @@ function ImportCard({ integration, onDone, onPeek }) {
                           checked={allPicked} onChange={toggleAll}
                           disabled={selectable.length === 0} />
                       </th>
-                      <th className="py-2 px-3 font-medium">Документ</th>
-                      <th className="py-2 px-3 font-medium">Дата</th>
-                      <th className="py-2 px-3 font-medium">Поставщик</th>
-                      <th className="py-2 px-3 font-medium">Склад</th>
-                      <th className="py-2 px-3 font-medium text-right">Сумма</th>
+                      {columns.map(c => (
+                        <th key={c.key} className={`py-2 px-3 font-medium ${NUMERIC.has(c.kind) ? 'text-right' : ''}`}>
+                          {c.label}
+                        </th>
+                      ))}
                       <th className="py-2 px-3 font-medium">Состояние</th>
                     </tr>
                   </thead>
@@ -440,21 +459,20 @@ function ImportCard({ integration, onDone, onPeek }) {
                                 onChange={() => toggle(r.id)}
                                 onClick={e => e.stopPropagation()} />
                             </td>
-                            <td className="py-2 px-3">
-                              <button onClick={e => { e.stopPropagation(); toggleDetail(r.id) }}
-                                title="Показать состав накладной"
-                                className="text-gray-400 hover:text-gray-700 mr-1.5 w-3 inline-block">
-                                {opened === r.id ? '▾' : '▸'}
-                              </button>
-                              <span className="text-gray-800">{r.number || '—'}</span>
-                            </td>
-                            <td className="py-2 px-3 text-gray-600 whitespace-nowrap">{fmtDate(r.date)}</td>
-                            <td className="py-2 px-3 text-gray-700">
-                              {r.supplier || '—'}
-                              {r.inn && <span className="text-gray-400 text-xs"> · ИНН {r.inn}</span>}
-                            </td>
-                            <td className="py-2 px-3 text-gray-600">{r.warehouse || '—'}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-gray-800">{money(r.amount)} ₽</td>
+                            {columns.map((c, ci) => (
+                              <td key={c.key}
+                                  className={`py-2 px-3 ${NUMERIC.has(c.kind) ? 'text-right tabular-nums text-gray-800' : 'text-gray-600'}`}>
+                                {/* Раскрывашка живёт в первой колонке, какой бы она ни была */}
+                                {ci === 0 && (
+                                  <button onClick={e => { e.stopPropagation(); toggleDetail(r.id) }}
+                                    title="Показать состав"
+                                    className="text-gray-400 hover:text-gray-700 mr-1.5 w-3 inline-block">
+                                    {opened === r.id ? '▾' : '▸'}
+                                  </button>
+                                )}
+                                <Cell row={r} col={c} />
+                              </td>
+                            ))}
                             <td className="py-2 px-3 whitespace-nowrap">
                               <span className={`px-2 py-0.5 rounded text-[11px] font-medium ring-1 ${st.chip}`}>
                                 {st.label}
@@ -470,7 +488,7 @@ function ImportCard({ integration, onDone, onPeek }) {
 
                           {opened === r.id && (
                             <tr className="border-t border-gray-50 bg-gray-50/60">
-                              <td colSpan={7} className="px-3 py-3">
+                              <td colSpan={columns.length + 2} className="px-3 py-3">
                                 <ObjectDetail
                                   key={r.id}
                                   integrationId={integration.id}

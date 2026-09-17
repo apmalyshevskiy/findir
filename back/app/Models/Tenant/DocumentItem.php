@@ -7,10 +7,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class DocumentItem extends Model
 {
+    /** Продажа или покупка — то, ради чего документ существует. */
+    public const KIND_SALE = 'sale';
+
+    /** Оплата: чем закрыли долг покупателя. Только у расходной накладной. */
+    public const KIND_PAYMENT = 'payment';
+
+    /** Налог с продажи: начисление в расходы. */
+    public const KIND_VAT = 'vat';
+
+    public const KINDS = [self::KIND_SALE, self::KIND_PAYMENT, self::KIND_VAT];
+
     protected $table = 'document_items';
 
     protected $fillable = [
-        'document_id', 'sort_order',
+        'document_id', 'sort_order', 'kind',
         'bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
         // Корреспондирующая сторона именно этой строки. Пусто — берётся из
         // шапки: так статья ДДС бывает своя у каждой строки авансового отчёта,

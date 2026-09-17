@@ -35,6 +35,12 @@ final class OneCBp3FileDriver implements IntegrationDriver
         return [self::ENTITY => 'Проводки'];
     }
 
+    /** Списка проводок на этой странице нет — он на своём экране. */
+    public function columns(string $entity): array
+    {
+        return [];
+    }
+
     /** Доступов нет: файл приносит человек, паролей у файла не бывает. */
     public function normalizeCredentials(array $credentials): array
     {

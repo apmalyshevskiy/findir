@@ -90,6 +90,7 @@ class HistoryPresenter
         'ai'          => 'ИИ-помощник',
         'bulk'        => 'массовая правка',
         'onec'        => 'загрузка 1С',
+        'fusionpos'   => 'загрузка FUSIONPOS',
         'bank_import' => 'банковская выписка',
         'document'    => 'документ',
         'auto'        => 'автоматически',

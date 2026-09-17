@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Tenant\Info;
 use App\Models\Tenant\Integration;
 use App\Models\Tenant\IntegrationRun;
 use App\Services\History\History;
@@ -136,10 +137,13 @@ class OneCController extends TenantController
             'items.*.name'    => 'required|string|max:255',
             'items.*.mode'    => 'required|string|in:bind,skip,auto',
             'items.*.info_id' => 'nullable|integer',
+            'items.*.inn'     => 'nullable|string|max:20',
         ]);
 
         $integration = $this->resolve($request);
         if (!$integration) return $this->noIntegration();
+
+        app(History::class)->source('onec');
 
         $items = [];
         foreach ($data['items'] ?? [] as $row) {
@@ -154,11 +158,17 @@ class OneCController extends TenantController
 
         if ($resp = $this->checkTargets($items, 'info', 'элемент справочника')) return $resp;
 
-        DB::connection($this->dbName)->transaction(
-            fn() => $this->writeLinks($integration, PostingsImporter::ENTITY_SUBCONTO, $items)
-        );
+        $inn = 0;
 
-        return response()->json(['ok' => true, 'saved' => count($items)]);
+        DB::connection($this->dbName)->transaction(function () use ($integration, $items, $data, &$inn) {
+            $this->writeLinks($integration, PostingsImporter::ENTITY_SUBCONTO, $items);
+
+            foreach ($data['items'] ?? [] as $row) {
+                if ($row['mode'] === 'bind') $inn += $this->bindInn($row);
+            }
+        });
+
+        return response()->json(['ok' => true, 'saved' => count($items), 'inn_filled' => $inn]);
     }
 
     /**
@@ -186,6 +196,53 @@ class OneCController extends TenantController
                 'project_id'     => $this->projectId($integration),
             ],
         ]);
+    }
+
+    /**
+     * ИНН привязываемому контрагенту, если своего у него нет.
+     *
+     * Привязка — это утверждение «наш элемент и контрагент из 1С одно и то же».
+     * Раз так, ИНН из выгрузки относится и к нашему элементу. Заполненное не
+     * трогаем: своё значение вернее чужого файла.
+     *
+     * @return int 1, если проставили
+     */
+    private function bindInn(array $row): int
+    {
+        $inn = preg_replace('/\D/', '', (string) ($row['inn'] ?? ''));
+
+        if (!in_array(strlen($inn), [10, 12], true)) return 0;
+
+        $item = Info::on($this->dbName)->find((int) ($row['info_id'] ?? 0));
+
+        if (!$item || $item->type !== 'partner' || trim((string) $item->inn) !== '') return 0;
+
+        $item->inn = $inn;
+        $item->save();
+
+        return 1;
+    }
+
+    /**
+     * POST /onec/postings/inn — проставить контрагентам ИНН из файла.
+     *
+     * Отдельным действием, а не только попутно с загрузкой проводок: справочник
+     * уже наполнен, ИНН в нём нет, и заводить ради этого операции незачем. Файл
+     * тот же самый — он и так лежит на экране.
+     */
+    public function fillInn(Request $request)
+    {
+        $this->initTenant($request);
+
+        app(History::class)->source('onec');
+
+        $integration = $this->resolve($request);
+        if (!$integration) return $this->noIntegration();
+
+        $file = $this->readFile($request);
+        if (!is_array($file)) return $file;
+
+        return response()->json(['data' => $this->importer($integration)->fillInn($file)]);
     }
 
     /**

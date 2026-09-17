@@ -335,10 +335,21 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   const [costCalcLoading, setCostCalcLoading] = useState(false)
   const [costWarnings, setCostWarnings]       = useState([]) // строки с отрицательным остатком
 
+  /**
+   * Строки продажи и всё остальное.
+   *
+   * У расходной накладной, загруженной из кассы, кроме продажи есть оплаты и
+   * налог: они тоже строки документа, но означают другое и правятся не здесь.
+   * Пустой вид — продажа: так строка выглядела до появления оплат.
+   */
+  const isSaleItem = (i) => (i.kind || 'sale') === 'sale'
+  const saleItems  = form.items.filter(isSaleItem)
+  const otherItems = form.items.filter(i => !isSaleItem(i))
+
   // Рассчитать себестоимость для всех строк без amount_cost (или для всех)
   const calcCost = async (forceAll = false) => {
     if (!isOutgoing) return
-    const itemsToCalc = form.items.filter(i =>
+    const itemsToCalc = saleItems.filter(i =>
       i.bi_id && (forceAll || !i.amount_cost || parseFloat(i.amount_cost) === 0)
     )
     if (itemsToCalc.length === 0) return
@@ -859,7 +870,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                 </div>
 
                 <div className="space-y-1">
-                  {form.items.map((item, idx) => {
+                  {saleItems.map((item, idx) => {
                     const itemBi   = balanceItems.find(b => b.id == item.bi_id)
                     // Аналитика корреспондирующей стороны берётся у того счёта,
                     // который в этой строке и стоит: строка могла его переопределить
@@ -1073,12 +1084,50 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
               </>
             )}
 
-            {/* Итого */}
-            {form.items.length > 0 && (
+            {/* Оплаты и налог — строки, которые пришли из кассы.
+                Показываем, но не даём править: их суммы посчитаны по чекам
+                смены, и поправить их здесь значит разойтись с источником.
+                Сохраняются как есть — иначе правка шапки стирала бы их */}
+            {otherItems.length > 0 && (
+              <div className="mt-4">
+                <div className="text-xs text-gray-500 mb-1.5">Чем закрыт долг покупателя</div>
+                <div className="border border-gray-100 rounded-lg overflow-clip">
+                  {otherItems.map(item => {
+                    const bi   = balanceItems.find(b => b.id == item.bi_id)
+                    const head = balanceItems.find(b => b.id == item.head_bi_id)
+
+                    return (
+                      <div key={item._key}
+                        className="flex items-baseline gap-2 flex-wrap px-3 py-1.5 border-b border-gray-50 last:border-0 text-sm">
+                        <span className={`px-1.5 py-0.5 rounded text-[11px] ring-1 ${
+                          item.kind === 'vat'
+                            ? 'bg-amber-50 text-amber-800 ring-amber-200'
+                            : 'bg-blue-50 text-blue-700 ring-blue-200'
+                        }`}>
+                          {item.kind === 'vat' ? 'налог' : 'оплата'}
+                        </span>
+                        <span className="text-gray-700">
+                          {bi ? `${bi.code} ${bi.name}` : '—'}
+                          {head && <span className="text-gray-400"> ← {head.code} {head.name}</span>}
+                        </span>
+                        <span className="text-gray-500 text-xs">{item.content}</span>
+                        <span className="ml-auto tabular-nums font-medium text-gray-800">
+                          {fmt(parseFloat(item.amount) || 0)} ₽
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Итого — только продажи: оплаты закрывают ту же выручку, и
+                складывать их с ней значило бы удвоить документ */}
+            {saleItems.length > 0 && (
               <div className="flex justify-end mt-3 pt-3 border-t border-gray-100">
                 <div className="text-sm text-gray-500 mr-4">Итого:</div>
                 <div className="text-sm font-semibold text-gray-800">
-                  {fmt(form.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))} ₽
+                  {fmt(saleItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))} ₽
                 </div>
               </div>
             )}

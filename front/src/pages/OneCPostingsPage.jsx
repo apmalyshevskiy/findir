@@ -9,7 +9,7 @@ import { getOperations } from '../api/operations'
 import { getInfo } from '../api/info'
 import {
   getOneCSettings, saveOneCSettings, saveOneCAnalytics,
-  previewOneCPostings, importOneCPostings,
+  previewOneCPostings, importOneCPostings, fillOneCInn,
 } from '../api/onec'
 
 /**
@@ -97,6 +97,7 @@ export default function OneCPostingsPage() {
 
   const [diffRow, setDiffRow]   = useState(null)  // проводка, чьи расхождения смотрим
   const [editOp, setEditOp]     = useState(null)  // операция, открытая из проводки
+  const [innDone, setInnDone]   = useState('')    // итог проставления ИНН
 
   useEffect(() => {
     getBalanceItemsList().then(r => setChart(r.data.data || r.data || [])).catch(() => {})
@@ -156,6 +157,7 @@ export default function OneCPostingsPage() {
     const f = e.target.files?.[0]
     if (!f) return
     setFile(f)
+    setInnDone('')
     run(f)
   }
 
@@ -187,10 +189,31 @@ export default function OneCPostingsPage() {
 
     saveOneCAnalytics({
       integration_id: integrationId || null,
-      items: [{ kind: sub.kind, name: sub.name, mode, info_id: infoId }],
+      // ИНН уходит вместе с привязкой: раз человек сказал «это тот самый
+      // контрагент», ИНН из файла относится и к нашему элементу
+      items: [{ kind: sub.kind, name: sub.name, mode, info_id: infoId, inn: sub.inn || null }],
     })
       .then(() => { setBinding(null); if (file) run(file) })
       .catch(e => setError(e.response?.data?.message || 'Не удалось сохранить привязку'))
+      .finally(() => setBusy(false))
+  }
+
+  /**
+   * Проставить ИНН контрагентам из файла.
+   *
+   * Отдельно от загрузки проводок: справочник уже наполнен, ИНН в нём нет, и
+   * заводить операции ради этого незачем. Заполняется только пустое.
+   */
+  const fillInn = () => {
+    setBusy(true); setError('')
+
+    fillOneCInn(file, integrationId)
+      .then(r => {
+        const n = r.data.data?.filled || 0
+        setInnDone(n === 0 ? 'Проставлять было нечего' : `Проставлен ИНН у ${n} контрагентов`)
+        run(file)
+      })
+      .catch(e => setError(e.response?.data?.message || 'Не удалось проставить ИНН'))
       .finally(() => setBusy(false))
   }
 
@@ -311,7 +334,13 @@ export default function OneCPostingsPage() {
                 notSet={notSet}
               />
 
-              <AnalyticsCard subconto={subconto} onOpen={setBinding} />
+              {innDone && (
+                <div className="bg-green-50 border border-green-200 text-green-900 rounded-lg px-4 py-2 text-sm">
+                  {innDone}
+                </div>
+              )}
+
+              <AnalyticsCard subconto={subconto} onOpen={setBinding} onFillInn={fillInn} busy={busy} />
             </>
           ) : (
             <>
@@ -389,6 +418,7 @@ export default function OneCPostingsPage() {
           infoType={creating.type}
           items={infoByType[creating.type] || []}
           initialName={creating.name}
+          initialInn={creating.inn}
           onSaved={(item) => {
             setInfoByType(prev => ({ ...prev, [creating.type]: [...(prev[creating.type] || []), item] }))
             const sub = creating
@@ -756,11 +786,15 @@ function AccountsCard({ accounts, chart, value, onChange, onSave, saving, saved,
  * Разделение не косметическое — работать надо с первым списком, а второй нужен
  * лишь чтобы убедиться, что там всё правильно, и при случае перепривязать.
  */
-function AnalyticsCard({ subconto, onOpen }) {
+function AnalyticsCard({ subconto, onOpen, onFillInn, busy }) {
   if (!subconto.length) return null
 
   const bad  = subconto.filter(s => !s.info_id)
   const good = subconto.filter(s => s.info_id)
+
+  // Контрагенты, у которых ИНН есть в файле и нет в справочнике. Поиск по ИНН
+  // надёжнее поиска по имени, и пока поле пустое, он не работает
+  const innMissing = subconto.filter(s => s.inn && s.info_type === 'partner' && !s.info_inn)
 
   const table = (list, title, hint) => list.length === 0 ? null : (
     <div>
@@ -777,7 +811,11 @@ function AnalyticsCard({ subconto, onOpen }) {
                 <div className="text-xs text-gray-400">
                   {s.kind}
                   {s.code && <span className="ml-2">код {s.code}</span>}
-                  {s.inn && <span className="ml-2">ИНН {s.inn}</span>}
+                  {s.inn && (
+                    <span className={`ml-2 ${s.info_type === 'partner' && !s.info_inn ? 'text-amber-700' : ''}`}>
+                      ИНН {s.inn}
+                    </span>
+                  )}
                 </div>
               </td>
               <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{s.count}</td>
@@ -813,6 +851,18 @@ function AnalyticsCard({ subconto, onOpen }) {
         <p className="text-sm text-gray-500">
           Уникальные субконто файла. Правится один раз — привязка действует на все проводки с ним.
         </p>
+
+        {innMissing.length > 0 && (
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <button type="button" onClick={onFillInn} disabled={busy}
+              className="px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-50 disabled:opacity-50">
+              Проставить ИНН — {innMissing.length}
+            </button>
+            <span className="text-xs text-gray-500">
+              В файле ИНН есть, в справочнике пусто. Операции не затрагиваются
+            </span>
+          </div>
+        )}
       </div>
 
       {table(bad, 'Не переносится', 'Проводки загрузятся, но слот аналитики останется пустым')}
@@ -832,6 +882,8 @@ function ResultCard({ result }) {
         <Field label="Обновлено" value={result.updated} />
         <Field label="Пропущено" value={result.skipped} />
         <Field label="Не удалось" value={result.failed} />
+        {/* Только когда было что проставить: нулём эту строку показывать незачем */}
+        {result.inn_filled > 0 && <Field label="Проставлен ИНН" value={result.inn_filled} />}
       </div>
 
       {warnings.length > 0 && (

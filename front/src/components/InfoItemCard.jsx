@@ -53,10 +53,13 @@ const flatten = (nodes, depth = 0) => {
  * @param item      правим этот элемент; null — заводим новый
  * @param items     весь справочник этого типа — нужен для выбора родителя
  * @param initialName подставить в имя нового элемента (то, что успели набрать в поиске)
+ * @param initialInn  подставить ИНН — его знает загрузка 1С, а руками его перенабирают с ошибками
  * @param onSaved   (сохранённый элемент, id заменённого или null)
  * @param onClose   закрыть без сохранения
  */
-export default function InfoItemCard({ infoType, item = null, items = [], initialName = '', onSaved, onClose }) {
+export default function InfoItemCard({
+  infoType, item = null, items = [], initialName = '', initialInn = '', onSaved, onClose,
+}) {
   const isEdit = !!item
   const [showHistory, setShowHistory] = useState(false)
 
@@ -69,7 +72,7 @@ export default function InfoItemCard({ infoType, item = null, items = [], initia
     sort_order:         item.sort_order ?? 0,
     is_active:          item.is_active ?? true,
     default_expense_id: item.default_expense_id || '',
-  } : { ...EMPTY, name: initialName })
+  } : { ...EMPTY, name: initialName, inn: String(initialInn || '').replace(/\D/g, '') })
 
   const [expenseOpts, setExpenseOpts] = useState([])
   const [saving, setSaving] = useState(false)

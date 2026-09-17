@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Tenant\Integration;
 use App\Models\Tenant\IntegrationRun;
+use App\Services\History\History;
 use App\Services\Integrations\IntegrationRegistry;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -207,6 +208,9 @@ class IntegrationsController extends TenantController
             'data'   => $rows,
             'counts' => $counts,
             'total'  => count($rows),
+            // Как назвать колонки, знает драйвер: у накладной поставщик и
+            // склад, у кассовой смены точка и две суммы
+            'columns' => IntegrationRegistry::driver($integration)->columns($data['entity']),
         ]);
     }
 
@@ -265,7 +269,7 @@ class IntegrationsController extends TenantController
         // Пустой список отмеченных — это «не выбрано ничего», а не «взять всё»:
         // молча загрузить весь период вместо ничего было бы худшим ответом
         if (array_key_exists('ids', $data) && count($data['ids']) === 0) {
-            return response()->json(['message' => 'Не отмечено ни одной накладной'], 422);
+            return response()->json(['message' => 'Не отмечено ни одной строки'], 422);
         }
         $only = $data['ids'] ?? null;
 
@@ -292,6 +296,12 @@ class IntegrationsController extends TenantController
         $run->save();
 
         @set_time_limit(300);
+
+        // Одна загрузка — одна пачка в журнале изменений. Источником берём тип
+        // системы, а не общее «интеграция»: в журнале должно читаться, откуда
+        // пришли документы, а контроллер при этом по-прежнему не знает, что
+        // такое FUSIONPOS
+        app(History::class)->source($integration->type);
 
         try {
             $driver->sync($integration, $run, $from, $to, $only);

@@ -9,6 +9,7 @@ use App\Models\Tenant\Integration;
 use App\Models\Tenant\IntegrationLink;
 use App\Models\Tenant\IntegrationRun;
 use App\Services\Documents\DocumentService;
+use App\Services\History\History;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -70,11 +71,44 @@ final class WarehouseInvoiceImporter
             $query['processed_at_end']   = $to   . ' 23:59:59';
         }
 
-        if ($cfg['only_processed'])   $query['is_processed']    = 'true';
-        if ($cfg['warehouse_ids'])    $query['warehouse_id']    = implode(',', $cfg['warehouse_ids']);
-        if ($cfg['legal_entity_ids']) $query['legal_entity_id'] = implode(',', $cfg['legal_entity_ids']);
+        if ($cfg['only_processed']) $query['is_processed'] = 'true';
+
+        // Отбор по складу и юрлицу FUSIONPOS понимает только по одному
+        // значению. Список через запятую он молча читает как первое число:
+        // «warehouse_id=2,1» для него означает «склад 2», и накладные первого
+        // склада пропадают из выдачи без единого слова. Списочные виды записи
+        // (warehouse_id[]=…) он не понимает вовсе и возвращает вообще всё —
+        // это было бы ещё хуже: в учёт поехали бы чужие склады.
+        //
+        // Поэтому одно значение отдаём серверу, несколько отбираем у себя
+        // в passes().
+        if (count($cfg['warehouse_ids']) === 1) {
+            $query['warehouse_id'] = reset($cfg['warehouse_ids']);
+        }
+        if (count($cfg['legal_entity_ids']) === 1) {
+            $query['legal_entity_id'] = reset($cfg['legal_entity_ids']);
+        }
 
         return $query;
+    }
+
+    /**
+     * Проходит ли накладная отбор по складу и юрлицу.
+     *
+     * Работает и когда отбор уже сделал сервер: тогда проверка ничего не
+     * меняет. Пустой список означает «любой» — так настройка и читается.
+     */
+    private function passes(array $invoice, array $cfg): bool
+    {
+        $in = function (array $allowed, $value): bool {
+            if (!$allowed) return true;
+
+            // Настройки хранят идентификаторы строками, ответ — числами
+            return in_array((string) $value, array_map('strval', $allowed), true);
+        };
+
+        return $in($cfg['warehouse_ids'], $invoice['warehouse_id'] ?? null)
+            && $in($cfg['legal_entity_ids'], $invoice['legal_entity_id'] ?? null);
     }
 
     /**
@@ -93,6 +127,8 @@ final class WarehouseInvoiceImporter
         $this->client->each('warehouse/invoices', $query, function (array $items) use (&$rows, $cfg) {
             foreach ($items as $invoice) {
                 if (count($rows) >= self::MAX_PREVIEW) return;
+                if (!$this->passes($invoice, $cfg)) continue;
+
                 $rows[] = $this->describe($invoice, $cfg);
             }
         });
@@ -106,6 +142,7 @@ final class WarehouseInvoiceImporter
         $this->client->each('warehouse/invoices', $deleted, function (array $items) use (&$rows, $cfg) {
             foreach ($items as $invoice) {
                 if (count($rows) >= self::MAX_PREVIEW) return;
+                if (!$this->passes($invoice, $cfg)) continue;
 
                 $row = $this->describe($invoice, $cfg);
                 if ($row['status'] === 'new') continue;   // не грузили — и снимать нечего
@@ -138,6 +175,7 @@ final class WarehouseInvoiceImporter
         $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $cfg, $pick, $force) {
             foreach ($items as $invoice) {
                 if ($pick !== null && !isset($pick[$this->externalId($invoice)])) continue;
+                if (!$this->passes($invoice, $cfg)) continue;
 
                 $run->fetched++;
                 try {
@@ -149,7 +187,7 @@ final class WarehouseInvoiceImporter
             }
         });
 
-        $this->removeDeleted($query, $run, $pick);
+        $this->removeDeleted($query, $run, $cfg, $pick);
 
         $run->details = $this->details ?: null;
     }
@@ -222,30 +260,39 @@ final class WarehouseInvoiceImporter
         $items = $invoice['warehouseInvoiceItems'] ?? [];
         $names = $this->nomenclatureNames(array_column($items, 'nomenclature_id'));
 
-        $row = $this->describe($invoice, $cfg);
+        $row      = $this->describe($invoice, $cfg);
+        $supplier = data_get($invoice, 'supplier.name');
+        $inn      = data_get($invoice, 'supplier.inn');
+        $kpp      = data_get($invoice, 'supplier.kpp');
+        $vat      = round(((int) ($invoice['vat_amount'] ?? 0)) / 100, 2);
 
         return [
-            'number'       => $invoice['doc_number'] ?? null,
-            'date'         => $this->parse($invoice['doc_date'] ?? null)?->toDateString(),
-            'processed_at' => $this->parse($invoice['processed_at'] ?? null)?->format('d.m.Y H:i'),
-            'supplier'     => data_get($invoice, 'supplier.name'),
-            'inn'          => data_get($invoice, 'supplier.inn'),
-            'kpp'          => data_get($invoice, 'supplier.kpp'),
-            'warehouse'    => data_get($invoice, 'warehouse.name'),
-            'legal_entity' => data_get($invoice, 'legalEntity.name'),
-            'comment'      => $invoice['comment'] ?? null,
-            'amount'       => round(((int) ($invoice['amount'] ?? 0)) / 100, 2),
-            'vat_amount'   => round(((int) ($invoice['vat_amount'] ?? 0)) / 100, 2),
-            'status'       => $row['status'],
-            'document_id'  => $row['document_id'],
-            'items'        => array_map(fn($it) => [
+            'title' => 'В накладной',
+            'facts' => array_values(array_filter([
+                ['label' => 'Поставщик', 'value' => trim(($supplier ?: '—')
+                    . ($inn ? " · ИНН {$inn}" : '') . ($kpp ? " · КПП {$kpp}" : ''))],
+                ['label' => 'Склад',  'value' => data_get($invoice, 'warehouse.name') ?: '—'],
+                ['label' => 'Юрлицо', 'value' => data_get($invoice, 'legalEntity.name') ?: '—'],
+                ($p = $this->parse($invoice['processed_at'] ?? null))
+                    ? ['label' => 'Проведена', 'value' => $p->format('d.m.Y H:i')] : null,
+                $vat > 0 ? ['label' => 'В том числе НДС', 'value' => number_format($vat, 2, ',', ' ') . ' ₽'] : null,
+                !empty($invoice['comment']) ? ['label' => 'Комментарий', 'value' => $invoice['comment']] : null,
+            ])),
+            'columns' => ['name' => 'Позиция', 'quantity' => 'Кол-во', 'price' => 'Цена', 'amount' => 'Сумма'],
+            'items'   => array_map(fn($it) => [
                 'name'     => $names[$it['nomenclature_id'] ?? null] ?? ('позиция #' . ($it['nomenclature_id'] ?? '?')),
                 'quantity' => (float) ($it['quantity'] ?? 0),
                 'price'    => round(((int) ($it['price'] ?? 0)) / 100, 2),
                 'amount'   => round(((int) ($it['amount'] ?? 0)) / 100, 2),
             ], $items),
+            'amount'      => round(((int) ($invoice['amount'] ?? 0)) / 100, 2),
+            'status'      => $row['status'],
+            'document_id' => $row['document_id'],
             // Как это легло в учёт — чтобы не гадать, что получилось из накладной
-            'posting'      => $this->postingSummary($cfg, $invoice),
+            'posting'     => $this->postingSummary($cfg, $invoice),
+            'note'        => 'Позиции накладной в проводки не переносятся: вся сумма идёт '
+                           . 'одной строкой на служебную номенклатуру по цене 1 ₽, поэтому '
+                           . 'количество на складском счёте равно рублям.',
         ];
     }
 
@@ -293,17 +340,21 @@ final class WarehouseInvoiceImporter
             : null;
 
         $rubles = round(((int) ($invoice['amount'] ?? 0)) / 100, 2);
+        $money  = fn(float $v) => number_format($v, 2, ',', ' ');
+
+        $debit = DB::connection($this->conn)->table('balance_items')
+            ->where('id', $cfg['line_bi_id'])->value('code') . ' ' . $name('balance_items', $cfg['line_bi_id']);
 
         return [
-            'project'  => $name('projects', $cfg['project_id']),
-            'debit'    => DB::connection($this->conn)->table('balance_items')
-                            ->where('id', $cfg['line_bi_id'])->value('code') . ' '
-                          . $name('balance_items', $cfg['line_bi_id']),
-            'credit'   => self::HEADER_CODE . ' ' . $name('balance_items', $cfg['header_bi_id']),
-            'product'  => $name('info', $cfg['service_product_id']),
-            'quantity' => $rubles,
-            'price'    => 1,
-            'amount'   => $rubles,
+            'rows' => [
+                ['label' => 'Проект',       'value' => $name('projects', $cfg['project_id']) ?: '—'],
+                ['label' => 'Дебет',        'value' => $debit],
+                ['label' => 'Кредит',       'value' => self::HEADER_CODE . ' ' . $name('balance_items', $cfg['header_bi_id'])],
+                ['label' => 'Номенклатура', 'value' => $name('info', $cfg['service_product_id']) ?: '—'],
+                ['label' => 'Количество',   'value' => $money($rubles)],
+                ['label' => 'Цена',         'value' => '1,00 ₽'],
+                ['label' => 'Сумма',        'value' => $money($rubles) . ' ₽'],
+            ],
         ];
     }
 
@@ -356,6 +407,10 @@ final class WarehouseInvoiceImporter
         DB::connection($this->conn)->transaction(function () use (
             $invoice, $cfg, $date, $rubles, $vat, $supplierId, $externalId, $link, $existing, $run
         ) {
+            // Снимок до правки: документ составной, и «что изменилось» узнаётся
+            // только сравнением снимков. Снимаем до заполнения — потом поздно
+            $before = $existing ? $existing->historySnapshot() : [];
+
             $doc = $existing ?: (new Document)->setConnection($this->conn);
 
             $doc->fill([
@@ -408,6 +463,10 @@ final class WarehouseInvoiceImporter
 
             $this->saveLink($link, $externalId, $doc->id, $this->fingerprint($invoice, $cfg));
 
+            // Загруженный документ виден в журнале изменений наравне с
+            // заведённым руками: иначе он появлялся бы в учёте без следа
+            app(History::class)->recordFrom($doc->refresh(), $before, $existing ? 'updated' : 'created');
+
             $existing ? $run->updated++ : $run->created++;
         });
     }
@@ -419,16 +478,17 @@ final class WarehouseInvoiceImporter
      * исчезают из выдачи. Без отдельного прохода наш документ остался бы
      * проведённым, и обороты разошлись бы с источником молча.
      */
-    private function removeDeleted(array $query, IntegrationRun $run, ?array $pick = null): void
+    private function removeDeleted(array $query, IntegrationRun $run, array $cfg, ?array $pick = null): void
     {
         $query['is_deleted'] = 'true';
         unset($query['is_processed']);
 
-        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $pick) {
+        $this->client->each('warehouse/invoices', $query, function (array $items) use ($run, $cfg, $pick) {
             foreach ($items as $invoice) {
                 $externalId = $this->externalId($invoice);
                 if ($externalId === '') continue;
                 if ($pick !== null && !isset($pick[$externalId])) continue;
+                if (!$this->passes($invoice, $cfg)) continue;
 
                 $link = IntegrationLink::on($this->conn)
                     ->where('integration_id', $this->integration->id)
@@ -440,8 +500,12 @@ final class WarehouseInvoiceImporter
 
                 $doc = Document::on($this->conn)->find($link->local_id);
                 if ($doc) {
+                    $snapshot = $doc->historySnapshot();   // после удаления строк его уже не снять
+
                     DocumentService::cancel($doc);   // снимает операции
                     $doc->delete();                   // мягкое удаление, след остаётся
+
+                    app(History::class)->record($doc, 'deleted', [], null, $snapshot);
                     $this->warn($this->label($invoice) . ' — удалена в FUSIONPOS, документ снят с проведения');
                 }
                 $link->delete();

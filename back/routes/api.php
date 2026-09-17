@@ -97,6 +97,7 @@ Route::prefix('v1')->group(function () {
     Route::put ('/onec/analytics-map',    [OneCController::class, 'saveAnalytics']);
     Route::post('/onec/postings/preview', [OneCController::class, 'preview']);
     Route::post('/onec/postings/import',  [OneCController::class, 'import']);
+    Route::post('/onec/postings/inn',     [OneCController::class, 'fillInn']);
 
     // Справочники
     Route::get('/projects',           [ProjectsController::class, 'index']);

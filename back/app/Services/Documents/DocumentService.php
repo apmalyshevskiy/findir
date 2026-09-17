@@ -97,17 +97,18 @@ class DocumentService
                 ->where('table_id', (string) $document->id)
                 ->delete();
 
-            // 2. Пересчитываем итоги из строк
-            $document->amount = DB::connection($conn)
+            // 2. Пересчитываем итоги из строк.
+            // Только по строкам продажи: оплаты и налог у розничной смены —
+            // это судьба выручки, а не вторая выручка, и складывать их с ней
+            // значило бы удвоить итог документа
+            $sales = fn() => DB::connection($conn)
                 ->table('document_items')
                 ->where('document_id', $document->id)
-                ->sum('amount');
+                ->where(fn($q) => $q->where('kind', 'sale')->orWhereNull('kind'));
 
-            $vatSum = DB::connection($conn)
-                ->table('document_items')
-                ->where('document_id', $document->id)
-                ->whereNotNull('amount_vat')
-                ->sum('amount_vat');
+            $document->amount = $sales()->sum('amount');
+
+            $vatSum = $sales()->whereNotNull('amount_vat')->sum('amount_vat');
 
             $document->amount_vat = $vatSum > 0 ? $vatSum : null;
 

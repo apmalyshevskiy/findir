@@ -46,6 +46,17 @@ interface IntegrationDriver
     public function entities(): array;
 
     /**
+     * Колонки списка для этой сущности: `[{key, label, kind}]`.
+     *
+     * Названия колонок знает драйвер, а не страница: у накладной поставщик и
+     * склад, у кассовой смены точка и две суммы. `kind` говорит, как показать
+     * значение — `text`, `date`, `money`, `count`, `partner` (имя с ИНН).
+     *
+     * @return array<int, array{key: string, label: string, kind: string}>
+     */
+    public function columns(string $entity): array;
+
+    /**
      * Что лежит в источнике за период — без изменения данных.
      *
      * Первый шаг загрузки: список объектов с пометкой, какие уже загружены,

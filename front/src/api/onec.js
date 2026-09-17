@@ -31,3 +31,7 @@ export const previewOneCPostings = (file, integrationId) =>
 
 export const importOneCPostings = (file, only, integrationId) =>
   upload('/onec/postings/import', file, { only, integration_id: integrationId })
+
+/** Проставить контрагентам ИНН из файла — операции при этом не трогаются. */
+export const fillOneCInn = (file, integrationId) =>
+  upload('/onec/postings/inn', file, { integration_id: integrationId })

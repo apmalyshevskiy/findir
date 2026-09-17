@@ -492,6 +492,7 @@ class DocumentsController extends TenantController
             'note'            => 'nullable|string',
             'extra'           => 'nullable|array',
             'items'                  => 'nullable|array',
+            'items.*.kind'           => 'nullable|string|in:' . implode(',', DocumentItem::KINDS),
             'items.*.bi_id'          => 'required_with:items|integer',
             'items.*.info_1_id'      => 'nullable|integer',
             'items.*.info_2_id'      => 'nullable|integer',
@@ -557,16 +558,15 @@ class DocumentsController extends TenantController
      */
     private function recalcAmount(Document $doc): void
     {
-        $amount = DB::connection($this->dbName)
+        // Только строки продажи: оплаты и налог розничной смены в итог
+        // документа не входят — иначе он удвоился бы
+        $sales = fn() => DB::connection($this->dbName)
             ->table('document_items')
             ->where('document_id', $doc->id)
-            ->sum('amount');
+            ->where(fn($q) => $q->where('kind', 'sale')->orWhereNull('kind'));
 
-        $vatSum = DB::connection($this->dbName)
-            ->table('document_items')
-            ->where('document_id', $doc->id)
-            ->whereNotNull('amount_vat')
-            ->sum('amount_vat');
+        $amount = $sales()->sum('amount');
+        $vatSum = $sales()->whereNotNull('amount_vat')->sum('amount_vat');
 
         $doc->amount     = (float) $amount;
         $doc->amount_vat = $vatSum > 0 ? (float) $vatSum : null;
@@ -587,6 +587,9 @@ class DocumentsController extends TenantController
             $this->itemModel()->newQuery()->create([
                 'document_id' => $doc->id,
                 'sort_order'  => $i,
+                // Пусто означает продажу: так строка выглядела до появления
+                // оплат, и старые вызовы API не должны ломаться
+                'kind'        => $row['kind'] ?? DocumentItem::KIND_SALE,
                 'bi_id'       => $row['bi_id'],
                 'info_1_id'   => $row['info_1_id'] ?? null,
                 'info_2_id'   => $row['info_2_id'] ?? null,
@@ -655,6 +658,7 @@ class DocumentsController extends TenantController
             $result['items'] = $doc->items->map(fn($item) => [
                 'id'           => $item->id,
                 'sort_order'   => $item->sort_order,
+                'kind'         => $item->kind ?: DocumentItem::KIND_SALE,
                 'bi_id'        => $item->bi_id,
                 'bi_code'      => $item->balanceItem?->code,
                 'bi_name'      => $item->balanceItem?->name,

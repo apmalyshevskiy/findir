@@ -2,6 +2,7 @@
 
 namespace App\Services\OneC;
 
+use App\Models\Tenant\Info;
 use App\Models\Tenant\Integration;
 use App\Models\Tenant\Operation;
 use App\Services\AccountScope;
@@ -215,6 +216,10 @@ final class PostingsImporter
             $sub['source']    = $res['source'];
             $sub['bound']     = $res['source'] === 'binding';
 
+            // ИНН, который уже стоит у найденного элемента: по нему на экране
+            // видно, чей ИНН из файла ещё некуда не записан
+            $sub['info_inn']  = $res['info_id'] ? ($this->infoById[$res['info_id']]->inn ?? null) : null;
+
             // Пока счёт не сопоставлен, про аналитику говорить рано: слотов
             // нет не потому, что их нет у счёта, а потому что счёта нет
             $sub['reason'] = !$sub['mapped'] && $res['source'] === null
@@ -236,6 +241,73 @@ final class PostingsImporter
         return array_values($found);
     }
 
+    // ─── ИНН из выгрузки ─────────────────────────────────────────────────────
+
+    /**
+     * Проставить контрагентам ИНН, которого у них нет.
+     *
+     * В выгрузке 1С у субконто «Контрагенты» ИНН есть почти всегда, а в наш
+     * справочник он попадал, только если элемент заводили руками и не забыли.
+     * Поэтому после первой же загрузки половина контрагентов оставалась без
+     * ИНН, и поиск по нему — самый надёжный, «ООО Ромашка» и «Ромашка, ООО»
+     * это одна организация, — не работал вовсе.
+     *
+     * Заполняем только пустое. Заполненное не трогаем: там мог быть
+     * сознательно поправленный ИНН, и загрузка проводок — не тот повод, чтобы
+     * отменять чужую правку. Ради этого же не переписываем и различия: если
+     * ИНН разошёлся, говорим об этом предупреждением.
+     *
+     * @return array{filled: int, conflicts: array<int, string>}
+     */
+    public function fillInn(array $file): array
+    {
+        $filled = 0;
+        $conflicts = [];
+
+        foreach ($this->subconto($file) as $sub) {
+            if (!$sub['info_id'] || empty($sub['inn'])) continue;
+
+            $info = $this->infoById[$sub['info_id']] ?? null;
+
+            // ИНН есть только у контрагента: у склада или статьи затрат это
+            // поле не показывается и смысла не имеет
+            if (!$info || $info->type !== 'partner') continue;
+
+            $inn = preg_replace('/\D/', '', (string) $sub['inn']);
+
+            // 10 цифр у организации, 12 у предпринимателя. Всё прочее — не ИНН,
+            // и молча класть это в справочник нельзя
+            if (!in_array(strlen($inn), [10, 12], true)) {
+                $this->warn("«{$sub['name']}»: «{$sub['inn']}» не похож на ИНН — не проставлен");
+                continue;
+            }
+
+            $current = trim((string) $info->inn);
+
+            if ($current !== '') {
+                if ($current !== $inn) $conflicts[] = "{$info->name}: в учёте $current, в файле $inn";
+                continue;
+            }
+
+            $item = Info::on($this->conn)->find($sub['info_id']);
+            if (!$item) continue;
+
+            $item->inn = $inn;
+            $item->save();
+
+            // Обновляем и то, по чему ищем: следующее субконто того же
+            // контрагента в этом же файле должно находиться уже по ИНН
+            $info->inn = $inn;
+            $this->byInn['partner'][$inn] ??= (int) $sub['info_id'];
+
+            $filled++;
+        }
+
+        foreach ($conflicts as $c) $this->warn("ИНН разошёлся — $c");
+
+        return ['filled' => $filled, 'conflicts' => $conflicts];
+    }
+
     // ─── Загрузка ────────────────────────────────────────────────────────────
 
     /**
@@ -253,6 +325,12 @@ final class PostingsImporter
         if (!$this->projectId) {
             return $counts + ['warnings' => ['Не выбран проект — операции некуда складывать']];
         }
+
+        // Заодно с проводками забираем из файла ИНН контрагентов: он там есть,
+        // и оставлять его в файле — терять то, за чем в следующий раз пойдут
+        // руками. Делается до записи операций, чтобы поиск по ИНН заработал
+        // уже на этой загрузке
+        $counts['inn_filled'] = $this->fillInn($file)['filled'];
 
         foreach ($file['entries'] as $entry) {
             $row = $this->build($entry);
