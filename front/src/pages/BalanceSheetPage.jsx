@@ -1157,17 +1157,19 @@ export default function BalanceSheetPage() {
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white border-b border-gray-100">
                     <tr className="text-xs text-gray-500 uppercase tracking-wide">
-                      <th className="text-left px-4 py-3 w-10">#</th>
-                      <th className="text-left px-4 py-3">Дата</th>
+                      {/* Карандаш живёт рядом с номером операции. Справа он
+                          стоял за содержанием — самой широкой и самой рваной по
+                          высоте колонкой, — и до него приходилось доматывать */}
+                      <th className="text-left px-3 py-3 w-[4.5rem]">#</th>
+                      <th className="text-left px-3 py-3">Дата</th>
                       {/* Счёт с двумя аналитиками — три строки текста, и в узкой
                           колонке каждая ломалась пополам. Ширину забираем у
                           содержания: там перенос по словам читается нормально */}
-                      <th className="text-left px-4 py-3 w-[17rem] min-w-[17rem]">Дебет</th>
-                      <th className="text-left px-4 py-3 w-[17rem] min-w-[17rem]">Кредит</th>
-                      <th className="text-right px-4 py-3">Сумма</th>
-                      <th className="text-right px-4 py-3 text-blue-500">#</th>
-                      <th className="text-left px-4 py-3">Содержание и комментарий</th>
-                      <th className="px-4 py-3 w-10"></th>
+                      <th className="text-left px-3 py-3 w-[14rem] min-w-[14rem]">Дебет</th>
+                      <th className="text-left px-3 py-3 w-[14rem] min-w-[14rem]">Кредит</th>
+                      <th className="text-right px-3 py-3">Сумма</th>
+                      <th className="text-right px-3 py-3 text-blue-500">#</th>
+                      <th className="text-left px-3 py-3">Содержание и комментарий</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1176,7 +1178,7 @@ export default function BalanceSheetPage() {
                       {/* Черта перед непроведёнными: ниже неё суммы в обороты не идут */}
                       {op.is_posted === false && idx > 0 && drillModal.ops[idx - 1].is_posted !== false && (
                         <tr className="bg-gray-100">
-                          <td colSpan={8} className="px-4 py-1.5 text-[11px] text-gray-500 uppercase tracking-wide">
+                          <td colSpan={7} className="px-3 py-1.5 text-[11px] text-gray-500 uppercase tracking-wide">
                             Не проведены — в обороты не входят
                           </td>
                         </tr>
@@ -1184,56 +1186,62 @@ export default function BalanceSheetPage() {
                       <tr className={`border-b border-gray-50 hover:bg-gray-50 transition-colors group ${
                         op.is_posted === false ? 'bg-gray-50/70 text-gray-400' : ''
                       }`}>
-                        <td className="px-4 py-3 text-xs text-gray-400 font-mono">{op.id}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(op.date)}</td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-gray-400 font-mono">{op.id}</span>
+                            {op.table_name === 'documents' && op.table_id ? (
+                              <button
+                                onClick={() => openDocumentModal(op.table_id)}
+                                title="Открыть документ"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
+                              >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setEditOp(op)}
+                                title="Редактировать"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
+                              >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-sm text-gray-600 whitespace-nowrap">{formatDate(op.date)}</td>
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5">
                             <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" />
                           </div>
                           {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_1_name}</div>}
                           {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_2_name}</div>}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5">
                             <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" />
                           </div>
                           {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_1_name}</div>}
                           {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_2_name}</div>}
                         </td>
-                        <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${
+                        <td className={`px-3 py-3 text-right font-semibold whitespace-nowrap ${
                           op.is_posted === false ? 'text-gray-400' : 'text-gray-800'
                         }`}>{fmt(op.amount)}</td>
-                        <td className="px-4 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
+                        <td className="px-3 py-3 text-right text-xs text-blue-600 whitespace-nowrap">
                           {drillQty(op) ? fmtQty(drillQty(op)) : '—'}
                         </td>
                         {/* Оба поля, когда оба заполнены. Раньше показывался
                             только комментарий, и содержание — то, что пришло из
                             банка или из 1С, — до расшифровки не доезжало */}
-                        <td className="px-4 py-3 text-sm text-gray-500">
+                        {/* Назначение платежа из банка приходит одним куском без
+                            пробелов («Покупка товара(Терминал:YANDEX*4121*GO,PASS…»).
+                            anywhere, а не break-word: только оно учитывается при
+                            расчёте ширины колонки, иначе таблица раздаётся вбок */}
+                        <td className="px-3 py-3 text-sm text-gray-500 [overflow-wrap:anywhere]">
                           {op.content && <div className="text-gray-700">{op.content}</div>}
                           {op.note && (
                             <div className={op.content ? 'text-xs text-gray-400 mt-0.5' : ''}>{op.note}</div>
                           )}
                           {!op.content && !op.note && '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {op.table_name === 'documents' && op.table_id ? (
-                            <button
-                              onClick={() => openDocumentModal(op.table_id)}
-                              title="Открыть документ"
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
-                            >
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setEditOp(op)}
-                              title="Редактировать"
-                              className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50"
-                            >
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
-                            </button>
-                          )}
                         </td>
                       </tr>
                       </Fragment>
@@ -1242,23 +1250,23 @@ export default function BalanceSheetPage() {
                   <tfoot>
                     {/* Итог считаем по проведённым — он должен сходиться с ячейкой оборотки */}
                     <tr className="border-t-2 border-gray-200 bg-gray-50">
-                      <td colSpan={4} className="px-4 py-2 text-xs font-semibold text-gray-600">
+                      <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-gray-600">
                         Итого ({drillModal.posted.length} операций)
                       </td>
-                      <td className="px-4 py-2 text-right text-xs font-bold text-gray-800 whitespace-nowrap">
+                      <td className="px-3 py-2 text-right text-xs font-bold text-gray-800 whitespace-nowrap">
                         {fmt(drillModal.posted.reduce((s, op) => s + parseFloat(op.amount), 0))}
                       </td>
-                      <td colSpan={3}></td>
+                      <td colSpan={2}></td>
                     </tr>
                     {drillModal.unposted.length > 0 && (
                       <tr className="bg-gray-50 border-t border-gray-200">
-                        <td colSpan={4} className="px-4 py-2 text-xs text-gray-500">
+                        <td colSpan={4} className="px-3 py-2 text-xs text-gray-500">
                           Не проведены ({drillModal.unposted.length}) — в оборот не вошли
                         </td>
-                        <td className="px-4 py-2 text-right text-xs font-semibold text-gray-400 whitespace-nowrap">
+                        <td className="px-3 py-2 text-right text-xs font-semibold text-gray-400 whitespace-nowrap">
                           {fmt(drillModal.unposted.reduce((s, op) => s + parseFloat(op.amount), 0))}
                         </td>
-                        <td colSpan={3}></td>
+                        <td colSpan={2}></td>
                       </tr>
                     )}
                   </tfoot>
