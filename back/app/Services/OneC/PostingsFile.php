@@ -224,6 +224,10 @@ final class PostingsFile
                 'name' => $sname,
                 'code' => self::text($sub['code'] ?? null),
                 'inn'  => self::text($sub['inn'] ?? null),
+                // Измерение регистра, а не субконто плана счетов. Отличаются
+                // они только очередью на слот, но очередь важна: субконто у
+                // счёта своё, а подразделение — общее для всех счетов
+                'dimension' => ($sub['dimension'] ?? false) === true,
             ];
         }
 

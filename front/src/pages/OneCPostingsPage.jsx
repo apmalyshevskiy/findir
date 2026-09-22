@@ -810,6 +810,11 @@ function AnalyticsCard({ subconto, onOpen, onFillInn, busy }) {
                 <div className="text-gray-800">{s.name}</div>
                 <div className="text-xs text-gray-400">
                   {s.kind}
+                  {/* Подразделения в плане счетов нет — оно измерение регистра.
+                      Без пометки человек ищет его в субконто счёта и не находит */}
+                  {s.dimension && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">измерение</span>
+                  )}
                   {s.code && <span className="ml-2">код {s.code}</span>}
                   {s.inn && (
                     <span className={`ml-2 ${s.info_type === 'partner' && !s.info_inn ? 'text-amber-700' : ''}`}>

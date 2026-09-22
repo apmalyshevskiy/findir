@@ -187,6 +187,10 @@ final class PostingsImporter
                         'name'     => $sub['name'],
                         'code'     => $sub['code'],
                         'inn'      => $sub['inn'],
+                        // Откуда аналитика взялась в проводке: субконто плана
+                        // счетов или измерение регистра. В списке привязок это
+                        // единственное, чем подразделение отличается от прочих
+                        'dimension' => !empty($sub['dimension']),
                         'count'    => 0,
                         'types'    => [],
                         'accounts' => [],
@@ -508,6 +512,7 @@ final class PostingsImporter
                 'key'       => self::subcontoKey($sub['kind'], $sub['name']),
                 'kind'      => $sub['kind'],
                 'name'      => $sub['name'],
+                'dimension' => !empty($sub['dimension']),
                 'slot'      => null,
                 'info_id'   => $res['info_id'],
                 'info_name' => $res['info_name'],
@@ -521,8 +526,20 @@ final class PostingsImporter
 
         // Раскладка по слотам. Сначала точные слоты, потом наборы, потом
         // «любой» — иначе субконто, которому есть свой слот, заняло бы общий,
-        // и следующему места уже не хватило бы
-        foreach ($out['analytics'] as $i => $a) {
+        // и следующему места уже не хватило бы.
+        //
+        // Субконто разбирают слоты раньше измерений регистра. Подразделение в
+        // 1С — измерение, оно приходит на каждом счёте и с субконто за место
+        // не спорит: на 26 счёте статья затрат нужнее подразделения. Порядок
+        // задаём здесь, а не полагаемся на порядок в файле: файл мог собрать
+        // не наш экспорт
+        $order = array_keys($out['analytics']);
+        usort($order, fn($a, $b) => [$out['analytics'][$a]['dimension'], $a]
+                              <=> [$out['analytics'][$b]['dimension'], $b]);
+
+        foreach ($order as $i) {
+            $a = $out['analytics'][$i];
+
             if ($a['slot'] !== null || $a['info_id'] === null) continue;
 
             foreach (AnalyticSlots::slotsFor($item, $a['type']) as $slot) {

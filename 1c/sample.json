@@ -112,7 +112,7 @@
 				"quantity": null,
 				"subconto": [
 					{ "kind": "СтатьиЗатрат", "name": "Оплата труда" },
-					{ "kind": "Подразделения", "name": "Кухня" }
+					{ "kind": "Подразделения", "name": "Кухня", "dimension": true }
 				]
 			},
 			"credit": {
