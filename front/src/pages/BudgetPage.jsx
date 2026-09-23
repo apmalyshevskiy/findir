@@ -30,15 +30,26 @@ const buildDescendantLeafMap = (articles) => {
   for (const a of articles) collect(a); return map
 }
 
-/** Все потомки включая промежуточные узлы (для drill-down) */
-const buildDescendantAllMap = (articles) => {
+/**
+ * Все потомки включая промежуточные узлы (для сумм по родителю и drill-down).
+ *
+ * Ключ — rowKey строки, а не id статьи. Одна и та же статья может стоять в
+ * двух группах с разными детьми: «02 Цех» в переменных расходах и он же в
+ * постоянных. По одному id карта затиралась бы второй группой, и родитель
+ * показывал бы чужую сумму.
+ *
+ * Подпорки (`scaffold`) в набор не попадают: строка стоит здесь только ради
+ * вложенности, а её собственная сумма принадлежит другой группе.
+ */
+const buildDescendantAllMap = (articles, prefix = '') => {
   const map = {}
   const collect = (n) => {
-    const s = new Set([n.id])
+    const s = new Set()
+    if (!n.scaffold) s.add(n.id)
     if (n.children?.length) {
       for (const c of n.children) { for (const d of collect(c)) s.add(d) }
     }
-    map[n.id] = s
+    map[prefix + n.id] = s
     return s
   }
   for (const a of articles) collect(a)
@@ -144,6 +155,8 @@ export default function BudgetPage() {
   const [byCash, setByCash] = useState(false)
   const [viewMode, setViewMode] = useState('plan_fact') // 'plan' | 'fact' | 'plan_fact' | 'plan_fact_delta'
   const [showEmpty, setShowEmpty] = useState(false)     // показывать статьи, где по всей строке нули
+  // БДР: расходы двумя группами — переменные и постоянные, со своими прибылями
+  const [splitExpenses, setSplitExpenses] = useState(false)
   const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
@@ -196,43 +209,46 @@ export default function BudgetPage() {
     if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id)
   }
   useEffect(() => { loadDocuments() }, [showArchived])
-  useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash, factCutoffDate])
+  useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash, factCutoffDate, splitExpenses])
 
   const loadReport = async (keepState = false) => {
     if (!keepState) setLoading(true)
     try {
       const params = { by_cash: byCash ? 1 : 0 }
       if (factCutoffDate) params.display_from = factCutoffDate
+      if (splitExpenses) params.split_expenses = 1
       const r = await getBudgetReport(selectedDocId, params)
       setReport(r.data)
       if (!keepState) {
         const rootIds = new Set()
         const arts = r.data.articles
         if (Array.isArray(arts) && arts[0]?.id != null) arts.forEach(a => rootIds.add(String(a.id)))
-        else if (arts) arts.forEach(g => g.items?.forEach(a => rootIds.add(`${g.group}:${a.id}`)))
+        else if (arts) arts.forEach(g => g.items?.forEach(a => rootIds.add(`${g.key || g.group}:${a.id}`)))
         setExpanded(rootIds)
       }
     } finally { if (!keepState) setLoading(false) }
   }
 
   // ── Открытие drawer (универсальный) ──────────────────────────────────────
-  const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan', section = null) => {
-    setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate), section })
+  const openDrawer = (articleId, articleName, periodDate, initialTab = 'plan', section = null, rowKey = null) => {
+    setDrawer({ mode: initialTab, articleId, articleName, periodDate, periodLabel: monthLabel(periodDate), section, rowKey })
   }
 
   // ── Копирование / вставка ячейки плана ─────────────────────────────────
-  const handleCopyCell = (articleId, articleName, periodDate, section) => {
-    setClipboard({ articleId, section, periodDate, articleName })
+  const handleCopyCell = (articleId, articleName, periodDate, section, rowKey = null) => {
+    setClipboard({ articleId, section, periodDate, articleName, rowKey })
   }
 
-  const handlePasteCell = async (targetArticleId, targetPeriodDate, targetSection) => {
+  const handlePasteCell = async (targetArticleId, targetPeriodDate, targetSection, targetRowKey = null) => {
     if (!clipboard) return
-    // Вставляем только если та же статья (и section)
+    // Вставляем только если та же строка: у одной статьи в разделе расходов
+    // может быть две строки — в переменных и в постоянных
     if (clipboard.articleId !== targetArticleId || clipboard.section !== targetSection) return
+    if ((clipboard.rowKey || null) !== (targetRowKey || null)) return
     setPasting(true)
     try {
       // 1. Загружаем строки источника
-      const srcIds = descendantAllMap[clipboard.articleId]
+      const srcIds = descendantAllMap[clipboard.rowKey ?? clipboard.articleId]
       const ids = srcIds && srcIds.size > 0 ? [...srcIds] : [clipboard.articleId]
       const res = await getBudgetItems({
         budget_document_id: selectedDocId,
@@ -312,12 +328,19 @@ export default function BudgetPage() {
 
   const openEditArticle = (article) => {
     const type = infoTypeFromSection(article.section || article.groupKey)
-    setEditArticle({ id: article.id, rowKey: article.rowKey, name: article.name, parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0, type, section: article.section || article.groupKey })
+    setEditArticle({
+      id: article.id, rowKey: article.rowKey, name: article.name,
+      parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0,
+      type, section: article.section || article.groupKey,
+      is_variable: !!article.is_variable,
+    })
     setAddArticle(null)
   }
 
-  const openAddArticle = (infoType, groupKey = null) => {
-    setAddArticle({ type: infoType, parent_id: '', name: '', sort_order: 0, groupKey })
+  const openAddArticle = (infoType, groupKey = null, isVariable = false) => {
+    // Статья, заведённая из группы «Переменные расходы», переменной и
+    // становится — иначе она тут же уехала бы в соседнюю группу
+    setAddArticle({ type: infoType, parent_id: '', name: '', sort_order: 0, groupKey, is_variable: isVariable })
     setEditArticle(null)
   }
 
@@ -330,6 +353,8 @@ export default function BudgetPage() {
         type: editArticle.type,
         parent_id: editArticle.parent_id || null,
         sort_order: editArticle.sort_order || 0,
+        // Только у расходов: в какую половину разделённого БДР попадёт статья
+        ...(editArticle.type === 'expenses' ? { is_variable: !!editArticle.is_variable } : {}),
       })
       setEditArticle(null)
       loadReport(true)
@@ -346,6 +371,7 @@ export default function BudgetPage() {
         type: addArticle.type,
         parent_id: addArticle.parent_id || null,
         sort_order: addArticle.sort_order || 0,
+        ...(addArticle.type === 'expenses' ? { is_variable: !!addArticle.is_variable } : {}),
       })
       setAddArticle(null)
       // По новой статье ещё нет ни плана, ни факта — при скрытых пустых она
@@ -361,10 +387,15 @@ export default function BudgetPage() {
     if (!report?.articles) return []
     const arts = report.articles
     if (Array.isArray(arts) && arts[0]?.group) {
-      const g = arts.find(a => a.group === groupKey)
-      if (!g) return []
-      const flat = []; const walk = (items, depth = 0) => { for (const a of items) { flat.push({ id: a.id, name: a.name, depth }); if (a.children) walk(a.children, depth + 1) } }
-      walk(g.items || []); return flat
+      // Родителя ищем по всему разделу, а не по одной группе: при разделении
+      // расходов переменная статья вполне может лежать под постоянным
+      // родителем, и половинного списка для выбора не хватило бы
+      const match = arts.filter(a => (a.key || a.group) === groupKey || a.group === groupKey)
+      if (!match.length) return []
+      const flat = []; const seen = new Set()
+      const walk = (items, depth = 0) => { for (const a of items) { if (!seen.has(a.id)) { seen.add(a.id); flat.push({ id: a.id, name: a.name, depth }) }; if (a.children) walk(a.children, depth + 1) } }
+      for (const g of match) walk(g.items || [])
+      return flat
     }
     // ДДС — все статьи
     const flat = []; const walk = (items, depth = 0) => { for (const a of items) { flat.push({ id: a.id, name: a.name, depth }); if (a.children) walk(a.children, depth + 1) } }
@@ -408,12 +439,23 @@ export default function BudgetPage() {
     // обязан включать группу — иначе строки дублируются и раскрываются вместе.
     if (Array.isArray(arts) && arts[0]?.id != null) return { flatArticles: flattenArticles(arts).map(a => ({ ...a, rowKey: String(a.id) })), descendantLeafMap: buildDescendantLeafMap(arts), descendantAllMap: buildDescendantAllMap(arts) }
     const allItems = [], allFlat = []
-    for (const g of arts) { allFlat.push({ id: `group_${g.group}`, rowKey: `group_${g.group}`, name: g.label, depth: 0, isGroup: true, groupKey: g.group }); allFlat.push(...flattenArticles(g.items || [], 1).map(a => ({ ...a, section: g.group, rowKey: `${g.group}:${a.id}` }))); allItems.push(...(g.items || [])) }
-    return { flatArticles: allFlat, descendantLeafMap: buildDescendantLeafMap(allItems), descendantAllMap: buildDescendantAllMap(allItems) }
+    const allMap = {}
+    // groupKey отличается от section: расходы показываются двумя группами
+    // (переменные и постоянные), а раздел плана и факта у них один — expenses
+    for (const g of arts) {
+      const gk = g.key || g.group
+      allFlat.push({ id: `group_${gk}`, rowKey: `group_${gk}`, name: g.label, depth: 0, isGroup: true, groupKey: gk, section: g.group })
+      allFlat.push(...flattenArticles(g.items || [], 1).map(a => ({ ...a, section: g.group, groupKey: gk, rowKey: `${gk}:${a.id}` })))
+      allItems.push(...(g.items || []))
+      Object.assign(allMap, buildDescendantAllMap(g.items || [], `${gk}:`))
+    }
+    return { flatArticles: allFlat, descendantLeafMap: buildDescendantLeafMap(allItems), descendantAllMap: allMap }
   }, [report])
 
-  const getArticleValue = useCallback((aid, pd, src, section = null) => {
-    const allIds = descendantAllMap[aid]; const ids = (allIds?.size > 0) ? allIds : new Set([aid])
+  /** Сумма строки за месяц: по самой статье и её потомкам в этой же группе */
+  const getArticleValue = useCallback((rowKey, pd, src, section = null, fallbackId = null) => {
+    const allIds = descendantAllMap[rowKey]
+    const ids = (allIds?.size > 0) ? allIds : new Set([fallbackId ?? rowKey])
     let t = 0; const sfx = ':' + pd
     if (section) {
       for (const l of ids) { const p = section + ':' + l + ':'; for (const [k, v] of Object.entries(src)) if (k.startsWith(p) && k.endsWith(sfx)) t += v }
@@ -431,9 +473,12 @@ export default function BudgetPage() {
     if (!Array.isArray(arts) || !arts[0]?.group) return {}
     const result = {}
     for (const g of arts) {
-      result[g.group] = {}
+      const gk = g.key || g.group
+      result[gk] = {}
       const allNodeIds = new Set()
-      const collectAll = (items) => { for (const it of items) { allNodeIds.add(it.id); if (it.children?.length) collectAll(it.children) } }
+      // Подпорки пропускаем: строка стоит в группе ради вложенности, а её
+      // собственная сумма относится к другой половине расходов
+      const collectAll = (items) => { for (const it of items) { if (!it.scaffold) allNodeIds.add(it.id); if (it.children?.length) collectAll(it.children) } }
       collectAll(g.items || [])
       for (const pd of periodDates) {
         let f = 0, p = 0
@@ -442,7 +487,7 @@ export default function BudgetPage() {
           for (const [k, v] of Object.entries(fact)) if (k.startsWith(pfx) && k.endsWith(sfx)) f += v
           for (const [k, v] of Object.entries(plan)) if (k.startsWith(pfx) && k.endsWith(sfx)) p += v
         }
-        result[g.group][pd] = { fact: f, plan: p }
+        result[gk][pd] = { fact: f, plan: p }
       }
     }
     return result
@@ -512,7 +557,7 @@ export default function BudgetPage() {
   // схлопнулась бы вместе с наполненными статьями внутри
   const hasNumbers = useCallback((a) => {
     const sec = a.section || ''
-    for (const id of (descendantAllMap[a.id] || [a.id])) {
+    for (const id of (descendantAllMap[a.rowKey] || [a.id])) {
       if (articlesWithNumbers.has(`${sec}|${id}`)) return true
     }
     return false
@@ -691,6 +736,23 @@ export default function BudgetPage() {
             <button className={`px-3 py-1.5 text-xs font-medium ${byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(true)}>По кассам</button>
           </div>
         )}
+        {/* Вариант БДР с разделением расходов. Отдельной страницей делать не
+            стали: план, факт, расшифровки и копирование ячеек у обоих видов
+            одни и те же, разошлась бы только вёрстка */}
+        {selectedDoc?.type === 'bdr' && (
+          <button
+            onClick={() => setSplitExpenses(v => !v)}
+            title={splitExpenses
+              ? 'Показать расходы одной группой'
+              : 'Разделить расходы на переменные и постоянные — по отметке у статьи'}
+            className={`ml-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
+              splitExpenses
+                ? 'bg-blue-900 text-white border-blue-900'
+                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+            }`}>
+            Переменные / постоянные
+          </button>
+        )}
         <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
           {[{k:'plan',l:'План'},{k:'fact',l:'Факт'},{k:'plan_fact',l:'П+Ф'},{k:'plan_fact_delta',l:'П+Ф+Δ'}].map(m => (
             <button key={m.k} className={`px-2.5 py-1.5 text-[11px] font-medium ${viewMode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setViewMode(m.k)}>{m.l}</button>
@@ -844,11 +906,25 @@ export default function BudgetPage() {
                     const totals = bdrGroupTotals[article.groupKey]
                     return (
                       <Fragment key={article.rowKey}>
-                        {/* Валовая прибыль перед группой расходов */}
-                        {selectedDoc?.type === 'bdr' && article.groupKey === 'expenses' && bdrGroupTotals.revenue && bdrGroupTotals.cost && (
-                          renderProfitRow('Валовая прибыль', (pd) => ({
+                        {/* Прибыль до расходов. Без разделения это валовая, как
+                            и было; с разделением — маржинальная, потому что
+                            валовой ниже становится доход за вычетом ещё и
+                            переменных расходов */}
+                        {selectedDoc?.type === 'bdr' && bdrGroupTotals.revenue && bdrGroupTotals.cost
+                          && (article.groupKey === 'expenses' || article.groupKey === 'expenses_var') && (
+                          renderProfitRow(splitExpenses ? 'Маржинальная прибыль' : 'Валовая прибыль', (pd) => ({
                             factVal: (bdrGroupTotals.revenue[pd]?.fact || 0) + (bdrGroupTotals.cost[pd]?.fact || 0),
                             planVal: (bdrGroupTotals.revenue[pd]?.plan || 0) + (bdrGroupTotals.cost[pd]?.plan || 0),
+                          }), 'border-t-2 border-gray-300')
+                        )}
+                        {/* Валовая прибыль — после переменных расходов */}
+                        {selectedDoc?.type === 'bdr' && article.groupKey === 'expenses_fix'
+                          && bdrGroupTotals.revenue && bdrGroupTotals.cost && (
+                          renderProfitRow('Валовая прибыль', (pd) => ({
+                            factVal: (bdrGroupTotals.revenue[pd]?.fact || 0) + (bdrGroupTotals.cost[pd]?.fact || 0)
+                                   + (bdrGroupTotals.expenses_var?.[pd]?.fact || 0),
+                            planVal: (bdrGroupTotals.revenue[pd]?.plan || 0) + (bdrGroupTotals.cost[pd]?.plan || 0)
+                                   + (bdrGroupTotals.expenses_var?.[pd]?.plan || 0),
                           }), 'border-t-2 border-gray-300')
                         )}
                         {/* Заголовок группы с итогами */}
@@ -857,7 +933,7 @@ export default function BudgetPage() {
                             <div className="flex items-center gap-2">
                               {article.name}
                               <button
-                                onClick={() => openAddArticle(article.groupKey === 'expenses' ? 'expenses' : article.groupKey === 'cost' ? 'revenue' : 'revenue', article.groupKey)}
+                                onClick={() => openAddArticle(infoTypeFromSection(article.section), article.groupKey, article.groupKey === 'expenses_var')}
                                 className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded"
                                 title="Добавить статью"
                               >+ статья</button>
@@ -953,36 +1029,36 @@ export default function BudgetPage() {
                       </td>
                       {periodDates.map(pd => {
                         const sec = article.section || null
-                        const factVal = getArticleValue(article.id, pd, fact, sec)
-                        const planVal = getArticleValue(article.id, pd, plan, sec)
+                        const factVal = getArticleValue(article.rowKey, pd, fact, sec, article.id)
+                        const planVal = getArticleValue(article.rowKey, pd, plan, sec, article.id)
                         const future = isFutureMonth(pd)
                         // По «Без статьи» план не ставят: это не план, а долг
                         // по разноске. Появится статья — появится и план
                         const editable = selectedDoc?.status === 'draft' && !unassigned
                         const key = sec ? `${sec}:${article.id}:0:${pd}` : `${article.id}:0:${pd}`
                         const count = planDetails[key]?.length || 0
-                        const isCopied = clipboard && clipboard.articleId === article.id && clipboard.periodDate === pd && clipboard.section === sec
-                        const canPaste = !!clipboard && clipboard.articleId === article.id && clipboard.section === sec && clipboard.periodDate !== pd
+                        const isCopied = clipboard && clipboard.rowKey === article.rowKey && clipboard.periodDate === pd
+                        const canPaste = !!clipboard && clipboard.rowKey === article.rowKey && clipboard.periodDate !== pd
                         return (
                           <Fragment key={pd}>
                             {isPlanOnly ? (
                               isFactMonth(pd)
                                 ? <td className="text-right px-2 py-1.5 tabular-nums text-gray-400 italic border-l border-gray-100">{fmt(factVal)}</td>
                                 : editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
-                                    onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
-                                    isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
-                                    onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
+                                    onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec, article.rowKey)}
+                                    isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec, article.rowKey)}
+                                    onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec, article.rowKey) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
                                   : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>
                             ) : isFactOnly ? (
-                              <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
+                              <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec, article.rowKey) : null} />
                             ) : (
                               <>
                                 {editable ? <PlanCell value={planVal} detailCount={count} disabled={false}
-                                  onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec)}
-                                  isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec)}
-                                  onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
+                                  onClick={() => openDrawer(article.id, article.name, pd, 'plan', sec, article.rowKey)}
+                                  isCopied={isCopied} onCopy={() => handleCopyCell(article.id, article.name, pd, sec, article.rowKey)}
+                                  onPaste={canPaste ? () => handlePasteCell(article.id, pd, sec, article.rowKey) : null} canPaste={canPaste} onClearClipboard={() => setClipboard(null)} />
                                   : <td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(planVal)}</td>}
-                                <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec) : null} />
+                                <FactCell value={factVal} future={future} onClick={factVal && !future ? () => openDrawer(article.id, article.name, pd, 'fact', sec, article.rowKey) : null} />
                                 {showDelta && <DeltaCell fact={future ? null : factVal} plan={planVal} />}
                               </>
                             )}
@@ -1008,6 +1084,17 @@ export default function BudgetPage() {
                             </select>
                             <input className="px-2 py-1 border border-gray-200 rounded text-xs bg-white w-16 text-center" type="number" placeholder="Порядок"
                               value={editArticle.sort_order} onChange={e => setEditArticle(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))} />
+                            {/* Отметка прямо в отчёте: расставлять её по сорока
+                                статьям, уходя в справочник и обратно, — работа
+                                на полдня */}
+                            {editArticle.type === 'expenses' && (
+                              <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
+                                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-900"
+                                  checked={!!editArticle.is_variable}
+                                  onChange={e => setEditArticle(prev => ({ ...prev, is_variable: e.target.checked }))} />
+                                переменная
+                              </label>
+                            )}
                             <button onClick={saveArticle} disabled={!editArticle.name.trim() || articleSaving}
                               className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{articleSaving ? '...' : 'OK'}</button>
                             <button onClick={() => setEditArticle(null)} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">Отмена</button>
@@ -1019,13 +1106,17 @@ export default function BudgetPage() {
                   )
                 })}
 
-                {/* БДР: Чистая прибыль */}
+                {/* БДР: Чистая прибыль — доход минус всё */}
                 {selectedDoc?.type === 'bdr' && bdrGroupTotals.revenue && (
                   renderProfitRow('Чистая прибыль', (pd) => {
-                    const rev = bdrGroupTotals.revenue?.[pd] || { fact: 0, plan: 0 }
-                    const cost = bdrGroupTotals.cost?.[pd] || { fact: 0, plan: 0 }
-                    const exp = bdrGroupTotals.expenses?.[pd] || { fact: 0, plan: 0 }
-                    return { factVal: rev.fact + cost.fact + exp.fact, planVal: rev.plan + cost.plan + exp.plan }
+                    const at = (g) => bdrGroupTotals[g]?.[pd] || { fact: 0, plan: 0 }
+                    // При разделении расходы приходят двумя группами: expenses
+                    // пустует, а суммы лежат в переменных и постоянных
+                    const parts = ['revenue', 'cost', 'expenses', 'expenses_var', 'expenses_fix'].map(at)
+                    return {
+                      factVal: parts.reduce((s, p) => s + p.fact, 0),
+                      planVal: parts.reduce((s, p) => s + p.plan, 0),
+                    }
                   }, 'border-t-2 border-gray-300')
                 )}
 
@@ -1072,6 +1163,7 @@ export default function BudgetPage() {
         <BudgetDrawer
           mode={drawer.mode}
           articleId={drawer.articleId}
+          articleRowKey={drawer.rowKey}
           articleName={drawer.articleName}
           periodDate={drawer.periodDate}
           periodLabel={drawer.periodLabel}

@@ -70,6 +70,7 @@ class InfoController extends TenantController
             'inn'         => 'nullable|string|max:12',
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
+            'is_variable' => 'nullable|boolean',
             'default_expense_id' => 'nullable|integer',
         ]);
 
@@ -82,6 +83,7 @@ class InfoController extends TenantController
             'parent_id'   => $data['parent_id'] ?? null,
             'sort_order'  => $data['sort_order'] ?? 0,
             'is_active'   => true,
+            'is_variable' => $data['is_variable'] ?? false,
             'default_expense_id' => $data['default_expense_id'] ?? null,
         ]);
 
@@ -101,6 +103,7 @@ class InfoController extends TenantController
             'parent_id'   => 'nullable|integer',
             'sort_order'  => 'nullable|integer',
             'is_active'   => 'nullable|boolean',
+            'is_variable' => 'nullable|boolean',
             'default_expense_id' => 'nullable|integer',
         ]);
 

@@ -92,7 +92,7 @@ const buildArticleOptions = (articles, sectionFilter = null) => {
 const UNASSIGNED_ID = 0
 
 export default function BudgetDrawer({
-  mode, articleId, articleName, periodDate, periodLabel, section, docId, docType,
+  mode, articleId, articleRowKey, articleName, periodDate, periodLabel, section, docId, docType,
   articles, descendantAllMap, periodDates, granularity = 'month',
   factDrillConfig, onClose, onUpdate,
 }) {
@@ -164,14 +164,14 @@ export default function BudgetDrawer({
           {tab === 'plan' ? (
             <PlanTab
               articleId={articleId} periodDate={periodDate} docId={docId}
-              articles={articles} descendantAllMap={descendantAllMap}
+              articles={articles} descendantAllMap={descendantAllMap} articleRowKey={articleRowKey}
               section={section} periodDates={periodDates} granularity={granularity}
               onUpdate={onUpdate}
             />
           ) : (
             <FactTab
               articleId={articleId} periodDate={periodDate} docType={docType}
-              section={section} descendantAllMap={descendantAllMap}
+              section={section} descendantAllMap={descendantAllMap} articleRowKey={articleRowKey}
               factDrillConfig={factDrillConfig}
               granularity={granularity}
               reloadKey={factReloadKey}
@@ -210,7 +210,7 @@ export default function BudgetDrawer({
 // ══════════════════════════════════════════════════════════════════════════════
 // Вкладка «План»
 // ══════════════════════════════════════════════════════════════════════════════
-function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onUpdate, section, periodDates, granularity }) {
+function PlanTab({ articleId, articleRowKey, periodDate, docId, articles, descendantAllMap, onUpdate, section, periodDates, granularity }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -240,7 +240,7 @@ function PlanTab({ articleId, periodDate, docId, articles, descendantAllMap, onU
   const loadItems = async () => {
     setLoading(true)
     try {
-      const allIds = descendantAllMap?.[articleId]
+      const allIds = descendantAllMap?.[articleRowKey] ?? descendantAllMap?.[articleId]
       const ids = allIds && allIds.size > 0 ? [...allIds] : [articleId]
       const params = {
         budget_document_id: docId,
@@ -553,7 +553,7 @@ function DrawerRow({ item, articleOptions, sign = 1, onUpdate, onDelete }) {
 /** Счёт БДР, с которого раздел берёт факт */
 const SECTION_ACCOUNT = { revenue: 'П587', cost: 'П588', expenses: 'П589' }
 
-function FactTab({ articleId, periodDate, docType, section, descendantAllMap, factDrillConfig, granularity, reloadKey, onEditOp, onOpenDoc }) {
+function FactTab({ articleId, articleRowKey, periodDate, docType, section, descendantAllMap, factDrillConfig, granularity, reloadKey, onEditOp, onOpenDoc }) {
   const [ops, setOps] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -573,7 +573,7 @@ function FactTab({ articleId, periodDate, docType, section, descendantAllMap, fa
         const dateFrom = periodDate
         const dateTo = endOfPeriod(periodDate, granularity)
 
-        const allIds = descendantAllMap?.[articleId]
+        const allIds = descendantAllMap?.[articleRowKey] ?? descendantAllMap?.[articleId]
         const validIds = allIds && allIds.size > 0 ? allIds : new Set([articleId])
         const validIdsStr = new Set([...validIds].map(String))
 

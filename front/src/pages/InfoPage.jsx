@@ -51,7 +51,7 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '' }
+const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '', is_variable: false }
 
 /**
  * Выбор элемента справочника: родитель и статья расхода по умолчанию.
@@ -151,6 +151,7 @@ export default function InfoPage() {
       parent_id:   item.parent_id || '',
       sort_order:  item.sort_order || 0,
       default_expense_id: item.default_expense_id || '',
+      is_variable: !!item.is_variable,
     })
     setShowForm(true)
   }
@@ -169,6 +170,7 @@ export default function InfoPage() {
       sort_order: form.sort_order,
       description: form.description || null,
       default_expense_id: form.default_expense_id || null,
+      is_variable: form.type === 'expenses' ? !!form.is_variable : false,
     }
 
     try {
@@ -497,6 +499,24 @@ export default function InfoPage() {
                   // Страница перечитается сама после сохранения формы
                   onItemCreated={(newItem) => setExpenseOptions(prev => [...prev, newItem])}
                 />
+              )}
+
+              {/* Переменная или постоянная — только у статьи расхода. По этой
+                  отметке БДР делит расходы на две половины и считает валовую
+                  прибыль; на проводки и на остальные отчёты она не влияет */}
+              {form.type === 'expenses' && (
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
+                    checked={!!form.is_variable}
+                    onChange={e => setForm({ ...form, is_variable: e.target.checked })} />
+                  <span className="text-sm text-gray-700">
+                    Переменная статья
+                    <span className="block text-xs text-gray-400">
+                      растёт вместе с выручкой — налоги с оборота, комиссии, бонусы.
+                      В БДР попадёт в «Переменные расходы»
+                    </span>
+                  </span>
+                </label>
               )}
 
               {/* ИНН — только для partner */}

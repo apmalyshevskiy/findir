@@ -350,6 +350,7 @@ class BudgetController extends TenantController
      *   - by_cash=1       — детализация по кассам (только для ДДС/PDC)
      *   - display_from    — расширение диапазона влево (показать факт до начала бюджета)
      *   - granularity     — 'day' | 'month'. По умолчанию: 'day' для PDC, 'month' для остальных.
+     *   - split_expenses=1 — БДР: показать расходы двумя группами, переменные и постоянные
      *
      * Возвращает:
      *   - document: шапка
@@ -424,7 +425,7 @@ class BudgetController extends TenantController
             $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom, $granularity);
             $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom, $granularity);
         } else {
-            $articles = $this->getBdrArticles();
+            $articles = $this->getBdrArticles((bool) $request->split_expenses);
             $fact = $this->getBdrFact($doc, $periodDates, $effectiveFrom);
             $openingBalances = [];
         }
@@ -652,8 +653,16 @@ class BudgetController extends TenantController
      * Дерево статей БДР: revenue (доходы + себестоимость) + expenses.
      * Себестоимость использует те же статьи дохода (revenue), что и доходы,
      * т.к. на счёте П588 аналитика info_1 = revenue.
+     *
+     * У группы два ключа, и они разные не случайно. `group` — это раздел, по
+     * нему собираются план и факт; `key` — это строка отчёта. При разделении
+     * расходов обе половины остаются разделом `expenses` (счёт-то один, П589),
+     * но показываются отдельными группами. Поэтому ни план, ни факт при
+     * включении разделения перекладывать не нужно — меняется только вид.
+     *
+     * @param bool $splitExpenses разделить расходы на переменные и постоянные
      */
-    private function getBdrArticles(): array
+    private function getBdrArticles(bool $splitExpenses = false): array
     {
         $revenues = DB::connection($this->dbName)
             ->table('info')
@@ -669,13 +678,61 @@ class BudgetController extends TenantController
             ->whereNull('deleted_at')
             ->where('is_active', true)
             ->orderBy('sort_order')->orderBy('name')
-            ->get(['id', 'parent_id', 'code', 'name', 'sort_order']);
+            ->get(['id', 'parent_id', 'code', 'name', 'sort_order', 'is_variable']);
 
-        return [
-            ['group' => 'revenue',    'label' => 'Доходы',        'items' => $this->buildTree($revenues)],
-            ['group' => 'cost',       'label' => 'Себестоимость', 'items' => $this->buildTree($revenues)],
-            ['group' => 'expenses',   'label' => 'Расходы',       'items' => $this->buildTree($expenses)],
+        $groups = [
+            ['key' => 'revenue', 'group' => 'revenue', 'label' => 'Доходы',        'items' => $this->buildTree($revenues)],
+            ['key' => 'cost',    'group' => 'cost',    'label' => 'Себестоимость', 'items' => $this->buildTree($revenues)],
         ];
+
+        $tree = $this->buildTree($expenses);
+
+        if (!$splitExpenses) {
+            $groups[] = ['key' => 'expenses', 'group' => 'expenses', 'label' => 'Расходы', 'items' => $tree];
+
+            return $groups;
+        }
+
+        $groups[] = ['key' => 'expenses_var', 'group' => 'expenses',
+                     'label' => 'Переменные расходы', 'items' => $this->expenseBucket($tree, true)];
+        $groups[] = ['key' => 'expenses_fix', 'group' => 'expenses',
+                     'label' => 'Постоянные расходы', 'items' => $this->expenseBucket($tree, false)];
+
+        return $groups;
+    }
+
+    /**
+     * Половина дерева статей — переменные или постоянные.
+     *
+     * Статья попадает в половину по собственной отметке, а не по родительской:
+     * у «02 Цех» налоги переменные, а расходы на команду постоянные, и в
+     * отчёте он стоит в обеих половинах с разными детьми. Поэтому родитель,
+     * которому самому здесь не место, остаётся подпоркой ради вложенности.
+     *
+     * Подпорка помечается `scaffold`, и это не украшение: собственную сумму
+     * такой строки приплюсовывать здесь нельзя — она принадлежит другой
+     * половине и иначе сосчиталась бы дважды. Отчёт суммирует по потомкам,
+     * пропуская подпорки.
+     */
+    private function expenseBucket(array $nodes, bool $variable): array
+    {
+        $out = [];
+
+        foreach ($nodes as $node) {
+            $children = $this->expenseBucket($node['children'] ?? [], $variable);
+            $mine     = !empty($node['is_variable']) === $variable;
+
+            if (!$mine && !$children) continue;
+
+            $node['scaffold'] = !$mine;
+
+            unset($node['children']);
+            if ($children) $node['children'] = $children;
+
+            $out[] = $node;
+        }
+
+        return $out;
     }
 
     /**
@@ -798,12 +855,18 @@ class BudgetController extends TenantController
     {
         // БДР: список разделов, у каждого своё дерево
         if (isset($articles[0]['group'])) {
-            foreach ($articles as &$group) {
-                if ($this->hasUnassigned($fact, $group['group'])) {
-                    $group['items'][] = $this->unassignedNode();
+            // Раздел может быть показан двумя группами — расходы переменные и
+            // постоянные. «Без статьи» кладём в последнюю: во-первых, иначе
+            // одна сумма встала бы в обе, во-вторых, неразнесённое по смыслу
+            // постоянное — переменным его никто не отмечал
+            $last = [];
+            foreach ($articles as $i => $group) $last[$group['group']] = $i;
+
+            foreach ($last as $section => $i) {
+                if ($this->hasUnassigned($fact, $section)) {
+                    $articles[$i]['items'][] = $this->unassignedNode();
                 }
             }
-            unset($group);
 
             return $articles;
         }
@@ -832,6 +895,10 @@ class BudgetController extends TenantController
                     'parent_id'  => $item->parent_id,
                     'sort_order' => $item->sort_order ?? 0,
                 ];
+                // Есть только у статей расходов — по ней делится БДР
+                if (property_exists($item, 'is_variable')) {
+                    $node['is_variable'] = (bool) $item->is_variable;
+                }
                 if (!empty($children)) {
                     $node['children'] = $children;
                 }
