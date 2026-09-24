@@ -56,14 +56,16 @@ class OperationsController extends TenantController
         }
 
         if ($request->info_id) {
-            $infoId = $request->info_id;
-            $query->where(function ($q) use ($infoId) {
-                $q->where('in_info_1_id', $infoId)
-                    ->orWhere('in_info_2_id', $infoId)
-                    ->orWhere('in_info_3_id', $infoId)
-                    ->orWhere('out_info_1_id', $infoId)
-                    ->orWhere('out_info_2_id', $infoId)
-                    ->orWhere('out_info_3_id', $infoId);
+            // Группа отбирается вместе с содержимым: выбрав «02 Цех», человек
+            // ждёт все его статьи, а не те редкие операции, где аналитика
+            // проставлена на саму группу. Так же считают ОСВ и помощник
+            $ids = $this->infoWithDescendants((int) $request->info_id);
+
+            $query->where(function ($q) use ($ids) {
+                foreach (['in_info_1_id', 'in_info_2_id', 'in_info_3_id',
+                          'out_info_1_id', 'out_info_2_id', 'out_info_3_id'] as $field) {
+                    $q->orWhereIn($field, $ids);
+                }
             });
         }
 
@@ -102,6 +104,38 @@ class OperationsController extends TenantController
      * коррелированных подзапросов на каждую строку журнала стоили бы дороже
      * двух простых выборок по маленьким таблицам.
      */
+    /**
+     * Элемент справочника вместе со всем, что под ним.
+     *
+     * Читаем таблицу целиком: справочник маленький, а рекурсивный запрос по
+     * parent_id в MariaDB стоил бы больше, чем один проход по нескольким
+     * сотням строк. Цикл в parent_id обрывается сам — уже пройденный id
+     * второй раз в очередь не попадает.
+     *
+     * @return array<int, int> сам элемент первым
+     */
+    private function infoWithDescendants(int $id): array
+    {
+        $children = [];
+        foreach (DB::connection($this->dbName)->table('info')->select('id', 'parent_id')->get() as $row) {
+            $children[(int) $row->parent_id][] = (int) $row->id;
+        }
+
+        $ids   = [$id => true];
+        $queue = [$id];
+
+        while ($queue) {
+            foreach ($children[array_shift($queue)] ?? [] as $child) {
+                if (isset($ids[$child])) continue;
+
+                $ids[$child] = true;
+                $queue[] = $child;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
     private function applySearch($query, string $q): void
     {
         $conn = DB::connection($this->dbName);

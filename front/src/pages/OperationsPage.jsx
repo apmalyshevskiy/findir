@@ -20,6 +20,39 @@ import LockIcon from '../components/LockIcon'
 import { Highlight } from '../utils/infoSearch'
 import { ACCOUNT_CODE } from '../utils/accountCode'
 
+/**
+ * Плоский список справочника с отступами по вложенности.
+ *
+ * Группу в отборе выбирают чаще, чем отдельный элемент, — «все налоги», «весь
+ * цех», — и без отступов в списке не видно, что элемент вложенный, а значит и
+ * того, что выбор группы заберёт всё, что под ней.
+ */
+const indentByParent = (items) => {
+  const children = new Map()
+  for (const i of items) {
+    const p = i.parent_id || 0
+    if (!children.has(p)) children.set(p, [])
+    children.get(p).push(i)
+  }
+
+  const out = []
+  const walk = (parent, depth) => {
+    for (const i of children.get(parent) || []) {
+      out.push({ ...i, depth })
+      walk(i.id, depth + 1)
+    }
+  }
+  walk(0, 0)
+
+  // Элемент, чей родитель отфильтрован или удалён, иначе пропал бы из списка
+  if (out.length < items.length) {
+    const seen = new Set(out.map(i => i.id))
+    for (const i of items) if (!seen.has(i.id)) out.push({ ...i, depth: 0 })
+  }
+
+  return out
+}
+
 const INFO_TYPES = [
   { id: 'partner', name: 'Контрагенты' },
   { id: 'product', name: 'Товары/Услуги' },
@@ -225,7 +258,7 @@ export default function OperationsPage() {
   useEffect(() => {
     if (infoType) {
       api.get('/info', { params: { type: infoType } })
-        .then(res => setInfoOptions(res.data.data))
+        .then(res => setInfoOptions(indentByParent(res.data.data || [])))
         .catch(err => console.error("Ошибка загрузки справочника:", err))
     } else {
       setInfoOptions([])
@@ -652,10 +685,9 @@ export default function OperationsPage() {
       className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
     >
       <option value="">Тип не выбран</option>
-      <option value="partner">Контрагенты</option>
-      <option value="product">Товары</option>
-      <option value="cash">Кассы</option>
-      <option value="employee">Сотрудники</option>
+      {/* Список из INFO_TYPES, а не вписанный сюда: четыре типа из восьми
+          здесь и жили, и статей расходов среди них не было */}
+      {INFO_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
     </select>
   </div>
 
@@ -666,9 +698,11 @@ export default function OperationsPage() {
         onChange={e => setSelectedInfoId(e.target.value)}
         className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-48"
       >
-        <option value="">Все элементы {infoType}</option>
+        <option value="">Все: {INFO_TYPES.find(t => t.id === infoType)?.name || infoType}</option>
         {infoOptions.map(opt => (
-          <option key={opt.id} value={opt.id}>{opt.name}</option>
+          <option key={opt.id} value={opt.id}>
+            {' '.repeat((opt.depth || 0) * 2)}{opt.depth > 0 ? '└ ' : ''}{opt.name}
+          </option>
         ))}
       </select>
     </div>
