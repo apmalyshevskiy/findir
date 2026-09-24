@@ -414,6 +414,10 @@ final class PostingsImporter
 
         $row = [
             'id'            => $entry['id'],
+            // Номер проводки в файле, с единицы. По нему человек находит её в
+            // самой выгрузке — и по нему же на неё ссылаются разбор файла и
+            // команда 1c:inspect-postings
+            'line'          => $entry['line'] ?? null,
             'date'          => $entry['date'],
             'external_date' => $this->documentDate($entry),
             'amount'        => $entry['amount'],

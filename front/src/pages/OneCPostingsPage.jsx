@@ -40,6 +40,16 @@ const STATUS = {
 
 const ORDER = ['new', 'changed', 'unmapped', 'forbidden', 'locked', 'loaded']
 
+/**
+ * Отбор «только изменения»: всё, кроме уже загруженных и не тронутых в 1С.
+ *
+ * Плашки состояний отбирают по одному состоянию, и при повторной загрузке это
+ * не помогает: смотреть надо и новые, и изменившиеся, и непрошедшие, а не
+ * что-то одно. А сотни уже загруженных строк между ними — ровно тот список,
+ * по которому не хочется бегать.
+ */
+const TODO = 'todo'
+
 /** Как разрешилось субконто — словами, а не кодом источника. */
 const SOURCE = {
   binding: { label: 'по привязке',     cls: 'text-violet-700' },
@@ -917,19 +927,41 @@ function ResultCard({ result }) {
 function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenOperation, stats }) {
   const [only, setOnly] = useState(null)
 
-  const shown    = only ? rows.filter(r => r.status === only) : rows
+  const inFilter = (r) => only === TODO ? r.status !== 'loaded' : r.status === only
+
+  const shown    = only ? rows.filter(inFilter) : rows
   const pickable = shown.filter(r => STATUS[r.status]?.pick)
   const allOn    = pickable.length > 0 && pickable.every(r => picked[r.id])
+
+  // Сколько строк прячет отбор «только изменения». Считаем всегда: число
+  // стоит на кнопке и тогда, когда отбор ещё не включён
+  const todoCount = rows.filter(r => r.status !== 'loaded').length
 
   // Отмеченное, которого сейчас не видно: иначе кнопка загрузки называет число,
   // которого на экране не найти
   const hiddenPicked = only
-    ? rows.filter(r => r.status !== only && picked[r.id] && STATUS[r.status]?.pick).length
+    ? rows.filter(r => !inFilter(r) && picked[r.id] && STATUS[r.status]?.pick).length
     : 0
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2 flex-wrap">
+        {/* Стоит первой: при повторной загрузке с неё и начинают */}
+        {todoCount > 0 && todoCount < rows.length && (
+          <button type="button"
+            onClick={() => setOnly(only === TODO ? null : TODO)}
+            title={only === TODO
+              ? 'Показать все проводки'
+              : 'Новые, изменившиеся и непрошедшие — всё, кроме уже загруженных'}
+            className={`text-sm rounded-lg px-2 py-0.5 mr-1 transition-colors border ${
+              only === TODO
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'border-gray-200 text-gray-600 hover:bg-gray-100'
+            }`}>
+            Только изменения — {todoCount}
+          </button>
+        )}
+
         {ORDER.filter(s => stats[s] > 0).map(s => (
           <button key={s} type="button"
             onClick={() => setOnly(only === s ? null : s)}
@@ -966,6 +998,9 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
                   title={only ? `Отметить показанные (${pickable.length})` : 'Отметить все'}
                   onChange={e => onPickAll(e.target.checked, shown)} />
               </th>
+              {/* Номер проводки в файле, а не по порядку на экране: при
+                  отборе он не съезжает, и по нему строку находят в выгрузке */}
+              <th className="px-3 py-2 text-left font-medium w-12">#</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Дата</th>
               <th className="px-3 py-2 text-left font-medium">Документ</th>
               <th className="px-3 py-2 text-left font-medium">Дебет</th>
@@ -976,8 +1011,10 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
           </thead>
           <tbody>
             {only && shown.length === 0 && (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">
-                В состоянии «{STATUS[only]?.label}» проводок не осталось
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-gray-400">
+                {only === TODO
+                  ? 'Всё уже загружено — менять нечего'
+                  : `В состоянии «${STATUS[only]?.label}» проводок не осталось`}
               </td></tr>
             )}
             {shown.map(r => {
@@ -991,6 +1028,7 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
                       checked={!!picked[r.id]}
                       onChange={e => onPick(r.id, e.target.checked)} />
                   </td>
+                  <td className="px-3 py-2 text-xs text-gray-400 font-mono tabular-nums">{r.line ?? '—'}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmtDate(r.date)}</td>
                   <td className="px-3 py-2 max-w-xs">
                     <div className="text-gray-800">{r.document || '—'}</div>
