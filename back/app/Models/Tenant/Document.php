@@ -50,6 +50,9 @@ class Document extends Model
         'project_id', 'type', 'status', 'created_by',
         // шапка
         'bi_id', 'info_1_id', 'info_2_id', 'info_3_id',
+        // Отдел документа: попадает в слот аналитики тех счетов проводки,
+        // которые объявили слот под справочник «Отделы»
+        'department_id',
         // только outgoing_invoice — копируются из project при создании
         'revenue_bi_id', 'cogs_bi_id', 'revenue_item_id',
         // суммы

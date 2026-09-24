@@ -2,9 +2,12 @@
 
 namespace App\Services\Documents;
 
+use App\Models\Tenant\BalanceItem;
 use App\Models\Tenant\Document;
 use App\Models\Tenant\DocumentItem;
+use App\Services\AnalyticSlots;
 use App\Services\Documents\CostCalculatorService;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Расходная накладная — outgoing_invoice
@@ -28,17 +31,18 @@ use App\Services\Documents\CostCalculatorService;
  *
  * Операция №1 — Выручка (на сумму item.amount):
  *   Дт  doc.bi_id (А300)      + doc.info_1_id (покупатель)
- *   Кт  doc.revenue_bi_id (П587)
- *       info_1 = doc.revenue_item_id  (статья дохода,  П587.info_1_type = revenue)
- *       info_2 = item.info_1_id       (номенклатура,   П587.info_2_type = product)
+ *   Кт  doc.revenue_bi_id (П587) — статья дохода, номенклатура и отдел
+ *       по слотам, которые счёт объявил (см. place)
  *
  * Операция №2 — Себестоимость (на сумму item.amount_cost, если > 0):
- *   Дт  doc.cogs_bi_id (П588)
- *       info_1 = doc.revenue_item_id  (статья дохода,  П588.info_1_type = revenue)
- *       info_2 = item.info_1_id       (номенклатура,   П588.info_2_type = product)
+ *   Дт  doc.cogs_bi_id (П588) — тот же набор и то же правило
  *   Кт  item.bi_id (А200/А240)
  *       info_1 = item.info_1_id  (номенклатура)
  *       info_2 = item.info_2_id  (склад, если А200)
+ *
+ * Номера слотов нигде не зашиты: счёт сам объявляет, какой справочник он
+ * принимает в каком слоте, — проводка это читает. Справочника, под который
+ * слота нет, в проводке не будет вовсе.
  *
  * ── Оплата (kind = payment) ──────────────────────────────────────────────
  *
@@ -151,7 +155,7 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
         $qty        = (float) ($item->quantity ?? 0);
 
         if ($document->revenue_bi_id) {
-            $operations[] = $this->operation($document, [
+            $revenue = [
                 'amount'   => (float) $item->amount,
                 'quantity' => $qty,
 
@@ -159,28 +163,40 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
                 'in_info_1_id' => $document->info_1_id,
                 'in_quantity'  => $qty,
 
-                'out_bi_id'     => $document->revenue_bi_id,
-                'out_info_1_id' => $document->revenue_item_id,
-                'out_info_2_id' => $item->info_1_id,
-            ], $content, $item->note);
+                'out_bi_id' => $document->revenue_bi_id,
+            ];
+            $this->place($document, $revenue, 'out', $document->revenue_bi_id, [
+                $document->revenue_item_id,
+                $item->info_1_id,
+                $document->department_id,
+            ]);
+
+            $operations[] = $this->operation($document, $revenue, $content, $item->note);
         }
 
         if ($document->cogs_bi_id && $item->amount_cost && $item->amount_cost > 0) {
-            $operations[] = $this->operation($document, [
+            $cost = [
                 'amount'   => (float) $item->amount_cost,
                 'quantity' => $qty,
 
-                'in_bi_id'     => $document->cogs_bi_id,
-                'in_info_1_id' => $document->revenue_item_id,
-                'in_info_2_id' => $item->info_1_id,
-                'in_quantity'  => $qty,
+                'in_bi_id'    => $document->cogs_bi_id,
+                'in_quantity' => $qty,
 
+                // Кредит — счёт самой строки, и её аналитика выбиралась прямо
+                // под него: раскладывать заново нечего
                 'out_bi_id'     => $item->bi_id,
                 'out_info_1_id' => $item->info_1_id,
                 'out_info_2_id' => $item->info_2_id,
                 'out_info_3_id' => $item->info_3_id,
                 'out_quantity'  => $qty,
-            ], 'Себестоимость: ' . $content, $item->note);
+            ];
+            $this->place($document, $cost, 'in', $document->cogs_bi_id, [
+                $document->revenue_item_id,
+                $item->info_1_id,
+                $document->department_id,
+            ]);
+
+            $operations[] = $this->operation($document, $cost, 'Себестоимость: ' . $content, $item->note);
         }
 
         return $operations;
@@ -209,18 +225,90 @@ class OutgoingInvoiceStrategy implements DocumentStrategyInterface
     {
         if (!$item->amount || !$item->head_bi_id) return [];
 
-        return [$this->operation($document, [
+        $vat = [
             'amount' => (float) $item->amount,
 
-            'in_bi_id'     => $item->bi_id,
-            'in_info_1_id' => $item->info_1_id,
-            'in_info_2_id' => $item->info_2_id,
+            'in_bi_id' => $item->bi_id,
 
             'out_bi_id'     => $item->head_bi_id,
             'out_info_1_id' => $item->head_info_1_id,
             'out_info_2_id' => $item->head_info_2_id,
-        ], $content, $item->note)];
+        ];
+        // Налог с продажи — расход отдела наравне с себестоимостью
+        $this->place($document, $vat, 'in', $item->bi_id, [
+            $item->info_1_id,
+            $item->info_2_id,
+            $document->department_id,
+        ]);
+
+        return [$this->operation($document, $vat, $content, $item->note)];
     }
+
+    /**
+     * Аналитика стороны проводки — по слотам, которые счёт сам объявил.
+     *
+     * Раньше позиции были записаны здесь жёстко: статья дохода в первый слот,
+     * номенклатура во второй. Счёт при этом не спрашивали, и настройка плана
+     * счетов ни на что не влияла. Если счёт доходов объявлял в первом слоте
+     * отдел, туда всё равно ложилась статья дохода, а номенклатура уезжала во
+     * второй слот, которого у счёта нет вовсе.
+     *
+     * Теперь у каждого значения спрашивается вид его справочника и слот
+     * ищется под этот вид. **Не нашлось — значение не пишется**: пустой
+     * разрез честнее, чем разрез не тем справочником, и отчёты такой слот всё
+     * равно не сгруппируют.
+     *
+     * Порядок перечисления значим: слоты разбираются в нём, поэтому первой
+     * идёт статья, потом номенклатура, потом отдел. Занятый слот не
+     * перетирается — значению ищется следующий подходящий.
+     *
+     * @param string          $side 'in' или 'out'
+     * @param array<int, ?int> $ids  элементы справочника в порядке важности
+     */
+    private function place(Document $document, array &$op, string $side, ?int $biId, array $ids): void
+    {
+        $account = $biId ? $this->account($document, (int) $biId) : null;
+        if (!$account) return;
+
+        foreach ($ids as $id) {
+            if (!$id) continue;
+
+            foreach (AnalyticSlots::slotsFor($account, $this->infoType($document, (int) $id)) as $slot) {
+                $field = "{$side}_info_{$slot}_id";
+                if (!empty($op[$field])) continue;
+
+                $op[$field] = (int) $id;
+                break;
+            }
+        }
+    }
+
+    /** Счёт из плана. Читаем по одному разу на документ: строк бывает много */
+    private function account(Document $document, int $biId)
+    {
+        if (!isset($this->accounts[$biId])) {
+            $this->accounts[$biId] = BalanceItem::on($document->getConnectionName())->find($biId);
+        }
+
+        return $this->accounts[$biId];
+    }
+
+    /** Вид справочника у элемента — по нему и подбирается слот */
+    private function infoType(Document $document, int $id): ?string
+    {
+        if (!array_key_exists($id, $this->infoTypes)) {
+            $this->infoTypes[$id] = DB::connection($document->getConnectionName())
+                ->table('info')->where('id', $id)->value('type');
+        }
+
+        return $this->infoTypes[$id];
+    }
+
+    /** @var array<int, ?BalanceItem> */
+    private array $accounts = [];
+
+    /** @var array<int, ?string> */
+    private array $infoTypes = [];
 
     /** Общая часть операции: пустые стороны заполняются нулями и null */
     private function operation(Document $document, array $values, string $content, ?string $note): array

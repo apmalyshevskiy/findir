@@ -486,6 +486,7 @@ class DocumentsController extends TenantController
             'info_1_id'       => 'nullable|integer',
             'info_2_id'       => 'nullable|integer',
             'info_3_id'       => 'nullable|integer',
+            'department_id'   => 'nullable|integer',
             'revenue_bi_id'   => 'nullable|integer',
             'cogs_bi_id'      => 'nullable|integer',
             'revenue_item_id' => 'nullable|integer',
@@ -533,7 +534,7 @@ class DocumentsController extends TenantController
 
     private function docData(array $data): array
     {
-        return [
+        $values = [
             'date'            => $data['date'],
             'number'          => $data['number'] ?? null,
             'external_number' => $data['external_number'] ?? null,
@@ -550,6 +551,15 @@ class DocumentsController extends TenantController
             'note'            => $data['note'] ?? null,
             'extra'           => $data['extra'] ?? null,
         ];
+
+        // Отдел ставим, только если он вообще пришёл. Форма документа его пока
+        // не показывает, и безусловное `?? null` стирало бы отдел, который
+        // проставила загрузка смены, — ровно так однажды терялись оплаты
+        if (array_key_exists('department_id', $data)) {
+            $values['department_id'] = $data['department_id'] ?: null;
+        }
+
+        return $values;
     }
 
     /**
@@ -637,6 +647,7 @@ class DocumentsController extends TenantController
             'info_2_name'       => $doc->info2?->name,
             'info_3_id'         => $doc->info_3_id,
             'info_3_name'       => $doc->info3?->name,
+            'department_id'     => $doc->department_id,
             'revenue_bi_id'     => $doc->revenue_bi_id,
             'revenue_bi_code'   => $doc->revenueBalanceItem?->code,
             'revenue_bi_name'   => $doc->revenueBalanceItem?->name,

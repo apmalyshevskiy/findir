@@ -372,6 +372,13 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
           <div className="flex items-baseline gap-4 flex-wrap">
             <h3 className="text-lg font-semibold text-gray-800">
               {isEdit ? 'Редактировать операцию' : 'Новая операция'}
+              {/* Номер — тот же, что в колонке «#» журнала и в расшифровке
+                  оборотки. В комментарии ниже у загруженных из 1С стоит номер
+                  их документа, и без этого его легко принять за наш */}
+              {isEdit && (
+                <span className="ml-2 font-mono font-normal text-gray-400"
+                  title="Номер операции в учёте">№&nbsp;{operation.id}</span>
+              )}
             </h3>
             {/* У операций, заведённых до появления автора, он пуст — тогда
                 строки просто нет: пустое «внёс —» ничего не сообщает */}

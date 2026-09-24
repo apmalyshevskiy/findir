@@ -245,6 +245,7 @@ const emptyDoc = (type, balanceItems = []) => {
     revenue_bi_id:   isOutgoing ? findBiId(balanceItems, OUTGOING_BI.revenue) || null : null,
     cogs_bi_id:      isOutgoing ? findBiId(balanceItems, OUTGOING_BI.cogs)    || null : null,
     revenue_item_id: null,
+    department_id: null,
     note: '', items: [],
   }
 }
@@ -318,6 +319,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
         info_2_id: doc.info_2_id || null, info_3_id: doc.info_3_id || null,
         revenue_bi_id: doc.revenue_bi_id || null, cogs_bi_id: doc.cogs_bi_id || null,
         revenue_item_id: doc.revenue_item_id || null,
+        department_id: doc.department_id || null,
         note: doc.note || '',
         items: (doc.items || []).map(i => ({
           _key: Math.random(), ...i,
@@ -450,6 +452,33 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   useEffect(() => {
     if (isOutgoing && !infoCache['revenue']) loadInfo('revenue')
   }, [isOutgoing])
+
+  /**
+   * Нужен ли документу отдел.
+   *
+   * Отдел ложится не в строку, а в те проводки, чьи счета сами объявили слот
+   * под справочник «Отделы»: выручка, себестоимость, налог. Если ни один из
+   * них такого слота не завёл, класть отдел некуда — и поле, которое ничего
+   * не делает, показывать незачем.
+   */
+  const departmentUsed = useMemo(() => {
+    if (!isOutgoing) return false
+
+    const ids = [
+      form.revenue_bi_id,
+      form.cogs_bi_id,
+      ...form.items.filter(i => !isSaleItem(i)).map(i => i.bi_id),
+    ].filter(Boolean)
+
+    return ids.some(id => {
+      const bi = balanceItems.find(b => b.id == id)
+      return [1, 2, 3].some(n => slotTypes(bi?.[`info_${n}_type`] || '').includes('department'))
+    })
+  }, [isOutgoing, form.revenue_bi_id, form.cogs_bi_id, form.items, balanceItems])
+
+  useEffect(() => {
+    if (departmentUsed && !infoCache['department']) loadInfo('department')
+  }, [departmentUsed])
 
   // Тип элемента справочника по его id — собираем из уже загруженных кэшей.
   // Нужен, когда слот принимает набор: по одному id иначе не понять, что это
@@ -797,7 +826,8 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
 
             {/* Поля outgoing_invoice */}
             {isOutgoing && (
-              <div className="grid grid-cols-3 gap-4 mt-3 pt-3 border-t border-gray-100">
+              <div className={`grid gap-4 mt-3 pt-3 border-t border-gray-100 ${
+                departmentUsed ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 <div>
                   <label className={lbl}>Статья дохода</label>
                   <InfoSelect items={infoCache['revenue'] || []} value={form.revenue_item_id}
@@ -819,6 +849,18 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                     onChange={v => setField('cogs_bi_id', v)}
                     placeholder="П588 Себестоимость" />
                 </div>
+                {/* Отдел — один на весь документ: разрез нужен и в выручке, и
+                    в себестоимости, и в налоге, а строка при этом может быть
+                    одна. В слот попадёт там, где счёт его объявил */}
+                {departmentUsed && (
+                  <div>
+                    <label className={lbl}>Отдел</label>
+                    <InfoSelect items={infoCache['department'] || []} value={form.department_id}
+                      disabled={isPosted} infoType="department"
+                      onChange={v => setField('department_id', v)}
+                      placeholder="Выбрать отдел..." />
+                  </div>
+                )}
               </div>
             )}
 

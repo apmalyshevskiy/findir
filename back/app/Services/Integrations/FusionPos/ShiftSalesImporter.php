@@ -254,6 +254,11 @@ final class ShiftSalesImporter
             ['label' => 'Дата',         'value' => $date?->format('d.m.Y') ?: '—'],
             ['label' => 'Покупатель',   'value' => $name('info', $cfg['customer_id']) ?: '—'],
             ['label' => 'Статья дохода', 'value' => $name('info', $point['revenue_item_id']) ?: '—'],
+            // Строку показываем только когда отдел настроен: у кого разреза по
+            // отделам нет, тому прочерк в карточке ничего не сообщает
+            ...($point['department_id']
+                ? [['label' => 'Отдел', 'value' => $name('info', $point['department_id']) ?: '—']]
+                : []),
             ['label' => 'Выручка',      'value' => $account($cfg['header_bi_id']) . ' ← ' . $account($cfg['revenue_bi_id'])
                                                  . '   ' . $this->money($sum['revenue']) . ' ₽'],
             ['label' => 'Себестоимость', 'value' => $account($cfg['cogs_bi_id']) . ' ← ' . $account($point['line_bi_id'])
@@ -392,6 +397,7 @@ final class ShiftSalesImporter
                 'revenue_bi_id'   => $cfg['revenue_bi_id'],
                 'cogs_bi_id'      => $cfg['cogs_bi_id'],
                 'revenue_item_id' => $this->pointCfg($shift, $cfg)['revenue_item_id'],
+                'department_id'   => $this->pointCfg($shift, $cfg)['department_id'],
                 'amount'          => $sum['revenue'],
                 'note'            => $this->buildNote($shift, $sum),
                 'extra'           => [
@@ -632,6 +638,9 @@ final class ShiftSalesImporter
                 'revenue_item_id' => (int) $row['revenue_item_id'],
                 'line_bi_id'      => (int) $row['line_bi_id'],
                 'product_id'      => (int) $row['product_id'],
+                // Не в обязательных: у кого разреза по отделам нет, тот его и
+                // не заполняет, а смены точки при этом грузятся как раньше
+                'department_id'   => (int) ($row['department_id'] ?? 0) ?: null,
             ];
         }
 
