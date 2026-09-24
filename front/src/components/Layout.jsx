@@ -5,7 +5,7 @@ import HelpDrawer from './HelpDrawer'
 import RecentMenu from './RecentMenu'
 import ObjectOpener from './ObjectOpener'
 import Logo from './Logo'
-import { TopProgress } from './Busy'
+import { TopBusy } from './Busy'
 import api from '../api/client'
 import { listAccounts, clearAccounts } from '../utils/accounts'
 import { canView, roleName } from '../utils/permissions'
@@ -164,9 +164,9 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Общая полоска загрузки: любой запрос к API виден сразу, на какой бы
+      {/* Общий индикатор работы: любой запрос к API виден сразу, на какой бы
           странице он ни ушёл */}
-      <TopProgress />
+      <TopBusy />
 
       {/* Полоса шапки во всю ширину, а её содержимое — по той же сетке, что и
           страница ниже: иначе меню и карточки живут по разным левым краям */}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { subscribeProgress } from '../api/progress'
 import useElapsed from '../hooks/useElapsed'
 
@@ -9,7 +9,7 @@ import useElapsed from '../hooks/useElapsed'
  * читается как «зависло»: пользователь жмёт ещё раз или уходит со страницы.
  * Поэтому показываем три разные вещи:
  *
- *   TopProgress  — «запрос ушёл», видно везде и сразу;
+ *   TopBusy      — «запрос ушёл», видно везде и сразу;
  *   SkeletonRows — «здесь будет таблица», когда показывать ещё нечего;
  *   BusyOverlay  — «цифры пересчитываются», когда старые данные ещё на экране.
  *
@@ -87,45 +87,71 @@ export function BusyOverlay({ active, label = 'Обновляю данные', h
 }
 
 /**
- * Полоска загрузки поверх шапки — по всем запросам к API сразу.
+ * Кольцо ожидания: две дуги, навстречу друг другу и с разной скоростью.
  *
- * Точного прогресса у нас нет (сервер отвечает одним куском), поэтому полоска
- * ползёт к 90% и ждёт ответа: честно показывает «работаем», не обещая срока.
- * По завершении добегает до конца и гаснет.
+ * Дуги, а не полные окружности: у замкнутого кольца не видно, вращается оно
+ * или стоит. Разрыв — это и есть то, что показывает движение.
+ *
+ * Длина дуги задаётся через strokeDasharray долей от длины окружности, чтобы
+ * при смене радиуса разрыв оставался тем же на глаз.
  */
-export function TopProgress() {
-  const [width, setWidth] = useState(0)
-  const [active, setActive] = useState(false)
-  const widthRef = useRef(0)
+export function Ring({ size = 20, className = 'text-blue-600' }) {
+  const arc = (r, part) => {
+    const len = 2 * Math.PI * r
+    return `${len * part} ${len}`
+  }
 
-  const set = (v) => { widthRef.current = v; setWidth(v) }
-
-  useEffect(() => subscribeProgress(n => setActive(n > 0)), [])
-
-  useEffect(() => {
-    if (active) {
-      // Первый шаг делает тот же таймер: 0 → 11% через 200 мс, поэтому
-      // мгновенные ответы полоской не мигают. Дальше замедляемся у 90% —
-      // полоска не упирается в край на первой же секунде долгого отчёта
-      const t = setInterval(() => set(widthRef.current + (90 - widthRef.current) * 0.12), 200)
-      return () => clearInterval(t)
-    }
-    if (widthRef.current === 0) return
-    // Добегаем до конца и гаснем. Через таймер, а не сразу: браузеру нужен
-    // отдельный кадр, иначе переход не отрисуется
-    const done = setTimeout(() => set(100), 16)
-    const gone = setTimeout(() => set(0), 400)
-    return () => { clearTimeout(done); clearTimeout(gone) }
-  }, [active])
-
-  if (width === 0) return null
+  // transformBox нужен вместе с transformOrigin: без него отсчёт идёт от угла
+  // svg, и дуга не вращается, а ездит по кругу
+  const spin = (sec, reverse) => ({
+    transformBox: 'fill-box',
+    transformOrigin: 'center',
+    animation: `findir-arc ${sec}s linear infinite${reverse ? ' reverse' : ''}`,
+  })
 
   return (
-    <div className="fixed top-0 left-0 right-0 h-0.5 z-[100] pointer-events-none">
-      <div
-        className="h-full bg-blue-600 transition-all duration-200 ease-out"
-        style={{ width: `${width}%`, opacity: width === 100 ? 0 : 1 }}
-      />
+    <svg className={`${className} flex-shrink-0`} width={size} height={size}
+      viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <circle cx="24" cy="24" r="19" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round"
+        strokeDasharray={arc(19, 0.7)} className="opacity-90" style={spin(1.2, false)} />
+      <circle cx="24" cy="24" r="11" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round"
+        strokeDasharray={arc(11, 0.4)} className="opacity-45" style={spin(0.9, true)} />
+    </svg>
+  )
+}
+
+/**
+ * Общий индикатор работы — по всем запросам к API сразу.
+ *
+ * Был полоской во всю ширину экрана, ползущей к 90%: точного прогресса у нас
+ * нет, сервер отвечает одним куском, и проценты в ней были выдуманные.
+ * Кружок ничего не обещает — говорит только «работаем», и это правда.
+ *
+ * В углу, а не по центру: индикатор общий и зажигается на каждом запросе, так
+ * что перекрывать им страницу нельзя. Когда закрыть содержимое как раз нужно —
+ * пересчёт уже показанных цифр, — для этого есть BusyOverlay.
+ *
+ * Задержка 400 мс: быстрые ответы проходят незаметно, мельтешение в углу хуже,
+ * чем его отсутствие. Секундомер после полутора секунд — на долгих отчётах по
+ * нему видно, что процесс идёт, а не завис.
+ */
+export function TopBusy() {
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => subscribeProgress(n => setBusy(n > 0)), [])
+
+  const { visible, seconds } = useElapsed(busy, 400)
+  if (!visible) return null
+
+  return (
+    <div className="fixed top-3 right-4 z-[100] pointer-events-none">
+      <div className="flex items-center gap-2 rounded-full bg-white/95 border border-gray-200 shadow-lg px-2.5 py-1.5"
+        style={{ animation: 'findir-appear 220ms ease-out' }}>
+        <Ring />
+        {seconds >= 1.5 && (
+          <span className="text-[11px] tabular-nums text-gray-400 pr-0.5">{fmtSec(seconds)}</span>
+        )}
+      </div>
     </div>
   )
 }
