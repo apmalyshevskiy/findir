@@ -1215,6 +1215,7 @@ export default function BalanceSheetPage() {
                           </div>
                           {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_1_name}</div>}
                           {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_2_name}</div>}
+                          {op.in_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.in_info_3_name}</div>}
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5">
@@ -1222,6 +1223,7 @@ export default function BalanceSheetPage() {
                           </div>
                           {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_1_name}</div>}
                           {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_2_name}</div>}
+                          {op.out_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ {op.out_info_3_name}</div>}
                         </td>
                         <td className={`px-3 py-3 text-right font-semibold whitespace-nowrap ${
                           op.is_posted === false ? 'text-gray-400' : 'text-gray-800'

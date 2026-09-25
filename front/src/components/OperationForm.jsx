@@ -138,8 +138,8 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
         const outBi = items.find(b => b.id == src.out_bi_id)
         // Слот может принимать набор справочников — грузим все разрешённые
         const types = [...new Set([
-          ...slotTypes(inBi?.info_1_type),  ...slotTypes(inBi?.info_2_type),
-          ...slotTypes(outBi?.info_1_type), ...slotTypes(outBi?.info_2_type),
+          ...slotTypes(inBi?.info_1_type),  ...slotTypes(inBi?.info_2_type),  ...slotTypes(inBi?.info_3_type),
+          ...slotTypes(outBi?.info_1_type), ...slotTypes(outBi?.info_2_type), ...slotTypes(outBi?.info_3_type),
         ])]
 
         // Ждём и справочники аналитики: пока их нет, поля выбранного
@@ -157,7 +157,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
 
   const loadInfoForBi = (biId, prevCache) => {
     const bi = balanceItems.find(b => b.id == biId)
-    const types = [...new Set([...slotTypes(bi?.info_1_type), ...slotTypes(bi?.info_2_type)])]
+    const types = [...new Set([...slotTypes(bi?.info_1_type), ...slotTypes(bi?.info_2_type), ...slotTypes(bi?.info_3_type)])]
     types.forEach(type => {
       if (!prevCache[type]) {
         getInfo({ type }).then(r => {
@@ -288,22 +288,32 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
   const lc = "block text-sm font-medium text-gray-700 mb-1"
 
+  // Счёт — главное в проводке, а подписи сторон до сих пор выглядели как
+  // подписи аналитики. В столбик это особенно мешает: дебет и кредит идут
+  // подряд, и без акцента не видно, где кончается одна сторона
+  const lcSide = "block text-sm font-bold text-gray-900 mb-1"
+  const icSide = `${ic} font-semibold text-gray-900`
+
   const debitFields = (
     <>
       <div>
-        <label className={lc}>Дебет (куда)</label>
+        <label className={lcSide}>Дебет (куда)</label>
         <select value={form.in_bi_id}
           onChange={e => {
-            setForm({...form, in_bi_id: e.target.value, in_info_1_id: '', in_info_2_id: ''})
+            setForm({...form, in_bi_id: e.target.value, in_info_1_id: '', in_info_2_id: '', in_info_3_id: ''})
             loadInfoForBi(e.target.value, infoCache)
           }}
-          className={ic} required>
+          className={icSide} required>
           <option value="">{dictLoading ? 'Загружаю план счетов...' : 'Выберите счёт...'}</option>
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
       {slotField(inBi, 1, 'in')}
       {slotField(inBi, 2, 'in')}
+      {/* Третий слот форма держала, но не показывала: пока его никто не
+          объявлял, поля было не видно — а проставить значение стало нужно,
+          когда в нём поселились отделы */}
+      {slotField(inBi, 3, 'in')}
       {quantityField('in', inBi)}
     </>
   )
@@ -311,19 +321,20 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
   const creditFields = (
     <>
       <div>
-        <label className={lc}>Кредит (откуда)</label>
+        <label className={lcSide}>Кредит (откуда)</label>
         <select value={form.out_bi_id}
           onChange={e => {
-            setForm({...form, out_bi_id: e.target.value, out_info_1_id: '', out_info_2_id: ''})
+            setForm({...form, out_bi_id: e.target.value, out_info_1_id: '', out_info_2_id: '', out_info_3_id: ''})
             loadInfoForBi(e.target.value, infoCache)
           }}
-          className={ic} required>
+          className={icSide} required>
           <option value="">{dictLoading ? 'Загружаю план счетов...' : 'Выберите счёт...'}</option>
           {balanceItems.map(item => <option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}
         </select>
       </div>
       {slotField(outBi, 1, 'out')}
       {slotField(outBi, 2, 'out')}
+      {slotField(outBi, 3, 'out')}
       {quantityField('out', outBi)}
     </>
   )
@@ -393,7 +404,9 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className={`bg-white rounded-2xl shadow-xl w-full my-4 ${layout === 'wide' ? 'max-w-3xl' : 'max-w-lg'}`}>
+      {/* «Рядом» — 60rem вместо 3xl (48rem): на четверть шире. В две колонки
+          подписи слотов с набором справочников не влезали в одну строку */}
+      <div className={`bg-white rounded-2xl shadow-xl w-full my-4 ${layout === 'wide' ? 'max-w-[60rem]' : 'max-w-lg'}`}>
         <div className="p-6 border-b border-gray-100 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-4 flex-wrap">
             <h3 className="text-lg font-semibold text-gray-800">

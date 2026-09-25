@@ -127,13 +127,15 @@ export function Ring({ size = 20, className = 'text-blue-600' }) {
  * нет, сервер отвечает одним куском, и проценты в ней были выдуманные.
  * Кружок ничего не обещает — говорит только «работаем», и это правда.
  *
- * В углу, а не по центру: индикатор общий и зажигается на каждом запросе, так
- * что перекрывать им страницу нельзя. Когда закрыть содержимое как раз нужно —
- * пересчёт уже показанных цифр, — для этого есть BusyOverlay.
+ * По центру экрана и крупно: в углу кружок легко пропустить, а ждут его как
+ * раз тогда, когда смотрят в середину страницы. Клики он не перехватывает —
+ * `pointer-events-none`, — и страницу не затемняет: работать под ним можно.
+ * Когда содержимое как раз нужно закрыть — пересчёт уже показанных цифр, —
+ * для этого есть BusyOverlay.
  *
- * Задержка 400 мс: быстрые ответы проходят незаметно, мельтешение в углу хуже,
- * чем его отсутствие. Секундомер после полутора секунд — на долгих отчётах по
- * нему видно, что процесс идёт, а не завис.
+ * Задержка 400 мс: быстрые ответы проходят незаметно, мельтешение посреди
+ * экрана хуже, чем его отсутствие. Секундомер после полутора секунд — на
+ * долгих отчётах по нему видно, что процесс идёт, а не завис.
  */
 export function TopBusy() {
   const [busy, setBusy] = useState(false)
@@ -144,12 +146,12 @@ export function TopBusy() {
   if (!visible) return null
 
   return (
-    <div className="fixed top-3 right-4 z-[100] pointer-events-none">
-      <div className="flex items-center gap-2 rounded-full bg-white/95 border border-gray-200 shadow-lg px-2.5 py-1.5"
+    <div className="fixed inset-0 z-[100] pointer-events-none flex items-center justify-center">
+      <div className="flex items-center gap-3 rounded-full bg-white/95 border border-gray-200 shadow-xl px-4 py-3"
         style={{ animation: 'findir-appear 220ms ease-out' }}>
-        <Ring />
+        <Ring size={40} />
         {seconds >= 1.5 && (
-          <span className="text-[11px] tabular-nums text-gray-400 pr-0.5">{fmtSec(seconds)}</span>
+          <span className="text-sm tabular-nums text-gray-400 pr-1">{fmtSec(seconds)}</span>
         )}
       </div>
     </div>

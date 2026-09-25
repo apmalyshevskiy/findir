@@ -224,39 +224,46 @@ export default function InfoSelect({
         </label>
       )}
 
-      <input
-        ref={inputRef}
-        type="text"
-        disabled={disabled}
-        className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-          disabled ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200'
-        } ${editable && value ? 'pr-12' : ''}`}
-        placeholder={loading && value ? 'Загружаю…' : (selected ? selected.name : placeholder)}
-        value={open ? search : (selected ? selected.name : '')}
-        onFocus={focus}
-        onChange={e => setSearch(e.target.value)}
-        onKeyDown={keys}
-      />
+      {/* Иконки держим в обёртке вокруг самого поля, а не вокруг поля вместе с
+          подписью. Раньше они отсчитывались от верха всего блока на 2.15rem —
+          высоту однострочной подписи. У слота с набором справочников подпись
+          длинная («Контрагент · Сотрудник · Номенклатура (П589)»), переносится
+          на две строки, поле съезжает вниз, а иконки остаются на подписи */}
+      <div className="relative">
+        <input
+          ref={inputRef}
+          type="text"
+          disabled={disabled}
+          className={`w-full px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            disabled ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200'
+          } ${editable && value ? 'pr-12' : ''}`}
+          placeholder={loading && value ? 'Загружаю…' : (selected ? selected.name : placeholder)}
+          value={open ? search : (selected ? selected.name : '')}
+          onFocus={focus}
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={keys}
+        />
 
-      {/* Карандашик — переименовать выбранный элемент, не уходя из формы.
-          Рисуем svg, а не знак ✎: шрифтовой символ система подменяет цветным
-          глифом из эмодзи-шрифта, и заданный серый цвет к нему не применяется */}
-      {editable && selected && (
-        <button type="button" title={`Изменить «${selected.name}»`}
-          onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('edit') }}
-          className={`absolute right-7 ${label ? 'top-[2.15rem]' : 'top-1/2 -translate-y-1/2'} text-gray-400 hover:text-gray-600 transition-colors`}>
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            <path d="m15 5 4 4" />
-          </svg>
-        </button>
-      )}
+        {/* Карандашик — переименовать выбранный элемент, не уходя из формы.
+            Рисуем svg, а не знак ✎: шрифтовой символ система подменяет цветным
+            глифом из эмодзи-шрифта, и заданный серый цвет к нему не применяется */}
+        {editable && selected && (
+          <button type="button" title={`Изменить «${selected.name}»`}
+            onMouseDown={e => { e.preventDefault(); setOpen(false); setCard('edit') }}
+            className="absolute right-7 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              <path d="m15 5 4 4" />
+            </svg>
+          </button>
+        )}
 
-      {allowClear && value && !disabled && (
-        <button type="button" onClick={() => { onChange(null); setSearch('') }}
-          className={`absolute right-2 ${label ? 'top-[2.15rem]' : 'top-1/2 -translate-y-1/2'} text-gray-300 hover:text-gray-500 text-xs`}>✕</button>
-      )}
+        {allowClear && value && !disabled && (
+          <button type="button" onClick={() => { onChange(null); setSearch('') }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+        )}
+      </div>
 
       {open && createPortal(
         <div ref={dropRef}

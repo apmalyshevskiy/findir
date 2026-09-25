@@ -29,8 +29,13 @@ const ARTICLES = [
   { slug: 'osv',         group: 'Отчётность',    routes: ['/balance-sheet'] },
   { slug: 'budget',      group: 'Планирование',  routes: ['/budget', '/payment-calendar'] },
   { slug: 'statement',   group: 'Обмен данными', routes: ['/bank-statement', '/classification-rules'] },
-  { slug: 'onec',        group: 'Обмен данными', routes: ['/onec-postings', '/integrations'] },
+  { slug: 'onec',        group: 'Обмен данными', routes: ['/onec-postings'] },
+  // Настройка интеграций ушла из статьи про 1С: 1С обменивается файлом и
+  // настраивается на своей странице, а здесь связь по сети и общий экран
+  // загрузки на все подключённые системы
+  { slug: 'exchange',    group: 'Обмен данными', routes: ['/data-import', '/integrations'] },
   { slug: 'access',      group: 'Доступ',        routes: ['/users', '/roles', '/edit-lock-date'] },
+  { slug: 'history',     group: 'Доступ',        routes: ['/change-log'] },
 ]
 
 /** Заголовок — первая строка вида «# Название» */

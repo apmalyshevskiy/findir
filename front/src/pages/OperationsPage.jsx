@@ -850,6 +850,7 @@ export default function OperationsPage() {
                       </div>
                       {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
                       {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
+                      {op.in_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_3_id}</span></div>}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
@@ -857,6 +858,7 @@ export default function OperationsPage() {
                       </div>
                       {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
                       {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
+                      {op.out_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_3_id}</span></div>}
                     </div>
                     <div className="text-right whitespace-nowrap pt-0.5">
                       <div className={`font-semibold ${op.is_posted === false ? 'text-gray-400' : 'text-gray-800'}`}>
