@@ -35,24 +35,37 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, infoTyp
 // `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
 export default function OperationForm({ operation, initial, onSuccess, onCancel, onOpenDocument }) {
   const [tab, setTab] = useState('fields')   // 'fields' | 'changes' | 'history'
-  const isEdit = !!(operation && operation.id)
+
+  /**
+   * Копия открытой операции.
+   *
+   * Нажали «Скопировать» — форма перестаёт быть правкой и становится новой
+   * операцией с теми же полями. Заново ничего не заполняем: значения уже
+   * лежат в состоянии формы, и «копия» — это ровно то, что форма перестаёт
+   * быть привязанной к исходной операции. Поэтому справочники не
+   * перезагружаются и введённое не теряется.
+   */
+  const [copying, setCopying] = useState(false)
+  const op = copying ? null : operation
+
+  const isEdit = !!(op && op.id)
 
   // Открыли на просмотр — значит, к ней захотят вернуться. Пишем при открытии,
   // а не при сохранении: список нужен как раз для тех, что закрыли не сохранив
   useEffect(() => {
     if (!isEdit) return
 
-    const parts = [Number(operation.amount).toLocaleString('ru-RU'), operation.content].filter(Boolean)
-    pushRecent('operation', operation.id, parts.join(' · ') || `Операция #${operation.id}`)
-  }, [operation?.id])
+    const parts = [Number(op.amount).toLocaleString('ru-RU'), op.content].filter(Boolean)
+    pushRecent('operation', op.id, parts.join(' · ') || `Операция #${op.id}`)
+  }, [op?.id])
   // Операцию, рождённую документом, сервер править не даст — и правильно:
   // документ пересоздаёт свои проводки при каждом проведении
-  const fromDocument = !!(operation?.table_name === 'documents' && operation?.table_id)
+  const fromDocument = !!(op?.table_name === 'documents' && op?.table_id)
   // Одна из сторон закрыта должностью. Сервер такую правку не примет: форма
   // сохранила бы то, чего человеку не показывали
-  const hasHidden = !!(operation?.in_hidden || operation?.out_hidden)
+  const hasHidden = !!(op?.in_hidden || op?.out_hidden)
   const locked = fromDocument || hasHidden
-  const src = operation || initial || null
+  const src = operation || initial || null   // значения формы берутся один раз, до копирования
   const [balanceItems, setBalanceItems] = useState([])
   const [projects, setProjects] = useState([])
   const [infoCache, setInfoCache] = useState({})
@@ -247,16 +260,29 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
       // чтобы по диалогу было видно, что из него вышло. Остальные вызывающие
       // лишний аргумент просто не читают
       const res = isEdit
-        ? await updateOperation(operation.id, payload)
+        ? await updateOperation(op.id, payload)
         : await createOperation(payload)
 
-      onSuccess(res?.data?.data?.id ?? operation?.id ?? null)
+      onSuccess(res?.data?.data?.id ?? op?.id ?? null)
     } catch (err) {
       const errors = err.response?.data?.errors
       setError(errors ? Object.values(errors).flat().join(', ') : err.response?.data?.message || 'Ошибка')
     } finally {
       setLoading(false)
     }
+  }
+
+  /**
+   * Превратить открытую операцию в новую с теми же полями.
+   *
+   * Поля не трогаем — они уже введены. Снимаем только привязку к исходной:
+   * форма становится созданием, «Обновить» превращается в «Создать», а
+   * движения и история прячутся, потому что у новой операции их ещё нет.
+   */
+  const startCopy = () => {
+    setCopying(true)
+    setTab('fields')
+    setError('')
   }
 
   const ic = "w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
@@ -377,13 +403,13 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
                   их документа, и без этого его легко принять за наш */}
               {isEdit && (
                 <span className="ml-2 font-mono font-normal text-gray-400"
-                  title="Номер операции в учёте">№&nbsp;{operation.id}</span>
+                  title="Номер операции в учёте">№&nbsp;{op.id}</span>
               )}
             </h3>
             {/* У операций, заведённых до появления автора, он пуст — тогда
                 строки просто нет: пустое «внёс —» ничего не сообщает */}
-            {isEdit && operation.created_by_name && (
-              <span className="text-xs text-gray-400">внёс {operation.created_by_name}</span>
+            {isEdit && op.created_by_name && (
+              <span className="text-xs text-gray-400">внёс {op.created_by_name}</span>
             )}
             {/* Форма открывается сразу, а справочники подтягиваются следом:
                 видно, что поля ещё наполняются, а не пусты по существу */}
@@ -429,8 +455,8 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
         {tab === 'changes' || tab === 'history' ? (
           <div className="p-6 space-y-4">
             {tab === 'changes'
-              ? <OperationChanges operationId={operation.id} />
-              : <ObjectHistory entity="operation" id={operation.id}
+              ? <OperationChanges operationId={op.id} />
+              : <ObjectHistory entity="operation" id={op.id}
                   /* После возврата форму закрываем: в полях «Реквизитов»
                      остались прежние значения, и сохранение затёрло бы
                      возврат. Список за окном перечитается сам */
@@ -455,7 +481,7 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
               <span>
                 Операция создана документом — реквизиты меняются в нём.
                 {onOpenDocument && (
-                  <button type="button" onClick={() => onOpenDocument(operation.table_id)}
+                  <button type="button" onClick={() => onOpenDocument(op.table_id)}
                     className="ml-1 underline hover:no-underline font-medium">
                     Открыть документ
                   </button>
@@ -536,6 +562,15 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
               className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium">
               {locked ? 'Закрыть' : 'Отмена'}
             </button>
+            {/* Копия доступна и у операции из документа: править её нельзя, а
+                завести такую же руками — обычное дело */}
+            {isEdit && (
+              <button type="button" onClick={startCopy} disabled={loading}
+                title="Завести новую операцию с этими же реквизитами"
+                className="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 text-sm font-medium whitespace-nowrap">
+                Скопировать
+              </button>
+            )}
             {!locked && (
               <button type="submit" disabled={loading}
                 className="flex-1 px-4 py-2.5 bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 text-sm font-medium">
