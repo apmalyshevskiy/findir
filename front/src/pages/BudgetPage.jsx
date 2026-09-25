@@ -10,6 +10,7 @@ import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
 import usePersistedState from '../hooks/usePersistedState'
 import { localDate } from '../utils/period'
+import { INFO_LABELS as INFO_TYPE_LABEL } from '../utils/infoLabels'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
@@ -20,6 +21,131 @@ const isFutureMonth = (ds) => new Date(ds + 'T00:00:00') > new Date(new Date().g
 // Дата собирается из местных полей: toISOString уводил последний день месяца
 // на сутки назад в поясах восточнее Гринвича — см. utils/period.localDate
 const endOfMonth = (ds) => { const d = new Date(ds + 'T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); return localDate(d) }
+
+/**
+ * Настройка разреза БДР: чем раскладывается каждый раздел и в каком порядке.
+ *
+ * Выбор ограничен тем, что счёт раздела объявил в своих слотах, — список
+ * приходит с отчётом. Справочник, которого счёт не принимает, в разрезе
+ * бессмыслен: группировать было бы не по чему.
+ *
+ * Пусто у раздела — «как объявил счёт»: уровнями идут его слоты по порядку.
+ * Так ведут себя бюджеты, заведённые до появления настройки.
+ */
+function StructureEditor({ doc, resolved, available, onSaved }) {
+  const SECTIONS = [
+    ['revenue',  'Доходы'],
+    ['cost',     'Себестоимость'],
+    ['expenses', 'Расходы'],
+  ]
+
+  const [draft, setDraft] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  // Уровень хранится объектом {type, tree}. Строку тоже понимаем: так
+  // настройка выглядела до появления выбора «деревом или списком»
+  const norm = (levels) => (levels || []).map(l =>
+    typeof l === 'string' ? { type: l, tree: true } : { type: l.type, tree: l.tree !== false })
+
+  const current = (s) => norm(draft?.[s] ?? doc.structure?.[s])
+  const dirty = draft !== null
+
+  const edit = (section, levels) => setDraft(prev => ({
+    ...(prev || {
+      revenue:  norm(doc.structure?.revenue),
+      cost:     norm(doc.structure?.cost),
+      expenses: norm(doc.structure?.expenses),
+    }),
+    [section]: levels,
+  }))
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await updateBudgetDocument(doc.id, { structure: draft })
+      onSaved?.(draft)
+      setDraft(null)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="border-t border-gray-100 pt-3 space-y-2">
+      <div className="text-[10px] uppercase text-gray-400 font-medium">Разрез отчёта</div>
+
+      {SECTIONS.map(([section, label]) => {
+        const levels = current(section)
+        const options = available?.[section] || []
+        // Уже занятые виды не предлагаем второй раз: два одинаковых уровня
+        // дали бы одну и ту же группировку дважды
+        const free = options.filter(t => !levels.some(l => l.type === t))
+
+        return (
+          <div key={section}>
+            <label className="block text-[11px] text-gray-500 mb-0.5">{label}</label>
+
+            {levels.length === 0 && (
+              <div className="text-[11px] text-gray-400 mb-1">
+                как объявил счёт{resolved?.[section]?.length
+                  ? ` — ${resolved[section].map(l => INFO_TYPE_LABEL[l.type] || l.type).join(' → ')}`
+                  : ''}
+              </div>
+            )}
+
+            <div className="space-y-1">
+              {levels.map((l, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <span className="text-[10px] text-gray-300 w-3">{i + 1}</span>
+                  <span className="flex-1 text-xs text-gray-700 truncate">{INFO_TYPE_LABEL[l.type] || l.type}</span>
+                  {/* Деревом — весь справочник с вложенностью; списком —
+                      только то, по чему в этом месте есть цифры */}
+                  <button type="button"
+                    title={l.tree
+                      ? 'Сейчас деревом: весь справочник с вложенностью. Нажмите — останутся только строки с движениями'
+                      : 'Сейчас списком: только строки с движениями. Нажмите — развернётся весь справочник с вложенностью'}
+                    onClick={() => edit(section, levels.map((x, k) => k === i ? { ...x, tree: !x.tree } : x))}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                      l.tree ? 'border-gray-200 text-gray-500' : 'border-blue-200 bg-blue-50 text-blue-700'
+                    }`}>
+                    {l.tree ? 'деревом' : 'списком'}
+                  </button>
+                  <button type="button" title="Убрать уровень"
+                    onClick={() => edit(section, levels.filter((_, k) => k !== i))}
+                    className="text-gray-300 hover:text-red-600 px-1">×</button>
+                </div>
+              ))}
+            </div>
+
+            {levels.length < 3 && free.length > 0 && (
+              <select className="mt-1 w-full px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white text-gray-600"
+                value=""
+                onChange={e => e.target.value && edit(section, [...levels, { type: e.target.value, tree: true }])}>
+                <option value="">+ уровень</option>
+                {free.map(t => <option key={t} value={t}>{INFO_TYPE_LABEL[t] || t}</option>)}
+              </select>
+            )}
+
+            {options.length === 0 && (
+              <div className="text-[11px] text-amber-700">
+                у счёта раздела не заведено ни одного слота аналитики
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {dirty && (
+        <div className="flex gap-2 pt-1">
+          <button onClick={save} disabled={saving}
+            className="px-3 py-1.5 text-xs bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50">
+            {saving ? '...' : 'Применить'}
+          </button>
+          <button onClick={() => setDraft(null)}
+            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Дерево ─────────────────────────────────────────────────────────────────
 const flattenArticles = (articles, depth = 0) => {
@@ -250,9 +376,12 @@ export default function BudgetPage() {
       // 1. Загружаем строки источника
       const srcIds = descendantAllMap[clipboard.rowKey ?? clipboard.articleId]
       const ids = srcIds && srcIds.size > 0 ? [...srcIds] : [clipboard.articleId]
+      // В БДР строку опознаёт путь по уровням разреза, в ДДС — id статьи
+      const isBdrDoc = documents.find(d => d.id === selectedDocId)?.type === 'bdr'
+      const byKey = isBdrDoc ? { paths: ids.join(',') } : { article_ids: ids.join(',') }
       const res = await getBudgetItems({
         budget_document_id: selectedDocId,
-        article_ids: ids.join(','),
+        ...byKey,
         period_date: clipboard.periodDate,
         ...(clipboard.section ? { section: clipboard.section } : {}),
       })
@@ -262,7 +391,7 @@ export default function BudgetPage() {
       // 2. Очищаем целевой месяц (та же статья + потомки)
       const existing = await getBudgetItems({
         budget_document_id: selectedDocId,
-        article_ids: ids.join(','),
+        ...byKey,
         period_date: targetPeriodDate,
         ...(targetSection ? { section: targetSection } : {}),
       })
@@ -274,7 +403,9 @@ export default function BudgetPage() {
       for (const row of srcRows) {
         await createBudgetItem({
           budget_document_id: selectedDocId,
-          article_id: row.article_id,
+          article_id:   row.article_id,
+          article_2_id: row.article_2_id ?? null,
+          article_3_id: row.article_3_id ?? null,
           section: targetSection || null,
           period_date: targetPeriodDate,
           content: row.content || null,
@@ -320,16 +451,36 @@ export default function BudgetPage() {
   }
 
   // ── Inline-редактирование статей справочника ──────────────────────────────
-  const infoTypeFromSection = (section) => {
+
+  /**
+   * Вид справочника у строки.
+   *
+   * В БДР разрез настраивается, и на одном уровне может стоять отдел, а на
+   * другом статья — поэтому вид берётся из уровней раздела, а не из его
+   * названия. Уровни приходят с отчётом: сервер уже свёл настройку бюджета со
+   * слотами счёта.
+   */
+  const groupLevels = useCallback((groupKey) => {
+    const g = (report?.articles || []).find?.(a => (a.key || a.group) === groupKey || a.group === groupKey)
+    return g?.levels || []
+  }, [report])
+
+  const infoTypeFromSection = (section, level = 1) => {
+    const levels = groupLevels(section)
+    if (levels.length) return (levels[level - 1] || levels[0])?.type
+
     if (section === 'revenue' || section === 'cost') return 'revenue'
     if (section === 'expenses') return 'expenses'
     return 'flow' // ДДС
   }
 
   const openEditArticle = (article) => {
-    const type = infoTypeFromSection(article.section || article.groupKey)
+    // В БДР строку опознаёт путь, а правим мы элемент справочника её
+    // собственного уровня — он в info_id
+    const type = infoTypeFromSection(article.groupKey || article.section, article.level || 1)
     setEditArticle({
-      id: article.id, rowKey: article.rowKey, name: article.name,
+      id: article.info_id ?? article.id, rowKey: article.rowKey, name: article.name,
+      level: article.level || 1,
       parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0,
       type, section: article.section || article.groupKey,
       is_variable: !!article.is_variable,
@@ -383,17 +534,31 @@ export default function BudgetPage() {
   }
 
   // Все статьи текущей группы (для select родителя)
-  const getGroupArticleOptions = useCallback((groupKey) => {
+  const getGroupArticleOptions = useCallback((groupKey, level = 1) => {
     if (!report?.articles) return []
     const arts = report.articles
     if (Array.isArray(arts) && arts[0]?.group) {
       // Родителя ищем по всему разделу, а не по одной группе: при разделении
       // расходов переменная статья вполне может лежать под постоянным
-      // родителем, и половинного списка для выбора не хватило бы
+      // родителем, и половинного списка для выбора не хватило бы.
+      //
+      // И только своего уровня: на первом уровне могут стоять отделы, на
+      // втором статьи — предлагать отдел в родители статье незачем. Один и
+      // тот же элемент встречается в дереве много раз (в каждом отделе свои
+      // статьи), поэтому отбираем по info_id без повторов
       const match = arts.filter(a => (a.key || a.group) === groupKey || a.group === groupKey)
       if (!match.length) return []
       const flat = []; const seen = new Set()
-      const walk = (items, depth = 0) => { for (const a of items) { if (!seen.has(a.id)) { seen.add(a.id); flat.push({ id: a.id, name: a.name, depth }) }; if (a.children) walk(a.children, depth + 1) } }
+      const walk = (items, depth = 0) => {
+        for (const a of items) {
+          const id = a.info_id ?? a.id
+          if ((a.level ?? 1) === level && !seen.has(id)) {
+            seen.add(id)
+            flat.push({ id, name: a.name, depth })
+          }
+          if (a.children) walk(a.children, depth + 1)
+        }
+      }
       for (const g of match) walk(g.items || [])
       return flat
     }
@@ -716,6 +881,19 @@ export default function BudgetPage() {
                       </div>
                     )}
                   </div>
+                  {/* Разрез БДР */}
+                  {selectedDoc.type === 'bdr' && (
+                    <StructureEditor
+                      doc={selectedDoc}
+                      resolved={report?.bdr_structure}
+                      available={report?.bdr_available}
+                      onSaved={(structure) => {
+                        setDocuments(prev => prev.map(d => d.id === selectedDocId ? { ...d, structure } : d))
+                        loadReport()
+                      }}
+                    />
+                  )}
+
                   {/* Архив */}
                   <div className="border-t border-gray-100 pt-3">
                     <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer hover:text-gray-700">
@@ -1078,7 +1256,8 @@ export default function BudgetPage() {
                             <select className="px-2 py-1 border border-gray-200 rounded text-xs bg-white text-gray-600 w-40"
                               value={editArticle.parent_id} onChange={e => setEditArticle(prev => ({ ...prev, parent_id: e.target.value }))}>
                               <option value="">— Без родителя</option>
-                              {getGroupArticleOptions(article.section || article.groupKey).filter(o => o.id !== article.id).map(o => (
+                              {getGroupArticleOptions(article.groupKey || article.section, editArticle.level || 1)
+                                .filter(o => o.id !== editArticle.id).map(o => (
                                 <option key={o.id} value={o.id}>{'\u00A0'.repeat(o.depth * 2)}{o.depth > 0 ? '└ ' : ''}{o.name}</option>
                               ))}
                             </select>

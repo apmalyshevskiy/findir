@@ -18,12 +18,16 @@ class BudgetDocument extends Model
         'period_to',
         'project_id',
         'status',
+        // Разрез БДР по уровням: раздел → список видов справочника.
+        // Пусто — берётся из слотов аналитики самого счёта
+        'structure',
         'created_by',
     ];
 
     protected $casts = [
         'period_from' => 'date',
         'period_to'   => 'date',
+        'structure'   => 'array',
     ];
 
     public function items()

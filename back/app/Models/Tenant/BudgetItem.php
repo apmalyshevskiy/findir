@@ -11,6 +11,10 @@ class BudgetItem extends Model
     protected $fillable = [
         'budget_document_id',
         'article_id',
+        // Второй и третий уровни разреза БДР. Пусты — план стоит выше по
+        // дереву: «на весь отдел», а не на его статью
+        'article_2_id',
+        'article_3_id',
         'section',       // 'revenue' | 'cost' | 'expenses' для БДР, null для ДДС
         'cash_id',
         'period_date',

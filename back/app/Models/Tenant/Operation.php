@@ -74,4 +74,16 @@ class Operation extends Model
     {
         return $this->belongsTo(Info::class, 'out_info_2_id');
     }
+
+    // Третий слот долго никому не был нужен и связи не имел. Понадобился,
+    // когда разрез отчёта стал настраиваемым: отдел вполне может стоять в нём
+    public function inInfo3()
+    {
+        return $this->belongsTo(Info::class, 'in_info_3_id');
+    }
+
+    public function outInfo3()
+    {
+        return $this->belongsTo(Info::class, 'out_info_3_id');
+    }
 }

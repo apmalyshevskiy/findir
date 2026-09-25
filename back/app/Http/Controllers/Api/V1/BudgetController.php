@@ -6,6 +6,7 @@ use App\Models\Tenant\BudgetDocument;
 use App\Models\Tenant\BudgetItem;
 use App\Models\Tenant\BudgetOpeningBalance;
 use App\Models\Tenant\BalanceItem;
+use App\Services\AnalyticSlots;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -122,6 +123,21 @@ class BudgetController extends TenantController
             'period_to'  => 'sometimes|date',
             'status'     => 'sometimes|in:draft,approved,archived',
             'project_id' => 'sometimes|integer',
+            // Разрез БДР: раздел → список видов справочника по уровням.
+            // Пустой список у раздела означает «взять из слотов счёта»
+            // Уровень — это вид справочника и способ показа: `tree` разворачивает
+            // иерархию целиком, иначе выводится плоский список тех элементов,
+            // по которым что-то есть
+            'structure'                  => 'sometimes|nullable|array',
+            'structure.revenue'          => 'sometimes|array|max:3',
+            'structure.revenue.*.type'   => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
+            'structure.revenue.*.tree'   => 'sometimes|boolean',
+            'structure.cost'             => 'sometimes|array|max:3',
+            'structure.cost.*.type'      => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
+            'structure.cost.*.tree'      => 'sometimes|boolean',
+            'structure.expenses'         => 'sometimes|array|max:3',
+            'structure.expenses.*.type'  => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
+            'structure.expenses.*.tree'  => 'sometimes|boolean',
         ]);
 
         $doc = $this->docModel()->newQuery()->findOrFail($id);
@@ -169,6 +185,28 @@ class BudgetController extends TenantController
             $query->whereIn('article_id', $ids);
         }
 
+        // Пути вида «5.12» — строка плана на статье 12 внутри отдела 5.
+        // Отбираем ровно по тем уровням, что заданы: путь «5» это план на
+        // самом отделе, и строки его статей сюда не попадают
+        if ($request->paths) {
+            $paths = array_filter(explode(',', (string) $request->paths));
+
+            $query->where(function ($q) use ($paths) {
+                foreach ($paths as $path) {
+                    $ids = array_map('intval', explode('.', trim($path)));
+
+                    $q->orWhere(function ($p) use ($ids) {
+                        $p->where('article_id', $ids[0] ?? 0);
+                        foreach ([2, 3] as $level) {
+                            $value = $ids[$level - 1] ?? null;
+                            $value ? $p->where("article_{$level}_id", $value)
+                                   : $p->whereNull("article_{$level}_id");
+                        }
+                    });
+                }
+            });
+        }
+
         if ($request->section) {
             $query->where('section', $request->section);
         }
@@ -193,6 +231,9 @@ class BudgetController extends TenantController
         $data = $items->map(fn($item) => [
             'id'           => $item->id,
             'article_id'   => $item->article_id,
+            'article_2_id' => $item->article_2_id,
+            'article_3_id' => $item->article_3_id,
+            'path'         => implode('.', array_filter([$item->article_id, $item->article_2_id, $item->article_3_id])),
             'article_name' => $articles->get($item->article_id)?->name ?? "#{$item->article_id}",
             'section'      => $item->section,
             'cash_id'      => $item->cash_id,
@@ -216,6 +257,10 @@ class BudgetController extends TenantController
             // min:1 отсекает строку «Без статьи»: планировать по ней нечего,
             // она показывает то, что ещё предстоит разнести по статьям
             'article_id'         => 'required|integer|min:1',
+            // Уровни ниже первого. Пусты — план стоит на самом отделе, а не
+            // на его статье; min:1 так же отсекает строку «Без статьи»
+            'article_2_id'       => 'nullable|integer|min:1',
+            'article_3_id'       => 'nullable|integer|min:1',
             'section'            => 'nullable|string|in:revenue,cost,expenses',
             'cash_id'            => 'nullable|integer',
             'period_date'        => 'required|date',
@@ -249,10 +294,12 @@ class BudgetController extends TenantController
         $this->initTenant($request);
 
         $data = $request->validate([
-            'article_id'  => 'sometimes|integer|min:1',
-            'period_date' => 'sometimes|date',
-            'content'     => 'nullable|string|max:500',
-            'amount'      => 'sometimes|numeric',
+            'article_id'   => 'sometimes|integer|min:1',
+            'article_2_id' => 'sometimes|nullable|integer|min:1',
+            'article_3_id' => 'sometimes|nullable|integer|min:1',
+            'period_date'  => 'sometimes|date',
+            'content'      => 'nullable|string|max:500',
+            'amount'       => 'sometimes|numeric',
         ]);
 
         $item = $this->itemModel()->newQuery()->findOrFail($id);
@@ -404,12 +451,17 @@ class BudgetController extends TenantController
             ->get();
 
         $plan = [];
-        $planDetails = []; // "section:article_id:cash_id:period_date" или "article_id:cash_id:period_date"
+        $planDetails = []; // "section:путь:cash_id:period_date" или "article_id:cash_id:period_date"
         foreach ($planRows as $row) {
             $pd  = Carbon::parse($row->period_date)->format('Y-m-d');
             $cashKey = $byCash ? ($row->cash_id ?? 0) : 0;
             $section = $row->section ?? '';
-            $key = $section !== '' ? ($section . ':' . $row->article_id . ':' . $cashKey . ':' . $pd) : ($row->article_id . ':' . $cashKey . ':' . $pd);
+            // Строка плана может стоять на любом уровне разреза: заполнены
+            // либо один id, либо два, либо три. Ключ собирается из тех, что
+            // есть, — так план на отделе целиком и план на его статье лежат
+            // разными строками и складываются в итоге отдела
+            $path = implode('.', array_filter([$row->article_id, $row->article_2_id, $row->article_3_id]));
+            $key = $section !== '' ? ($section . ':' . $path . ':' . $cashKey . ':' . $pd) : ($row->article_id . ':' . $cashKey . ':' . $pd);
             $plan[$key] = ($plan[$key] ?? 0) + (float)$row->amount;
             $planDetails[$key][] = [
                 'id'      => $row->id,
@@ -424,14 +476,21 @@ class BudgetController extends TenantController
             $articles = $this->getDdsArticles();
             $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom, $granularity);
             $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom, $granularity);
+            // Обороты без заполненной статьи получают свою строку
+            $articles = $this->withUnassigned($articles, $fact);
         } else {
-            $articles = $this->getBdrArticles((bool) $request->split_expenses);
-            $fact = $this->getBdrFact($doc, $periodDates, $effectiveFrom);
+            // Порядок важен: разрез задаёт группировку факта, а факт решает,
+            // на каких уровнях нужна строка «Без статьи»
+            $bdrSections = $this->bdrSections($doc);
+            $fact        = $this->getBdrFact($doc, $bdrSections, $effectiveFrom);
+
+            // Строки строим по факту вместе с планом: на линейном уровне
+            // статья без оборотов, но с планом, всё равно должна быть видна —
+            // иначе введённый план негде показать и нечем поправить.
+            // Объединение по ключам, значения неважны
+            $articles = $this->getBdrArticles($bdrSections, $fact + $plan, (bool) $request->split_expenses);
             $openingBalances = [];
         }
-
-        // Обороты без заполненной статьи получают свою строку — см. withUnassigned
-        $articles = $this->withUnassigned($articles, $fact);
 
         // ── Справочник касс (при by_cash) ─────────────────────────────────
         $cashItems = [];
@@ -454,14 +513,21 @@ class BudgetController extends TenantController
                 $factDrillConfig = ['bi_id' => $a100->id, 'info_field' => 'info_2_id'];
             }
         } else {
-            // БДР: три счёта, каждый со своей аналитикой
-            $biMap = [];
-            $drillFields = ['П587' => 'info_1_id', 'П588' => 'info_1_id', 'П589' => 'info_1_id'];
-            foreach ($drillFields as $code => $field) {
-                $bi = (new BalanceItem)->setConnection($this->dbName)->newQuery()->where('code', $code)->first();
-                if ($bi) $biMap[$code] = ['bi_id' => $bi->id, 'info_field' => $field];
+            // БДР: счёт раздела и поля его уровней. Полей может быть несколько
+            // — расшифровка отбирает операции по всем сразу, иначе в строке
+            // «отдел → статья» показались бы все статьи отдела
+            $factDrillConfig = [];
+            foreach ($bdrSections as $cfg) {
+                if (!$cfg['bi_id']) continue;
+
+                $fields = array_map(fn($l) => "info_{$l['slot']}_id", $cfg['levels']);
+
+                $factDrillConfig[$cfg['code']] = [
+                    'bi_id'      => $cfg['bi_id'],
+                    'info_field' => $fields[0] ?? 'info_1_id',
+                    'fields'     => $fields,
+                ];
             }
-            $factDrillConfig = $biMap;
         }
 
         return response()->json([
@@ -477,6 +543,15 @@ class BudgetController extends TenantController
             'opening_balances'   => $openingBalances,
             'cash_items'         => $cashItems,
             'fact_drill_config'  => $factDrillConfig,
+            // Разрез, с которым собран этот отчёт: настройка бюджета, уже
+            // сведённая со слотами счетов. Форма настройки показывает его же
+            'bdr_structure'      => isset($bdrSections)
+                ? array_map(fn($c) => $this->levelsOut($c['levels']), $bdrSections)
+                : null,
+            // Из чего вообще можно выбрать: справочники, которые счёт раздела
+            // объявил в своих слотах. Чего он не принимает, того и в разрезе
+            // быть не может — группировать было бы не по чему
+            'bdr_available'      => isset($bdrSections) ? $this->bdrAvailable($bdrSections) : null,
         ]);
     }
 
@@ -649,6 +724,163 @@ class BudgetController extends TenantController
 
     // ── Приватные: БДР ───────────────────────────────────────────────────────
 
+    /** Раздел БДР → счёт, с которого берётся факт */
+    private const BDR_ACCOUNTS = ['revenue' => 'П587', 'cost' => 'П588', 'expenses' => 'П589'];
+
+    /**
+     * Уровни разреза каждого раздела: чем строка отчёта раскладывается вглубь.
+     *
+     * Настройка лежит на бюджете списком видов справочника: `["department",
+     * "revenue"]` — сначала отделы, внутри статьи дохода. Номер слота в ней не
+     * указывается: счёт сам объявил, что он принимает и в каком слоте, —
+     * остаётся спросить. Вид, под который у счёта слота нет, из разреза
+     * выпадает: группировать не по чему.
+     *
+     * Пустая настройка означает «как объявил счёт»: уровнями идут его слоты по
+     * порядку. Так бюджеты, заведённые до появления разреза, показывают ровно
+     * прежнее — у П587 и П588 это статья дохода, у П589 статья расхода.
+     *
+     * @return array<string, array{code: string, bi_id: ?int, levels: array}>
+     */
+    private function bdrSections(BudgetDocument $doc): array
+    {
+        $accounts = (new BalanceItem)->setConnection($this->dbName)
+            ->newQuery()->whereIn('code', array_values(self::BDR_ACCOUNTS))->get()->keyBy('code');
+
+        $structure = (array) ($doc->structure ?? []);
+        $out = [];
+
+        foreach (self::BDR_ACCOUNTS as $section => $code) {
+            $account = $accounts->get($code);
+
+            // Закрытый ролью счёт не даёт ни факта, ни разреза
+            if (!$account || $this->scope->hides($account->id)) {
+                $out[$section] = ['code' => $code, 'bi_id' => null, 'levels' => []];
+                continue;
+            }
+
+            // Уровень записывается объектом {type, tree}. Строку тоже понимаем:
+            // так настройка выглядела до появления выбора «дерево или список»
+            $wanted = [];
+            foreach ((array) ($structure[$section] ?? []) as $entry) {
+                $type = is_array($entry) ? ($entry['type'] ?? null) : $entry;
+                if (!$type) continue;
+
+                $wanted[] = ['type' => $type, 'tree' => is_array($entry) ? (bool) ($entry['tree'] ?? true) : true];
+            }
+
+            // Без настройки — один уровень по первому слоту счёта, то есть
+            // ровно прежнее поведение. Не «все слоты подряд»: у П589 второй
+            // слот это контрагент, и разрез по нему никто не просил, а строки
+            // плана старых бюджетов лежат одноуровневыми и уехали бы не туда
+            if (!$wanted) {
+                foreach (AnalyticSlots::SLOTS as $n) {
+                    $types = AnalyticSlots::types($account, $n);
+                    if ($types) { $wanted[] = ['type' => $types[0], 'tree' => true]; break; }
+                }
+            }
+
+            $levels = [];
+            $taken  = [];
+
+            foreach ($wanted as $level) {
+                foreach (AnalyticSlots::slotsFor($account, $level['type']) as $slot) {
+                    if (isset($taken[$slot])) continue;
+
+                    $taken[$slot] = true;
+                    $levels[] = $level + ['slot' => $slot];
+                    break;
+                }
+            }
+
+            $out[$section] = [
+                'code'   => $code,
+                'bi_id'  => (int) $account->id,
+                'levels' => array_slice($levels, 0, 3),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** Уровни наружу: вид справочника и способ показа, без внутреннего слота */
+    private function levelsOut(array $levels): array
+    {
+        return array_map(fn($l) => ['type' => $l['type'], 'tree' => (bool) ($l['tree'] ?? true)], $levels);
+    }
+
+    /** Виды справочника, которые счёт раздела принимает хоть в каком слоте */
+    private function bdrAvailable(array $sections): array
+    {
+        $accounts = (new BalanceItem)->setConnection($this->dbName)
+            ->newQuery()->whereIn('code', array_values(self::BDR_ACCOUNTS))->get()->keyBy('code');
+
+        $out = [];
+        foreach ($sections as $section => $cfg) {
+            $account = $accounts->get($cfg['code']);
+            $out[$section] = $account ? AnalyticSlots::acceptedTypes($account) : [];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Факт БДР: обороты по П587/П588/П589, сгруппированные по уровням разреза.
+     *
+     * Ключ — `раздел:путь:0:месяц`, где путь это id по уровням через точку:
+     * `5.12` — статья 12 в отделе 5. Отчёт складывает суммы по началу пути,
+     * поэтому отдельные итоги по уровням считать не нужно: строка «отдел»
+     * подбирает все свои статьи сама.
+     *
+     * Ноль вместо id — аналитика не проставлена. Такие суммы не растворяются:
+     * для них в дереве появляется строка «Без статьи» на своём уровне.
+     *
+     * В balance_changes пассивные счета (П) хранят кредитовые обороты
+     * отрицательными. Для БДР знак инвертируем: доходы вверх, расходы вниз.
+     */
+    private function getBdrFact(BudgetDocument $doc, array $sections, ?string $effectiveFrom = null): array
+    {
+        $dateFrom = Carbon::parse($effectiveFrom ?: $doc->period_from)->startOfMonth()->format('Y-m-d');
+        $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
+
+        $fact = [];
+
+        foreach ($sections as $section => $cfg) {
+            if (!$cfg['bi_id']) continue;
+
+            $query = DB::connection($this->dbName)->table('balance_changes')
+                ->where('bi_id', $cfg['bi_id'])
+                ->where('date', '>=', $dateFrom)
+                ->where('date', '<=', $dateTo);
+
+            $group = [DB::raw("DATE_FORMAT(date, '%Y-%m-01')")];
+            $select = [
+                DB::raw("DATE_FORMAT(date, '%Y-%m-01') as period_date"),
+                DB::raw('SUM(amount) as total'),
+            ];
+
+            foreach ($cfg['levels'] as $i => $level) {
+                $field = "info_{$level['slot']}_id";
+                $select[] = DB::raw("{$field} as l{$i}");
+                $group[]  = DB::raw($field);
+            }
+
+            foreach ($query->select($select)->groupBy($group)->get() as $row) {
+                $path = [];
+                foreach ($cfg['levels'] as $i => $_) {
+                    $path[] = (int) ($row->{"l{$i}"} ?? 0) ?: self::UNASSIGNED;
+                }
+
+                // Разреза нет вовсе — весь оборот счёта одной строкой
+                $key = $section . ':' . (implode('.', $path) ?: self::UNASSIGNED) . ':0:' . $row->period_date;
+
+                $fact[$key] = ($fact[$key] ?? 0) + (float) $row->total * -1;
+            }
+        }
+
+        return $fact;
+    }
+
     /**
      * Дерево статей БДР: revenue (доходы + себестоимость) + expenses.
      * Себестоимость использует те же статьи дохода (revenue), что и доходы,
@@ -662,44 +894,212 @@ class BudgetController extends TenantController
      *
      * @param bool $splitExpenses разделить расходы на переменные и постоянные
      */
-    private function getBdrArticles(bool $splitExpenses = false): array
+    private function getBdrArticles(array $sections, array $fact, bool $splitExpenses = false): array
     {
-        $revenues = DB::connection($this->dbName)
-            ->table('info')
-            ->where('type', 'revenue')
-            ->whereNull('deleted_at')
-            ->where('is_active', true)
-            ->orderBy('sort_order')->orderBy('name')
-            ->get(['id', 'parent_id', 'code', 'name', 'sort_order']);
+        $labels = ['revenue' => 'Доходы', 'cost' => 'Себестоимость', 'expenses' => 'Расходы'];
+        $groups = [];
 
-        $expenses = DB::connection($this->dbName)
-            ->table('info')
-            ->where('type', 'expenses')
-            ->whereNull('deleted_at')
-            ->where('is_active', true)
-            ->orderBy('sort_order')->orderBy('name')
-            ->get(['id', 'parent_id', 'code', 'name', 'sort_order', 'is_variable']);
+        foreach ($sections as $section => $cfg) {
+            $tree = $this->levelTree($cfg['levels'], $section, $fact, 0, '');
 
-        $groups = [
-            ['key' => 'revenue', 'group' => 'revenue', 'label' => 'Доходы',        'items' => $this->buildTree($revenues)],
-            ['key' => 'cost',    'group' => 'cost',    'label' => 'Себестоимость', 'items' => $this->buildTree($revenues)],
-        ];
+            if ($section !== 'expenses' || !$splitExpenses) {
+                $groups[] = ['key' => $section, 'group' => $section,
+                             'label' => $labels[$section], 'items' => $tree,
+                             'levels' => $this->levelsOut($cfg['levels'])];
+                continue;
+            }
 
-        $tree = $this->buildTree($expenses);
-
-        if (!$splitExpenses) {
-            $groups[] = ['key' => 'expenses', 'group' => 'expenses', 'label' => 'Расходы', 'items' => $tree];
-
-            return $groups;
+            // Переменные и постоянные — две группы одного раздела: счёт тот же
+            // П589, разрез тот же, различаются только отметкой у статьи
+            foreach ([[true, 'Переменные расходы', 'expenses_var'],
+                      [false, 'Постоянные расходы', 'expenses_fix']] as [$variable, $label, $key]) {
+                $groups[] = ['key' => $key, 'group' => $section, 'label' => $label,
+                             'items' => $this->expenseBucket($tree, $variable),
+                             'levels' => $this->levelsOut($cfg['levels'])];
+            }
         }
-
-        $groups[] = ['key' => 'expenses_var', 'group' => 'expenses',
-                     'label' => 'Переменные расходы', 'items' => $this->expenseBucket($tree, true)];
-        $groups[] = ['key' => 'expenses_fix', 'group' => 'expenses',
-                     'label' => 'Постоянные расходы', 'items' => $this->expenseBucket($tree, false)];
 
         return $groups;
     }
+
+    /**
+     * Дерево строк раздела: уровни разреза, вложенные друг в друга.
+     *
+     * Строку опознаёт не id справочника, а **путь** — id по уровням через
+     * точку. `5` это отдел, `5.12` — статья 12 внутри отдела 5. Отчёт
+     * складывает суммы по началу пути, поэтому строка отдела подбирает все
+     * свои статьи сама, без отдельного счёта итогов.
+     *
+     * Иерархия внутри уровня (родитель-потомок в справочнике) сохраняется, и
+     * следующий уровень висит под каждым узлом, а не только под листьями:
+     * операция может нести и родительский отдел, и дочерний, и обе суммы
+     * должны быть видны.
+     *
+     * Путь потомка по иерархии берёт префикс родительского узла, а не его
+     * самого: в операции стоит именно дочерний элемент, и складываются они не
+     * вложением, а тем, что дочерний узел лежит в поддереве родительского.
+     */
+    private function levelTree(array $levels, string $section, array $fact, int $depth, string $prefix): array
+    {
+        if (!isset($levels[$depth])) return [];
+
+        // Линейный уровень: вместо всего справочника — только те элементы, по
+        // которым в этом месте что-то есть. Сотня статей под каждым отделом
+        // читается хуже, чем десяток встреченных
+        $nodes = empty($levels[$depth]['tree'])
+            ? $this->levelUsed($levels[$depth]['type'], $section, $fact, $prefix)
+            : $this->infoTree($levels[$depth]['type']);
+
+        $walk = function (array $items, string $parentPrefix) use (&$walk, $levels, $section, $fact, $depth) {
+            $out = [];
+
+            foreach ($items as $item) {
+                $path = $parentPrefix === '' ? (string) $item['id'] : $parentPrefix . '.' . $item['id'];
+
+                $node = $item;
+                unset($node['children']);
+
+                $node['id']      = $path;
+                $node['info_id'] = $item['id'];
+                $node['level']   = $depth + 1;
+
+                $children = array_merge(
+                    $walk($item['children'] ?? [], $parentPrefix),
+                    $this->levelTree($levels, $section, $fact, $depth + 1, $path),
+                );
+
+                if ($children) $node['children'] = $children;
+
+                $out[] = $node;
+            }
+
+            return $out;
+        };
+
+        $tree = $walk($nodes, $prefix);
+
+        // «Без аналитики» на этом уровне — только если такие обороты есть.
+        // Пустая строка в каждом разрезе мозолила бы глаза, а непроставленная
+        // аналитика должна быть видна там, где она непроставлена
+        $blank = $prefix === '' ? (string) self::UNASSIGNED : $prefix . '.' . self::UNASSIGNED;
+
+        if ($this->factHasPath($fact, $section, $blank)) {
+            $node = $this->unassignedNode();
+            $node['id']       = $blank;
+            $node['info_id']  = self::UNASSIGNED;
+            $node['level']    = $depth + 1;
+            $deeper = $this->levelTree($levels, $section, $fact, $depth + 1, $blank);
+            if ($deeper) $node['children'] = $deeper;
+
+            $tree[] = $node;
+        }
+
+        return $tree;
+    }
+
+    /**
+     * Элементы уровня, которые в этом месте реально встретились, — плоско.
+     *
+     * Иерархию не строим и родителей не подставляем: смысл линейного уровня в
+     * том, чтобы показать ровно встреченное. Порядок — как в справочнике,
+     * чтобы строки не прыгали от месяца к месяцу.
+     *
+     * «Без статьи» сюда попадает наравне с прочими: непроставленная аналитика
+     * это тоже встреченное значение, и прятать её нельзя.
+     */
+    private function levelUsed(string $type, string $section, array $fact, string $prefix): array
+    {
+        $needle = $section . ':' . ($prefix === '' ? '' : $prefix . '.');
+        $seen   = [];
+
+        foreach ($fact as $key => $value) {
+            if (abs((float) $value) < 0.005) continue;
+            if (!str_starts_with($key, $needle)) continue;
+
+            $rest = substr($key, strlen($needle));
+            $id   = (int) preg_split('/[.:]/', $rest)[0];
+
+            $seen[$id] = true;
+        }
+
+        if (!$seen) return [];
+
+        $index = $this->infoIndex($type);
+        $nodes = [];
+
+        foreach ($index as $id => $row) {
+            if (isset($seen[$id])) $nodes[] = $row;
+        }
+
+        // Элемент, которого в справочнике уже нет (удалён или выключен), из
+        // отчёта исчезать не должен: сумма по нему в оборотах осталась
+        foreach (array_keys($seen) as $id) {
+            if ($id !== self::UNASSIGNED && !isset($index[$id])) {
+                $nodes[] = ['id' => $id, 'code' => null, 'name' => "#{$id}", 'parent_id' => null, 'sort_order' => PHP_INT_MAX];
+            }
+        }
+
+        return $nodes;
+    }
+
+    /** Плоский справочник одного вида: id → строка, в порядке справочника */
+    private function infoIndex(string $type): array
+    {
+        if (!isset($this->infoIndexes[$type])) {
+            $out = [];
+            $walk = function (array $nodes) use (&$walk, &$out) {
+                foreach ($nodes as $n) {
+                    $child = $n['children'] ?? [];
+                    unset($n['children']);
+                    $out[$n['id']] = $n;
+                    $walk($child);
+                }
+            };
+            $walk($this->infoTree($type));
+
+            $this->infoIndexes[$type] = $out;
+        }
+
+        return $this->infoIndexes[$type];
+    }
+
+    /** @var array<string, array> */
+    private array $infoIndexes = [];
+
+    /** Есть ли в факте суммы по этому пути или под ним */
+    private function factHasPath(array $fact, string $section, string $path): bool
+    {
+        $exact  = $section . ':' . $path . ':';
+        $deeper = $section . ':' . $path . '.';
+
+        foreach ($fact as $key => $value) {
+            if (abs((float) $value) < 0.005) continue;
+            if (str_starts_with($key, $exact) || str_starts_with($key, $deeper)) return true;
+        }
+
+        return false;
+    }
+
+    /** Дерево справочника одного вида. Читаем по разу: уровней бывает три */
+    private function infoTree(string $type): array
+    {
+        if (!isset($this->infoTrees[$type])) {
+            $rows = DB::connection($this->dbName)
+                ->table('info')
+                ->where('type', $type)
+                ->whereNull('deleted_at')
+                ->where('is_active', true)
+                ->orderBy('sort_order')->orderBy('name')
+                ->get(['id', 'parent_id', 'code', 'name', 'sort_order', 'is_variable']);
+
+            $this->infoTrees[$type] = $this->buildTree($rows);
+        }
+
+        return $this->infoTrees[$type];
+    }
+
+    /** @var array<string, array> */
+    private array $infoTrees = [];
 
     /**
      * Половина дерева статей — переменные или постоянные.
@@ -733,71 +1133,6 @@ class BudgetController extends TenantController
         }
 
         return $out;
-    }
-
-    /**
-     * Факт БДР — обороты по П587 (доходы), П588 (себестоимость), П589 (расходы).
-     *
-     * В balance_changes пассивные счета (П) хранят кредитовые обороты как отрицательные.
-     * Для БДР инвертируем знак: доходы → положительные, расходы → отрицательные.
-     */
-    private function getBdrFact(BudgetDocument $doc, array $periodDates, ?string $effectiveFrom = null): array
-    {
-        $biConfig = [
-            'П587' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'revenue'],
-            'П588' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'cost'],
-            'П589' => ['field' => 'info_1_id', 'sign' => -1, 'section' => 'expenses'],
-        ];
-
-        $balanceItems = (new BalanceItem)->setConnection($this->dbName)
-            ->newQuery()
-            ->whereIn('code', array_keys($biConfig))
-            ->get()
-            ->keyBy('code');
-
-        $dateFrom = $effectiveFrom
-            ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
-            : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
-        $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
-
-        $fact = [];
-
-        foreach ($biConfig as $code => $cfg) {
-            $bi = $balanceItems->get($code);
-            if (!$bi) continue;
-
-            // Закрытый счёт не даёт факта: закрыли расходы — раздел расходов
-            // остаётся с планом, но без цифр по факту
-            if ($this->scope->hides($bi->id)) continue;
-
-            $infoField = $cfg['field'];
-            $sign = $cfg['sign'];
-            $section = $cfg['section'];
-
-            $rows = DB::connection($this->dbName)
-                ->table('balance_changes')
-                ->where('bi_id', $bi->id)
-                ->where('date', '>=', $dateFrom)
-                ->where('date', '<=', $dateTo)
-                ->select(
-                    "{$infoField} as article_id",
-                    DB::raw("DATE_FORMAT(date, '%Y-%m-01') as period_date"),
-                    DB::raw('SUM(amount) as total')
-                )
-                ->groupBy($infoField, DB::raw("DATE_FORMAT(date, '%Y-%m-01')"))
-                ->get();
-
-            foreach ($rows as $row) {
-                // Статья не заполнена — сумма идёт в строку «Без статьи»,
-                // а не растворяется между статьями. См. UNASSIGNED
-                $articleId = $row->article_id ?? self::UNASSIGNED;
-
-                $key = $section . ':' . $articleId . ':0:' . $row->period_date;
-                $fact[$key] = (float)$row->total * $sign;
-            }
-        }
-
-        return $fact;
     }
 
     // ── Утилиты ──────────────────────────────────────────────────────────────

@@ -26,8 +26,10 @@ class OperationsController extends TenantController
                 'outBalanceItem',
                 'inInfo1',
                 'inInfo2',
+                'inInfo3',
                 'outInfo1',
                 'outInfo2',
+                'outInfo3',
             ])
             ->orderByDesc('date')
             ->orderByDesc('id');
@@ -612,10 +614,19 @@ class OperationsController extends TenantController
             'in_info_1_name'  => $op->inInfo1?->name,
             'in_info_2_id'    => $op->in_info_2_id,
             'in_info_2_name'  => $op->inInfo2?->name,
+            // Третий слот отдавали не всегда. Понадобился, когда разрез БДР
+            // стал настраиваемым: расшифровка отбирает операции по тем полям,
+            // в которых у счёта лежат уровни разреза, а это может быть и третий
+            'in_info_3_id'    => $op->in_info_3_id,
+            'in_info_3_name'  => $op->inInfo3?->name,
+            'in_info_3_type'  => $op->inBalanceItem?->info_3_type,
             'out_info_1_id'   => $op->out_info_1_id,
             'out_info_1_name' => $op->outInfo1?->name,
             'out_info_2_id'   => $op->out_info_2_id,
             'out_info_2_name' => $op->outInfo2?->name,
+            'out_info_3_id'   => $op->out_info_3_id,
+            'out_info_3_name' => $op->outInfo3?->name,
+            'out_info_3_type' => $op->outBalanceItem?->info_3_type,
             'in_hidden'       => false,
             'out_hidden'      => false,
             'created_at'      => $op->created_at,

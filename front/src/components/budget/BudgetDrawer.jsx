@@ -46,6 +46,22 @@ const endOfPeriod = (pd, granularity) => {
 }
 
 // Плоский список статей для select (с поддержкой групп БДР)
+/**
+ * Путь строки БДР → колонки строки плана.
+ *
+ * Строку отчёта опознаёт путь по уровням разреза: «5.12» это статья 12 в
+ * отделе 5. План может стоять на любом уровне, поэтому незаполненные уровни
+ * остаются пустыми — «5» это план на весь отдел.
+ */
+const pathToIds = (path) => {
+  const [a1, a2, a3] = String(path ?? '').split('.')
+  return {
+    article_id:   Number(a1) || null,
+    article_2_id: a2 ? Number(a2) : null,
+    article_3_id: a3 ? Number(a3) : null,
+  }
+}
+
 const buildArticleOptions = (articles, sectionFilter = null) => {
   if (!articles) return []
   const flat = []
@@ -210,7 +226,8 @@ export default function BudgetDrawer({
 // ══════════════════════════════════════════════════════════════════════════════
 // Вкладка «План»
 // ══════════════════════════════════════════════════════════════════════════════
-function PlanTab({ articleId, articleRowKey, periodDate, docId, articles, descendantAllMap, onUpdate, section, periodDates, granularity }) {
+function PlanTab({ articleId, articleRowKey, periodDate, docId, docType, articles, descendantAllMap, onUpdate, section, periodDates, granularity }) {
+  const isBdr = docType === 'bdr'
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [adding, setAdding] = useState(false)
@@ -244,7 +261,9 @@ function PlanTab({ articleId, articleRowKey, periodDate, docId, articles, descen
       const ids = allIds && allIds.size > 0 ? [...allIds] : [articleId]
       const params = {
         budget_document_id: docId,
-        article_ids: ids.join(','),
+        // В БДР строку опознаёт путь по уровням разреза, а не один id: план
+        // на отделе и план на его статье это разные строки
+        ...(isBdr ? { paths: ids.join(',') } : { article_ids: ids.join(',') }),
         ...(section ? { section } : {}),
       }
       // В дневной гранулярности — точная дата; в месячной — фильтруем клиентом по месяцу
@@ -284,7 +303,7 @@ function PlanTab({ articleId, articleRowKey, periodDate, docId, articles, descen
     try {
       const res = await createBudgetItem({
         budget_document_id: docId,
-        article_id: newArticle,
+        ...(isBdr ? pathToIds(newArticle) : { article_id: newArticle }),
         section: section || null,
         period_date: newDate,
         content: newContent.trim() || null,
@@ -316,7 +335,9 @@ function PlanTab({ articleId, articleRowKey, periodDate, docId, articles, descen
         for (const row of rows) {
           await createBudgetItem({
             budget_document_id: docId,
-            article_id: row.article_id,
+            article_id:   row.article_id,
+            article_2_id: row.article_2_id ?? null,
+            article_3_id: row.article_3_id ?? null,
             section: section || null,
             period_date: targetPd,
             content: row.content || null,
@@ -578,6 +599,27 @@ function FactTab({ articleId, articleRowKey, periodDate, docType, section, desce
         const validIdsStr = new Set([...validIds].map(String))
 
         /**
+         * Пути строки → какие id допустимы на каждом уровне разреза.
+         *
+         * Строку БДР опознаёт путь: «40.12» это статья 12 в отделе 40. Чтобы
+         * отобрать операции, путь надо разложить обратно по полям аналитики
+         * счёта — они приходят в `fields`.
+         *
+         * Ограничиваем только до глубины самой строки: щёлкнули по отделу —
+         * отбираем по отделу, а какие внутри статьи, неважно. Иначе строка
+         * зависела бы от того, что успело попасть в дерево.
+         */
+        const ownDepth = String(articleId).split('.').length
+
+        const perLevel = []
+        for (const path of validIdsStr) {
+          String(path).split('.').forEach((id, i) => {
+            if (i >= ownDepth) return
+            ;(perLevel[i] ??= new Set()).add(id)
+          })
+        }
+
+        /**
          * Строка «Без статьи» (id = 0) собирает обороты, которым аналитику не
          * проставили. Сравнение по списку id здесь не работает: у таких
          * операций поле пустое. Смотрим ту сторону проводки, что попала на
@@ -595,22 +637,41 @@ function FactTab({ articleId, articleRowKey, periodDate, docType, section, desce
         let result = []
 
         if (docType === 'bdr') {
-          // БДР: три счёта, каждый со своим info_field.
-          // Для «Без статьи» берём только счёт своего раздела, иначе в
-          // расшифровке строки «Доходы» оказались бы и расходы без статьи,
-          // и сумма списка не сошлась бы с цифрой, по которой кликнули
-          const entries = Object.entries(factDrillConfig)
-            .filter(([code]) => !isUnassigned || !section || code === SECTION_ACCOUNT[section])
+          // Только счёт своего раздела: доходы, себестоимость и расходы живут
+          // на разных счетах, и щёлкнув по расходам, человек ждёт расходы.
+          // Раньше перебирались все три и отсеивались по совпадению id —
+          // с многоуровневым разрезом так уже не отобрать
+          const c = factDrillConfig[SECTION_ACCOUNT[section]]
+            ?? (Object.values(factDrillConfig)[0] || null)
+          if (!c) return
 
-          for (const [, c] of entries) {
-            const [resIn, resOut] = await Promise.all([
-              getOperations({ in_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-              getOperations({ out_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
-            ])
-            const biOps = [...(resIn.data.data || []), ...(resOut.data.data || [])]
-            result.push(...biOps.filter(op => hit(op, c.bi_id, c.info_field)))
+          const fields = c.fields?.length ? c.fields : [c.info_field]
+
+          /** Подходит ли сторона проводки: счёт тот и аналитика по уровням та */
+          const side = (op, s) => {
+            if (String(op[`${s}_bi_id`]) !== String(c.bi_id)) return false
+
+            return fields.every((f, i) => {
+              const set = perLevel[i]
+              if (!set || set.size === 0) return true   // глубже строки не ограничиваем
+
+              const value = op[`${s}_${f}`]
+              // «Без статьи» на этом уровне: у операции поле пустое, и по
+              // списку id его не поймать
+              if (set.has(String(UNASSIGNED_ID)) && empty(value)) return true
+
+              return set.has(String(value ?? ''))
+            })
           }
-          result = result.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
+
+          const [resIn, resOut] = await Promise.all([
+            getOperations({ in_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
+            getOperations({ out_bi_id: c.bi_id, date_from: dateFrom, date_to: dateTo, per_page: 500 }),
+          ])
+          const all = [...(resIn.data.data || []), ...(resOut.data.data || [])]
+          const dedup = all.filter((op, i, self) => self.findIndex(o => o.id === op.id) === i)
+
+          result = dedup.filter(op => side(op, 'in') || side(op, 'out'))
         } else {
           // ДДС/PDC: один счёт А100, info_2_id
           const biId = factDrillConfig.bi_id
