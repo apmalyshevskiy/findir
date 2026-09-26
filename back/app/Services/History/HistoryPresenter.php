@@ -51,6 +51,14 @@ class HistoryPresenter
         'revenue_bi_id' => 'Счёт доходов',
         'cogs_bi_id'    => 'Счёт себестоимости',
         'revenue_item_id' => 'Статья дохода',
+        'expense_kind'  => 'Вид расхода',
+    ];
+
+    /** Вид статьи расхода — в журнале он должен читаться словом, а не кодом */
+    private const EXPENSE_KINDS = [
+        'fixed'      => 'постоянная',
+        'variable'   => 'переменная',
+        'investment' => 'инвестиционная',
     ];
 
     /**
@@ -466,6 +474,8 @@ class HistoryPresenter
         if (is_array($value)) return count($value) . ' ' . $this->plural(count($value), 'строка', 'строки', 'строк');
 
         if (in_array($field, ['is_posted', 'is_active'], true)) return $value ? 'да' : 'нет';
+
+        if ($field === 'expense_kind') return self::EXPENSE_KINDS[$value] ?? (string) $value;
 
         if (is_numeric($value)) {
             if (str_contains($field, 'bi_id')) return $biNames[(int) $value] ?? '#' . $value;

@@ -10,9 +10,13 @@ import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
 import usePersistedState from '../hooks/usePersistedState'
 import { localDate } from '../utils/period'
-import { INFO_LABELS as INFO_TYPE_LABEL } from '../utils/infoLabels'
+import { INFO_LABELS as INFO_TYPE_LABEL, EXPENSE_KINDS, EXPENSE_KIND_GROUP } from '../utils/infoLabels'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
+/** Группа разделённых расходов → вид статьи, который в ней живёт */
+const kindOfGroup = (groupKey) =>
+  Object.keys(EXPENSE_KIND_GROUP).find(k => EXPENSE_KIND_GROUP[k] === groupKey) || 'fixed'
+
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
 const fmtDate = (d) => { if (!d) return ''; const dt = new Date(d); return dt.toLocaleDateString('ru-RU') }
 const monthLabel = (ds) => new Date(ds + 'T00:00:00').toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
@@ -483,15 +487,15 @@ export default function BudgetPage() {
       level: article.level || 1,
       parent_id: article.parent_id || '', sort_order: article.sort_order ?? 0,
       type, section: article.section || article.groupKey,
-      is_variable: !!article.is_variable,
+      expense_kind: article.expense_kind || 'fixed',
     })
     setAddArticle(null)
   }
 
-  const openAddArticle = (infoType, groupKey = null, isVariable = false) => {
+  const openAddArticle = (infoType, groupKey = null, expenseKind = 'fixed') => {
     // Статья, заведённая из группы «Переменные расходы», переменной и
     // становится — иначе она тут же уехала бы в соседнюю группу
-    setAddArticle({ type: infoType, parent_id: '', name: '', sort_order: 0, groupKey, is_variable: isVariable })
+    setAddArticle({ type: infoType, parent_id: '', name: '', sort_order: 0, groupKey, expense_kind: expenseKind })
     setEditArticle(null)
   }
 
@@ -504,8 +508,8 @@ export default function BudgetPage() {
         type: editArticle.type,
         parent_id: editArticle.parent_id || null,
         sort_order: editArticle.sort_order || 0,
-        // Только у расходов: в какую половину разделённого БДР попадёт статья
-        ...(editArticle.type === 'expenses' ? { is_variable: !!editArticle.is_variable } : {}),
+        // Только у расходов: в какую группу разделённого БДР попадёт статья
+        ...(editArticle.type === 'expenses' ? { expense_kind: editArticle.expense_kind || 'fixed' } : {}),
       })
       setEditArticle(null)
       loadReport(true)
@@ -522,7 +526,7 @@ export default function BudgetPage() {
         type: addArticle.type,
         parent_id: addArticle.parent_id || null,
         sort_order: addArticle.sort_order || 0,
-        ...(addArticle.type === 'expenses' ? { is_variable: !!addArticle.is_variable } : {}),
+        ...(addArticle.type === 'expenses' ? { expense_kind: addArticle.expense_kind || 'fixed' } : {}),
       })
       setAddArticle(null)
       // По новой статье ещё нет ни плана, ни факта — при скрытых пустых она
@@ -657,6 +661,20 @@ export default function BudgetPage() {
     }
     return result
   }, [selectedDoc, report, periodDates, fact, plan])
+
+  /**
+   * Есть ли по инвестициям хоть что-то — план или факт.
+   *
+   * Пока нечего, «Операционная прибыль» повторяла бы «Чистую» слово в слово:
+   * лишняя строка-двойник в отчёте хуже, чем её отсутствие. Саму группу при
+   * этом показываем — из неё заводят первую инвестиционную статью.
+   */
+  const hasInvestments = useMemo(() => {
+    const g = bdrGroupTotals.expenses_inv
+    if (!g) return false
+
+    return periodDates.some(pd => Math.abs(g[pd]?.fact || 0) > 0.005 || Math.abs(g[pd]?.plan || 0) > 0.005)
+  }, [bdrGroupTotals, periodDates])
 
   // autoOpening: фактический остаток на начало бюджета.
   // Если общий (cash_id=null) = 0, берём сумму по всем кассам.
@@ -922,13 +940,13 @@ export default function BudgetPage() {
             onClick={() => setSplitExpenses(v => !v)}
             title={splitExpenses
               ? 'Показать расходы одной группой'
-              : 'Разделить расходы на переменные и постоянные — по отметке у статьи'}
+              : 'Разделить расходы на переменные, постоянные и инвестиционные — по виду статьи'}
             className={`ml-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
               splitExpenses
                 ? 'bg-blue-900 text-white border-blue-900'
                 : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
             }`}>
-            Переменные / постоянные
+            По виду расходов
           </button>
         )}
         <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
@@ -1105,13 +1123,28 @@ export default function BudgetPage() {
                                    + (bdrGroupTotals.expenses_var?.[pd]?.plan || 0),
                           }), 'border-t-2 border-gray-300')
                         )}
+                        {/* Операционная прибыль — всё, что заработала текущая
+                            работа, до вложений. Ради этой строки инвестиции и
+                            выделяют: без неё ремонт зала читался бы как
+                            провальный месяц */}
+                        {selectedDoc?.type === 'bdr' && article.groupKey === 'expenses_inv'
+                          && bdrGroupTotals.revenue && bdrGroupTotals.cost && hasInvestments && (
+                          renderProfitRow('Операционная прибыль', (pd) => {
+                            const at = (g) => bdrGroupTotals[g]?.[pd] || { fact: 0, plan: 0 }
+                            const parts = ['revenue', 'cost', 'expenses_var', 'expenses_fix'].map(at)
+                            return {
+                              factVal: parts.reduce((s, p) => s + p.fact, 0),
+                              planVal: parts.reduce((s, p) => s + p.plan, 0),
+                            }
+                          }, 'border-t-2 border-gray-300')
+                        )}
                         {/* Заголовок группы с итогами */}
                         <tr className="bg-gray-100 border-b border-gray-200">
                           <td className="sticky left-0 z-10 bg-gray-100 px-3 py-2 font-semibold text-gray-700">
                             <div className="flex items-center gap-2">
                               {article.name}
                               <button
-                                onClick={() => openAddArticle(infoTypeFromSection(article.section), article.groupKey, article.groupKey === 'expenses_var')}
+                                onClick={() => openAddArticle(infoTypeFromSection(article.section), article.groupKey, kindOfGroup(article.groupKey))}
                                 className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded"
                                 title="Добавить статью"
                               >+ статья</button>
@@ -1267,12 +1300,12 @@ export default function BudgetPage() {
                                 статьям, уходя в справочник и обратно, — работа
                                 на полдня */}
                             {editArticle.type === 'expenses' && (
-                              <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer whitespace-nowrap">
-                                <input type="checkbox" className="w-3.5 h-3.5 accent-blue-900"
-                                  checked={!!editArticle.is_variable}
-                                  onChange={e => setEditArticle(prev => ({ ...prev, is_variable: e.target.checked }))} />
-                                переменная
-                              </label>
+                              <select className="px-2 py-1 border border-gray-200 rounded text-xs bg-white text-gray-600"
+                                title="Вид расхода — в какую группу разделённого БДР попадёт статья"
+                                value={editArticle.expense_kind || 'fixed'}
+                                onChange={e => setEditArticle(prev => ({ ...prev, expense_kind: e.target.value }))}>
+                                {EXPENSE_KINDS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                              </select>
                             )}
                             <button onClick={saveArticle} disabled={!editArticle.name.trim() || articleSaving}
                               className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">{articleSaving ? '...' : 'OK'}</button>
@@ -1289,9 +1322,11 @@ export default function BudgetPage() {
                 {selectedDoc?.type === 'bdr' && bdrGroupTotals.revenue && (
                   renderProfitRow('Чистая прибыль', (pd) => {
                     const at = (g) => bdrGroupTotals[g]?.[pd] || { fact: 0, plan: 0 }
-                    // При разделении расходы приходят двумя группами: expenses
-                    // пустует, а суммы лежат в переменных и постоянных
-                    const parts = ['revenue', 'cost', 'expenses', 'expenses_var', 'expenses_fix'].map(at)
+                    // При разделении расходы приходят тремя группами: expenses
+                    // пустует, а суммы лежат в переменных, постоянных и
+                    // инвестиционных
+                    const parts = ['revenue', 'cost', 'expenses',
+                                   'expenses_var', 'expenses_fix', 'expenses_inv'].map(at)
                     return {
                       factVal: parts.reduce((s, p) => s + p.fact, 0),
                       planVal: parts.reduce((s, p) => s + p.plan, 0),

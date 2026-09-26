@@ -4,8 +4,8 @@ export const getBackupSummary = () => api.get('/backup/summary')
 
 // Скачивание идёт через axios, а не по прямой ссылке: токен лежит в
 // localStorage и в заголовке, обычный <a href> его не передаст.
-export const downloadBackup = () =>
-  api.get('/backup/export', { responseType: 'blob' })
+export const downloadBackup = (withHistory = true) =>
+  api.get('/backup/export', { responseType: 'blob', params: { history: withHistory ? 1 : 0 } })
 
 // Принимаем и .json.gz, и распакованный .json — сервер определяет по сигнатуре
 export const inspectBackup = (file) => {

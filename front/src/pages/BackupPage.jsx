@@ -22,6 +22,15 @@ const TABLE_LABELS = {
   fund_plan_lines:              'Строки актов',
   bulk_update_log:              'Журнал массовых правок',
   balance:                      'Остатки (устар.)',
+  users:                        'Пользователи',
+  roles:                        'Должности',
+  object_versions:              'История правок',
+  document_types:               'Виды документов',
+  integrations:                 'Интеграции',
+  integration_links:            'Соответствия интеграций',
+  integration_runs:             'Журнал загрузок',
+  ai_dialogs:                   'Диалоги с помощником',
+  ai_usage:                     'Расход на ИИ',
 }
 
 const label = (t) => TABLE_LABELS[t] || t
@@ -46,6 +55,7 @@ export default function BackupPage() {
   const [file, setFile]       = useState(null)
   const [preview, setPreview] = useState(null)
   const [result, setResult]   = useState(null)
+  const [withHistory, setWithHistory] = useState(true)
   const fileRef = useRef(null)
 
   const tenant = (() => {
@@ -58,7 +68,7 @@ export default function BackupPage() {
   const handleExport = async () => {
     setBusy('export'); setError('')
     try {
-      const r = await downloadBackup()
+      const r = await downloadBackup(withHistory)
       // Имя файла сервер прислал в Content-Disposition
       const cd = r.headers['content-disposition'] || ''
       const m = /filename="?([^";]+)"?/.exec(cd)
@@ -94,6 +104,8 @@ export default function BackupPage() {
     const phrase = 'ЗАМЕНИТЬ'
     const typed = prompt(
       `Данные компании будут заменены содержимым файла. Текущие операции, документы и справочники будут удалены безвозвратно.\n\n` +
+      `Вместе с ними заменятся пользователи и должности: пароли станут теми, что были на момент копии. ` +
+      `Ваша учётная запись не потеряется — если в копии её нет, она останется.\n\n` +
       `Для подтверждения введите ${phrase}:`
     )
     if (typed !== phrase) return
@@ -147,14 +159,31 @@ export default function BackupPage() {
             </div>
           )}
 
+          {/* История правок весит больше всех данных вместе взятых, а нужна
+              не в каждой копии: для переноса компании — да, для «снимка перед
+              загрузкой выписки» — вряд ли */}
+          <label className="flex items-start gap-2 mt-4 cursor-pointer">
+            <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
+              checked={withHistory} onChange={e => setWithHistory(e.target.checked)} />
+            <span className="text-sm text-gray-700">
+              С историей правок
+              <span className="block text-[11px] text-gray-400">
+                кто и что менял{summary?.counts?.object_versions
+                  ? ` — ${summary.counts.object_versions} записей`
+                  : ''}. Без неё файл заметно легче
+              </span>
+            </span>
+          </label>
+
           <button onClick={handleExport} disabled={busy === 'export'}
-            className="mt-4 w-full px-4 py-2.5 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            className="mt-3 w-full px-4 py-2.5 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
             {busy === 'export' ? 'Формирую...' : '↓ Скачать копию'}
           </button>
 
           <p className="text-[11px] text-gray-400 mt-3">
-            Пользователи и пароли в копию не входят — она про данные компании,
-            а не про доступы.
+            В копию входят учётные записи и должности — вместе с паролями
+            (в зашифрованном виде). Храните файл как пароль: кто его получил,
+            тот получил и компанию.
           </p>
         </div>
 
@@ -214,6 +243,23 @@ export default function BackupPage() {
               {result.skipped?.length > 0 && (
                 <div className="text-gray-500 mt-1">
                   Пропущены таблицы, которых нет в базе: {result.skipped.join(', ')}
+                </div>
+              )}
+              {/* В копии не было того, кто её грузил: учётку вернули, иначе он
+                  тут же остался бы без входа в собственную компанию */}
+              {result.kept_me && (
+                <div className="text-gray-500 mt-1">
+                  Вашей учётной записи в копии не было — она сохранена вместе с должностью.
+                </div>
+              )}
+              {/* Копия снята до правки схемы: поле в ней есть, в таблице уже
+                  нет. Восстановление прошло, но об этом надо сказать вслух */}
+              {result.dropped && Object.keys(result.dropped).length > 0 && (
+                <div className="text-gray-500 mt-1">
+                  Копия старше нынешней версии — не восстановлены поля:{' '}
+                  {Object.entries(result.dropped)
+                    .map(([t, cols]) => `${label(t)} (${cols.join(', ')})`)
+                    .join('; ')}
                 </div>
               )}
             </div>

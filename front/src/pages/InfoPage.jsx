@@ -6,6 +6,7 @@ import InfoTypeBadge from '../components/InfoTypeBadge'
 import InfoSelect from '../components/InfoSelect'
 import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
+import { EXPENSE_KINDS, EXPENSE_KIND_HINT } from '../utils/infoLabels'
 import { pushRecent } from '../utils/recent'
 
 const INFO_TYPES = [
@@ -51,7 +52,7 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '', is_variable: false }
+const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '', expense_kind: 'fixed' }
 
 /**
  * Выбор элемента справочника: родитель и статья расхода по умолчанию.
@@ -151,7 +152,7 @@ export default function InfoPage() {
       parent_id:   item.parent_id || '',
       sort_order:  item.sort_order || 0,
       default_expense_id: item.default_expense_id || '',
-      is_variable: !!item.is_variable,
+      expense_kind: item.expense_kind || 'fixed',
     })
     setShowForm(true)
   }
@@ -170,7 +171,9 @@ export default function InfoPage() {
       sort_order: form.sort_order,
       description: form.description || null,
       default_expense_id: form.default_expense_id || null,
-      is_variable: form.type === 'expenses' ? !!form.is_variable : false,
+      // Вид держим только у статей расхода: у контрагента или кассы он
+      // бессмыслен, а оставленный от прежнего типа сбил бы БДР
+      expense_kind: form.type === 'expenses' ? (form.expense_kind || 'fixed') : 'fixed',
     }
 
     try {
@@ -501,22 +504,22 @@ export default function InfoPage() {
                 />
               )}
 
-              {/* Переменная или постоянная — только у статьи расхода. По этой
-                  отметке БДР делит расходы на две половины и считает валовую
-                  прибыль; на проводки и на остальные отчёты она не влияет */}
+              {/* Вид расхода — только у статьи расхода. По нему БДР раскладывает
+                  расходы на группы и считает промежуточные прибыли; на проводки
+                  и на остальные отчёты он не влияет */}
               {form.type === 'expenses' && (
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
-                    checked={!!form.is_variable}
-                    onChange={e => setForm({ ...form, is_variable: e.target.checked })} />
-                  <span className="text-sm text-gray-700">
-                    Переменная статья
-                    <span className="block text-xs text-gray-400">
-                      растёт вместе с выручкой — налоги с оборота, комиссии, бонусы.
-                      В БДР попадёт в «Переменные расходы»
-                    </span>
-                  </span>
-                </label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Вид расхода</label>
+                  <select
+                    value={form.expense_kind || 'fixed'}
+                    onChange={e => setForm({ ...form, expense_kind: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    {EXPENSE_KINDS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {EXPENSE_KIND_HINT[form.expense_kind || 'fixed']}
+                  </p>
+                </div>
               )}
 
               {/* ИНН — только для partner */}

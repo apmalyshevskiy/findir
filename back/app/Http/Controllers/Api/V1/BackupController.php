@@ -45,12 +45,17 @@ class BackupController extends TenantController
     {
         $this->initTenant($request);
 
-        $name = 'findir-' . $this->tenantId . '-' . now()->format('Y-m-d-Hi') . '.json.gz';
+        // История правок тяжелее всех остальных данных вместе взятых, а нужна
+        // не в каждой копии — поэтому галочка, а не молчаливое решение за всех
+        $withHistory = $request->boolean('history', true);
+
+        $name = 'findir-' . $this->tenantId . '-' . now()->format('Y-m-d-Hi')
+              . ($withHistory ? '' : '-без-истории') . '.json.gz';
         $db     = $this->dbName;
         $tenant = $this->tenantId;
 
-        return response()->streamDownload(function () use ($db, $tenant) {
-            $this->backup->streamTo($db, $tenant);
+        return response()->streamDownload(function () use ($db, $tenant, $withHistory) {
+            $this->backup->streamTo($db, $tenant, $withHistory);
         }, $name, [
             'Content-Type'      => 'application/gzip',
             // Размер заранее неизвестен — отдаём потоком, без буферизации в nginx
@@ -84,7 +89,9 @@ class BackupController extends TenantController
         $payload = $this->readUpload($request);
 
         try {
-            $res = $this->backup->import($this->dbName, $payload);
+            // Кто восстанавливает — чтобы не закрыть ему вход собственной же
+            // копией, в которой его учётной записи ещё не было
+            $res = $this->backup->import($this->dbName, $payload, $this->currentUserId($request));
         } catch (\Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

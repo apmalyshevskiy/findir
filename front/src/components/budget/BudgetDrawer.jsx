@@ -647,6 +647,12 @@ function FactTab({ articleId, articleRowKey, periodDate, docType, section, desce
 
           const fields = c.fields?.length ? c.fields : [c.info_field]
 
+          // Значения, которые отчёт отнёс к «Без статьи», хотя поле заполнено:
+          // в слоте лежит элемент не того вида, по которому идёт уровень.
+          // Без них расшифровка такой строки говорила бы «не найдено», а
+          // сумма в отчёте при этом стоит
+          const foreign = (c.foreign || []).map(ids => new Set((ids || []).map(String)))
+
           /** Подходит ли сторона проводки: счёт тот и аналитика по уровням та */
           const side = (op, s) => {
             if (String(op[`${s}_bi_id`]) !== String(c.bi_id)) return false
@@ -656,9 +662,10 @@ function FactTab({ articleId, articleRowKey, periodDate, docType, section, desce
               if (!set || set.size === 0) return true   // глубже строки не ограничиваем
 
               const value = op[`${s}_${f}`]
-              // «Без статьи» на этом уровне: у операции поле пустое, и по
-              // списку id его не поймать
-              if (set.has(String(UNASSIGNED_ID)) && empty(value)) return true
+              // «Без статьи» на этом уровне: у операции поле пустое либо в нём
+              // элемент чужого вида — по списку id их не поймать
+              if (set.has(String(UNASSIGNED_ID))
+                && (empty(value) || foreign[i]?.has(String(value)))) return true
 
               return set.has(String(value ?? ''))
             })

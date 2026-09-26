@@ -24,14 +24,17 @@ class Info extends Model
         'inn',
         'default_expense_id',
         'parent_id', 'sort_order', 'is_active',
-        'is_variable',
+        'expense_kind',
     ];
+
+    /**
+     * Виды статьи расхода. По ним БДР раскладывает расходы на группы и считает
+     * промежуточные прибыли. У остальных типов справочника смысла не имеют.
+     */
+    public const EXPENSE_KINDS = ['fixed', 'variable', 'investment'];
 
     protected $casts = [
         'is_active' => 'boolean',
-        // Отметка «переменная» у статьи расхода: по ней БДР делит расходы на
-        // переменные и постоянные. У остальных типов справочника смысла не имеет
-        'is_variable' => 'boolean',
         'default_expense_id' => 'integer',
     ];
 

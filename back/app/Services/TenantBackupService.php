@@ -15,11 +15,20 @@ use RuntimeException;
  * Что НЕ входит и почему:
  *  - balance_changes — производная таблица, её ведут триггеры на operations.
  *    При загрузке она пересобирается сама; включи её в копию — обороты задвоятся.
- *  - users, токены, сессии — доступы. Копия про учётные данные компании, а не
- *    про то, кто в неё входит: восстановление не должно менять пароли и уж тем
- *    более выкладывать их хэши в скачиваемый файл. Пользователи при загрузке
- *    не трогаются, иначе после восстановления никто не смог бы войти.
+ *  - токены и сессии — состояние входа, а не данные: после восстановления
+ *    человек остаётся в системе с тем же токеном, и это правильно.
  *  - очереди и migrations — состояние среды, а не данные.
+ *
+ * Пользователи и должности ВХОДЯТ: копия обязана восстанавливать компанию
+ * целиком, включая тех, кто в ней работает, и то, что каждому видно. Отсюда два
+ * следствия, о которых нельзя молчать: в файле лежат хэши паролей (значит,
+ * хранить его надо как пароль), а после восстановления пароли станут теми, что
+ * были на момент копии. Того, кто выполняет восстановление, страхуем отдельно —
+ * см. import().
+ *
+ * Копия старше схемы грузится: поля, которых в таблице уже нет, отбрасываются,
+ * и в ответе сказано какие. Новые колонки при этом берут свои умолчания — так
+ * копия, снятая месяц назад, остаётся пригодной после правок схемы.
  */
 final class TenantBackupService
 {
@@ -27,18 +36,21 @@ final class TenantBackupService
 
     private const EXCLUDED = [
         'balance_changes',                                   // производная от operations
-        'users', 'personal_access_tokens',                   // доступы
+        'personal_access_tokens',                            // состояние входа
         'password_reset_tokens', 'sessions',
         'jobs', 'job_batches', 'failed_jobs',                // очереди
         'migrations',                                        // состояние схемы
     ];
+
+    /** История правок объектов: тяжёлая и нужна не всегда — отдельной галочкой */
+    public const HISTORY_TABLE = 'object_versions';
 
     /**
      * Порядок загрузки: сначала то, на что ссылаются.
      * Таблицы из файла, которых здесь нет, грузятся после — в порядке файла.
      */
     private const RESTORE_ORDER = [
-        'settings', 'projects', 'balance_items', 'info',
+        'settings', 'roles', 'users', 'projects', 'balance_items', 'info',
         'category_postings', 'payment_classification_rules',
         'fund_schemes', 'funds', 'fund_plan_docs', 'fund_plan_lines',
         'budget_documents', 'budget_items', 'budget_opening_balances',
@@ -62,15 +74,22 @@ final class TenantBackupService
     /** Сколько строк за раз пишем при загрузке. */
     private const CHUNK = 500;
 
-    /** Список таблиц, попадающих в копию. */
-    public function tables(string $db): array
+    /**
+     * Список таблиц, попадающих в копию.
+     *
+     * @param bool $withHistory включать ли историю правок объектов
+     */
+    public function tables(string $db, bool $withHistory = true): array
     {
         $all = array_map(
             fn($row) => array_values((array) $row)[0],
             DB::connection($db)->select('SHOW TABLES')
         );
 
-        return array_values(array_diff($all, self::EXCLUDED));
+        $skip = self::EXCLUDED;
+        if (!$withHistory) $skip[] = self::HISTORY_TABLE;
+
+        return array_values(array_diff($all, $skip));
     }
 
     /** Строк в каждой таблице — для показа состава перед выгрузкой. */
@@ -91,7 +110,7 @@ final class TenantBackupService
      * из базы. Учётные данные — это в основном повторяющиеся числа и коды, они
      * жмутся раз в десять и больше.
      */
-    public function streamTo(string $db, string $tenantId): void
+    public function streamTo(string $db, string $tenantId, bool $withHistory = true): void
     {
         $z = deflate_init(ZLIB_ENCODING_GZIP, ['level' => 6]);
 
@@ -104,12 +123,15 @@ final class TenantBackupService
             'tenant'      => $tenantId,
             'created_at'  => now()->toIso8601String(),
             'app_version' => config('app.version', 'findir'),
+            // Чтобы при загрузке было видно, полная копия или без истории:
+            // иначе пустая история читалась бы как «правок не было»
+            'history'     => $withHistory,
         ];
 
         $emit('{"meta":' . json_encode($meta, JSON_UNESCAPED_UNICODE) . ',"tables":{');
 
         $firstTable = true;
-        foreach ($this->tables($db) as $table) {
+        foreach ($this->tables($db, $withHistory) as $table) {
             $emit(($firstTable ? '' : ',') . json_encode($table) . ':[');
             $firstTable = false;
 
@@ -177,11 +199,27 @@ final class TenantBackupService
      * Чистим DELETE, а не TRUNCATE: TRUNCATE в MySQL делает неявный commit и
      * разорвал бы транзакцию, а заодно не запустил бы триггеры на operations,
      * которые убирают за собой balance_changes.
+     *
+     * Пользователи и должности восстанавливаются наравне с остальным, но того,
+     * кто нажал кнопку, страхуем: если в копии его учётной записи нет (завели
+     * позже) — возвращаем её, а если пропала и её должность — возвращаем и
+     * должность. Иначе человек восстановил бы компанию и в тот же миг закрыл
+     * себе вход, а починить это было бы уже нечем.
+     *
+     * @param int|null $actorId кто восстанавливает
      */
-    public function import(string $db, array $payload): array
+    public function import(string $db, array $payload, ?int $actorId = null): array
     {
         $info   = $this->inspect($payload);
         $tables = $payload['tables'];
+
+        // Снимок до чистки: пригодится, если копия о нём не знает
+        $me = $actorId
+            ? (array) (DB::connection($db)->table('users')->where('id', $actorId)->first() ?? [])
+            : [];
+        $myRole = !empty($me['role_id'])
+            ? (array) (DB::connection($db)->table('roles')->where('id', $me['role_id'])->first() ?? [])
+            : [];
 
         $known    = $this->tables($db);
         $ordered  = array_values(array_filter(self::RESTORE_ORDER, fn($t) => isset($tables[$t]) && in_array($t, $known, true)));
@@ -191,8 +229,10 @@ final class TenantBackupService
 
         $skipped  = array_values(array_diff(array_keys($tables), $ordered));
         $restored = [];
+        $dropped  = [];
+        $keptMe   = false;
 
-        DB::connection($db)->transaction(function () use ($db, $ordered, $tables, &$restored) {
+        DB::connection($db)->transaction(function () use ($db, $ordered, $tables, $me, $myRole, &$restored, &$dropped, &$keptMe) {
             // Удаляем в обратном порядке — сначала зависимые
             foreach (array_reverse($ordered) as $table) {
                 DB::connection($db)->table($table)->delete();
@@ -202,18 +242,72 @@ final class TenantBackupService
 
             foreach ($ordered as $table) {
                 $rows = array_map(fn($r) => (array) $r, $tables[$table] ?? []);
+
+                // Колонки, которых в сегодняшней схеме уже нет: копия снята до
+                // того, как поле убрали или переименовали. Такие поля молча
+                // отбрасываем — иначе INSERT падает на «Unknown column», и
+                // копия месячной давности не грузится вовсе. Что отбросили,
+                // говорим в ответе: человек должен знать, чего не вернулось
+                $columns = array_flip(Schema::connection($db)->getColumnListing($table));
+
+                foreach ($rows as $i => $row) {
+                    $extra = array_diff_key($row, $columns);
+                    if (!$extra) continue;
+
+                    $dropped[$table] = array_values(array_unique(array_merge(
+                        $dropped[$table] ?? [], array_keys($extra),
+                    )));
+                    $rows[$i] = array_intersect_key($row, $columns);
+                }
+
                 foreach (array_chunk($rows, self::CHUNK) as $chunk) {
                     DB::connection($db)->table($table)->insert($chunk);
                 }
                 $restored[$table] = count($rows);
             }
+
+            $keptMe = $this->keepActor($db, $me, $myRole);
         });
 
         return [
             'restored' => $restored,
             'total'    => array_sum($restored),
             'skipped'  => $skipped,          // таблицы из файла, которых нет в базе
+            'dropped'  => $dropped,          // поля из файла, которых нет в таблице
+            'kept_me'  => $keptMe,           // пришлось ли вернуть учётку того, кто грузил
             'tenant'   => $info['tenant'],
         ];
+    }
+
+    /**
+     * Вернуть на место того, кто восстанавливает, если копия о нём не знает.
+     *
+     * Проверяем и должность: восстановленный список должностей может не
+     * содержать той, под которой человек работает, а без неё прав у него не
+     * останется вовсе — Access считает пустые права «недонастроенной учёткой».
+     *
+     * @return bool пришлось ли что-то возвращать
+     */
+    private function keepActor(string $db, array $me, array $myRole): bool
+    {
+        if (!$me) return false;
+
+        $users = DB::connection($db)->table('users');
+        $kept  = false;
+
+        if (!empty($myRole)) {
+            $roles = DB::connection($db)->table('roles');
+            if (!$roles->where('id', $myRole['id'])->exists()) {
+                $roles->insert($myRole);
+                $kept = true;
+            }
+        }
+
+        if (!$users->where('id', $me['id'])->exists()) {
+            $users->insert($me);
+            $kept = true;
+        }
+
+        return $kept;
     }
 }

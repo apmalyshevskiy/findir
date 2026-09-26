@@ -517,7 +517,7 @@ class BudgetController extends TenantController
             // — расшифровка отбирает операции по всем сразу, иначе в строке
             // «отдел → статья» показались бы все статьи отдела
             $factDrillConfig = [];
-            foreach ($bdrSections as $cfg) {
+            foreach ($bdrSections as $section => $cfg) {
                 if (!$cfg['bi_id']) continue;
 
                 $fields = array_map(fn($l) => "info_{$l['slot']}_id", $cfg['levels']);
@@ -526,6 +526,10 @@ class BudgetController extends TenantController
                     'bi_id'      => $cfg['bi_id'],
                     'info_field' => $fields[0] ?? 'info_1_id',
                     'fields'     => $fields,
+                    // Значения, которые в отчёте попали в «Без статьи», хотя
+                    // поле у операции заполнено: в слоте лежит элемент не того
+                    // вида, по которому идёт уровень
+                    'foreign'    => $this->foreignIdsFor($section),
                 ];
             }
         }
@@ -728,6 +732,19 @@ class BudgetController extends TenantController
     private const BDR_ACCOUNTS = ['revenue' => 'П587', 'cost' => 'П588', 'expenses' => 'П589'];
 
     /**
+     * Расходы, разделённые по виду статьи: вид → [ключ группы, заголовок].
+     *
+     * Порядок — тот, в котором их вычитают из дохода, и от него зависят
+     * промежуточные прибыли в отчёте. Инвестиции последние: они не про
+     * текущую работу, и операционный результат должен читаться до них.
+     */
+    private const EXPENSE_GROUPS = [
+        'variable'   => ['expenses_var', 'Переменные расходы'],
+        'fixed'      => ['expenses_fix', 'Постоянные расходы'],
+        'investment' => ['expenses_inv', 'Инвестиционные расходы'],
+    ];
+
+    /**
      * Уровни разреза каждого раздела: чем строка отчёта раскладывается вглубь.
      *
      * Настройка лежит на бюджете списком видов справочника: `["department",
@@ -867,8 +884,23 @@ class BudgetController extends TenantController
 
             foreach ($query->select($select)->groupBy($group)->get() as $row) {
                 $path = [];
-                foreach ($cfg['levels'] as $i => $_) {
-                    $path[] = (int) ($row->{"l{$i}"} ?? 0) ?: self::UNASSIGNED;
+                foreach ($cfg['levels'] as $i => $level) {
+                    $id = (int) ($row->{"l{$i}"} ?? 0);
+
+                    // Слот бывает объявлен под несколько справочников, и в нём
+                    // может лежать не тот вид, по которому идёт этот уровень:
+                    // в разрезе по отделам номенклатура из того же слота — это
+                    // «без отдела», а не отдел. Считаем её непроставленной,
+                    // иначе сумма ушла бы в строку, которой в отчёте нет, и
+                    // пропала бы с экрана целиком
+                    if ($id && ($this->infoTypes()[$id] ?? null) !== $level['type']) {
+                        // Запоминаем: расшифровке «Без статьи» на этом уровне
+                        // придётся ловить не только пустое поле, но и эти id
+                        $this->foreignIds[$section][$i][$id] = true;
+                        $id = self::UNASSIGNED;
+                    }
+
+                    $path[] = $id ?: self::UNASSIGNED;
                 }
 
                 // Разреза нет вовсе — весь оборот счёта одной строкой
@@ -909,12 +941,12 @@ class BudgetController extends TenantController
                 continue;
             }
 
-            // Переменные и постоянные — две группы одного раздела: счёт тот же
-            // П589, разрез тот же, различаются только отметкой у статьи
-            foreach ([[true, 'Переменные расходы', 'expenses_var'],
-                      [false, 'Постоянные расходы', 'expenses_fix']] as [$variable, $label, $key]) {
+            // Переменные, постоянные и инвестиционные — три группы одного
+            // раздела: счёт тот же П589, разрез тот же, различаются только
+            // видом статьи. Порядок — как их вычитают из дохода
+            foreach (self::EXPENSE_GROUPS as $kind => [$key, $label]) {
                 $groups[] = ['key' => $key, 'group' => $section, 'label' => $label,
-                             'items' => $this->expenseBucket($tree, $variable),
+                             'items' => $this->expenseBucket($tree, $kind),
                              'levels' => $this->levelsOut($cfg['levels'])];
             }
         }
@@ -978,6 +1010,41 @@ class BudgetController extends TenantController
 
         $tree = $walk($nodes, $prefix);
 
+        // Страховка для уровня-дерева: элемент, которого в дереве нет
+        // (выключен или удалён), но обороты по нему есть. Без неё сумма не
+        // попадает ни в свою строку, ни в «Без статьи» — она просто исчезает
+        // с экрана, и отчёт молча перестаёт сходиться
+        if (!empty($levels[$depth]['tree'])) {
+            $known = [];
+            $mark = function (array $items) use (&$mark, $depth, &$known) {
+                foreach ($items as $it) {
+                    // Только свой уровень: глубже висят строки следующего
+                    // разреза, и их id здесь ничего не значат
+                    if (($it['level'] ?? null) === $depth + 1) {
+                        $known[(int) $it['info_id']] = true;
+                        $mark($it['children'] ?? []);
+                    }
+                }
+            };
+            $mark($tree);
+
+            foreach ($this->levelSeenIds($section, $fact, $prefix) as $id) {
+                if ($id === self::UNASSIGNED || isset($known[$id])) continue;
+
+                $node = $this->lostNode($id);
+                $path = $prefix === '' ? (string) $id : $prefix . '.' . $id;
+
+                $node['id']      = $path;
+                $node['info_id'] = $id;
+                $node['level']   = $depth + 1;
+
+                $deeper = $this->levelTree($levels, $section, $fact, $depth + 1, $path);
+                if ($deeper) $node['children'] = $deeper;
+
+                $tree[] = $node;
+            }
+        }
+
         // «Без аналитики» на этом уровне — только если такие обороты есть.
         // Пустая строка в каждом разрезе мозолила бы глаза, а непроставленная
         // аналитика должна быть видна там, где она непроставлена
@@ -1009,18 +1076,7 @@ class BudgetController extends TenantController
      */
     private function levelUsed(string $type, string $section, array $fact, string $prefix): array
     {
-        $needle = $section . ':' . ($prefix === '' ? '' : $prefix . '.');
-        $seen   = [];
-
-        foreach ($fact as $key => $value) {
-            if (abs((float) $value) < 0.005) continue;
-            if (!str_starts_with($key, $needle)) continue;
-
-            $rest = substr($key, strlen($needle));
-            $id   = (int) preg_split('/[.:]/', $rest)[0];
-
-            $seen[$id] = true;
-        }
+        $seen = array_flip($this->levelSeenIds($section, $fact, $prefix));
 
         if (!$seen) return [];
 
@@ -1035,11 +1091,101 @@ class BudgetController extends TenantController
         // отчёта исчезать не должен: сумма по нему в оборотах осталась
         foreach (array_keys($seen) as $id) {
             if ($id !== self::UNASSIGNED && !isset($index[$id])) {
-                $nodes[] = ['id' => $id, 'code' => null, 'name' => "#{$id}", 'parent_id' => null, 'sort_order' => PHP_INT_MAX];
+                $nodes[] = $this->lostNode($id);
             }
         }
 
         return $nodes;
+    }
+
+    /**
+     * Строка под элемент, которого в дереве уровня нет.
+     *
+     * Такое бывает у выключенного или удалённого элемента: в справочнике его
+     * больше не показывают, а обороты по нему остались. Имя берём из
+     * справочника целиком, без отбора по активности, — «#154» в отчёте не
+     * говорит ничего.
+     */
+    private function lostNode(int $id): array
+    {
+        return [
+            'id'         => $id,
+            'code'       => null,
+            'name'       => $this->infoAny()[$id] ?? "#{$id}",
+            'parent_id'  => null,
+            'sort_order' => PHP_INT_MAX,
+        ];
+    }
+
+    /**
+     * Чужие для своего уровня id: раздел → номер уровня → id.
+     *
+     * Заполняется при сборке факта. В отчёте их суммы стоят в «Без статьи»
+     * этого уровня, и расшифровка той строки должна брать не только операции
+     * с пустым полем, но и эти.
+     *
+     * @var array<string, array<int, array<int, bool>>>
+     */
+    private array $foreignIds = [];
+
+    /** @return array<int, array<int, int>> уровень → список чужих id */
+    private function foreignIdsFor(string $section): array
+    {
+        return array_map(
+            fn(array $ids) => array_map('intval', array_keys($ids)),
+            $this->foreignIds[$section] ?? [],
+        );
+    }
+
+    /**
+     * Вид справочника у каждого элемента: id → type.
+     *
+     * Весь справочник разом и без отбора по активности: нужен он для проверки
+     * «тот ли это вид», а выключенный элемент вида не меняет. Таблица
+     * маленькая, рядом её так же читают целиком.
+     */
+    private function infoTypes(): array
+    {
+        return $this->infoTypes ??= DB::connection($this->dbName)
+            ->table('info')->pluck('type', 'id')->all();
+    }
+
+    /** @var array<int, string>|null */
+    private ?array $infoTypes = null;
+
+    /**
+     * Строки справочника, которых нет в дереве отчёта, — выключенные и
+     * удалённые. Нужны, чтобы их обороты не исчезали: id → имя.
+     */
+    private function infoAny(): array
+    {
+        return $this->infoAny ??= DB::connection($this->dbName)
+            ->table('info')->pluck('name', 'id')->all();
+    }
+
+    /** @var array<int, string>|null */
+    private ?array $infoAny = null;
+
+    /**
+     * id, встреченные в факте на этом уровне: первый сегмент пути после
+     * префикса. Одно правило на линейный уровень и на страховку в дереве.
+     *
+     * @return array<int, int>
+     */
+    private function levelSeenIds(string $section, array $fact, string $prefix): array
+    {
+        $needle = $section . ':' . ($prefix === '' ? '' : $prefix . '.');
+        $seen   = [];
+
+        foreach ($fact as $key => $value) {
+            if (abs((float) $value) < 0.005) continue;
+            if (!str_starts_with($key, $needle)) continue;
+
+            $rest = substr($key, strlen($needle));
+            $seen[(int) preg_split('/[.:]/', $rest)[0]] = true;
+        }
+
+        return array_keys($seen);
     }
 
     /** Плоский справочник одного вида: id → строка, в порядке справочника */
@@ -1090,7 +1236,7 @@ class BudgetController extends TenantController
                 ->whereNull('deleted_at')
                 ->where('is_active', true)
                 ->orderBy('sort_order')->orderBy('name')
-                ->get(['id', 'parent_id', 'code', 'name', 'sort_order', 'is_variable']);
+                ->get(['id', 'parent_id', 'code', 'name', 'sort_order', 'expense_kind']);
 
             $this->infoTrees[$type] = $this->buildTree($rows);
         }
@@ -1102,25 +1248,25 @@ class BudgetController extends TenantController
     private array $infoTrees = [];
 
     /**
-     * Половина дерева статей — переменные или постоянные.
+     * Часть дерева статей одного вида — переменные, постоянные или инвестиции.
      *
-     * Статья попадает в половину по собственной отметке, а не по родительской:
+     * Статья попадает в свою часть по собственному виду, а не по родительскому:
      * у «02 Цех» налоги переменные, а расходы на команду постоянные, и в
-     * отчёте он стоит в обеих половинах с разными детьми. Поэтому родитель,
+     * отчёте он стоит в обеих частях с разными детьми. Поэтому родитель,
      * которому самому здесь не место, остаётся подпоркой ради вложенности.
      *
      * Подпорка помечается `scaffold`, и это не украшение: собственную сумму
      * такой строки приплюсовывать здесь нельзя — она принадлежит другой
-     * половине и иначе сосчиталась бы дважды. Отчёт суммирует по потомкам,
+     * части и иначе сосчиталась бы дважды. Отчёт суммирует по потомкам,
      * пропуская подпорки.
      */
-    private function expenseBucket(array $nodes, bool $variable): array
+    private function expenseBucket(array $nodes, string $kind): array
     {
         $out = [];
 
         foreach ($nodes as $node) {
-            $children = $this->expenseBucket($node['children'] ?? [], $variable);
-            $mine     = !empty($node['is_variable']) === $variable;
+            $children = $this->expenseBucket($node['children'] ?? [], $kind);
+            $mine     = ($node['expense_kind'] ?? 'fixed') === $kind;
 
             if (!$mine && !$children) continue;
 
@@ -1190,14 +1336,25 @@ class BudgetController extends TenantController
     {
         // БДР: список разделов, у каждого своё дерево
         if (isset($articles[0]['group'])) {
-            // Раздел может быть показан двумя группами — расходы переменные и
-            // постоянные. «Без статьи» кладём в последнюю: во-первых, иначе
-            // одна сумма встала бы в обе, во-вторых, неразнесённое по смыслу
-            // постоянное — переменным его никто не отмечал
-            $last = [];
-            foreach ($articles as $i => $group) $last[$group['group']] = $i;
+            // Раздел может быть показан несколькими группами — расходы
+            // переменные, постоянные и инвестиционные. «Без статьи» кладём
+            // ровно в одну: иначе одна сумма встала бы в каждую. Выбираем
+            // постоянные — неразнесённое по смыслу постоянное, переменным или
+            // инвестицией его никто не отмечал
+            $where = [];
+            foreach ($articles as $i => $group) {
+                $section = $group['group'];
 
-            foreach ($last as $section => $i) {
+                if ($group['key'] === self::EXPENSE_GROUPS['fixed'][0]) {
+                    $where[$section] = $i;
+                    continue;
+                }
+
+                // Раздел без разделения — единственная группа и есть нужная
+                $where[$section] ??= $i;
+            }
+
+            foreach ($where as $section => $i) {
                 if ($this->hasUnassigned($fact, $section)) {
                     $articles[$i]['items'][] = $this->unassignedNode();
                 }
@@ -1230,9 +1387,9 @@ class BudgetController extends TenantController
                     'parent_id'  => $item->parent_id,
                     'sort_order' => $item->sort_order ?? 0,
                 ];
-                // Есть только у статей расходов — по ней делится БДР
-                if (property_exists($item, 'is_variable')) {
-                    $node['is_variable'] = (bool) $item->is_variable;
+                // Есть только у статей расходов — по нему делится БДР
+                if (property_exists($item, 'expense_kind')) {
+                    $node['expense_kind'] = $item->expense_kind ?: 'fixed';
                 }
                 if (!empty($children)) {
                     $node['children'] = $children;
