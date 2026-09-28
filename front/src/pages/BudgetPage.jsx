@@ -13,6 +13,18 @@ import { localDate } from '../utils/period'
 import { INFO_LABELS as INFO_TYPE_LABEL, EXPENSE_KINDS, EXPENSE_KIND_GROUP } from '../utils/infoLabels'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
+/**
+ * Короткие подписи видов для строк отчёта.
+ *
+ * В справочниках вид называется полно («Склад/Отдел», «Касса/Счёт»), а в
+ * строке бюджета подпись стоит рядом с названием статьи и должна быть как
+ * можно короче. Остальные виды берутся из общего списка как есть.
+ */
+const LEVEL_LABEL = {
+  department: 'Отдел',
+  cash:       'Касса',
+}
+
 /** Группа разделённых расходов → вид статьи, который в ней живёт */
 const kindOfGroup = (groupKey) =>
   Object.keys(EXPENSE_KIND_GROUP).find(k => EXPENSE_KIND_GROUP[k] === groupKey) || 'fixed'
@@ -476,6 +488,19 @@ export default function BudgetPage() {
     if (section === 'revenue' || section === 'cost') return 'revenue'
     if (section === 'expenses') return 'expenses'
     return 'flow' // ДДС
+  }
+
+  /**
+   * Вид аналитики у строки: «Отдел», «Статья расхода».
+   *
+   * По имени вид не угадать — в одной базе отдел и статья дохода называются
+   * одинаково («02 Цех»), да и статья расхода «01 Администрация» повторяет имя
+   * отдела. Подпись снимает вопрос в каждой строке, не заставляя сверяться с
+   * шапкой группы.
+   */
+  const levelLabel = (groupKey, level) => {
+    const type = groupLevels(groupKey)[(level || 1) - 1]?.type
+    return type ? (LEVEL_LABEL[type] || INFO_TYPE_LABEL[type] || type) : ''
   }
 
   const openEditArticle = (article) => {
@@ -1143,6 +1168,16 @@ export default function BudgetPage() {
                           <td className="sticky left-0 z-10 bg-gray-100 px-3 py-2 font-semibold text-gray-700">
                             <div className="flex items-center gap-2">
                               {article.name}
+                              {/* Чем раскладывается раздел — одной строкой в
+                                  шапке группы, а не подписью у каждой статьи */}
+                              {groupLevels(article.groupKey).length > 0 && (
+                                <span className="text-[10px] font-normal text-gray-400"
+                                  title="Разрез отчёта — настраивается в шапке бюджета">
+                                  {groupLevels(article.groupKey)
+                                    .map(l => LEVEL_LABEL[l.type] || INFO_TYPE_LABEL[l.type] || l.type)
+                                    .join(' → ')}
+                                </span>
+                              )}
                               <button
                                 onClick={() => openAddArticle(infoTypeFromSection(article.section), article.groupKey, kindOfGroup(article.groupKey))}
                                 className="text-[10px] font-normal text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded"
@@ -1221,7 +1256,15 @@ export default function BudgetPage() {
                           )}
                           {/* Длинное название обрезаем, а не раздвигаем им
                               колонку: полное видно в подсказке */}
-                          <span title={unassigned ? 'Обороты, которым не проставлена статья. Нажмите на сумму — откроются эти операции' : article.name}
+                          {/* Вид аналитики — только в подсказке: подпись у
+                              каждой строки спорила с названием, а вопрос «что
+                              это за строка» возникает не на каждой */}
+                          <span title={[
+                            unassigned
+                              ? 'Обороты, которым не проставлена статья. Нажмите на сумму — откроются эти операции'
+                              : article.name,
+                            levelLabel(article.groupKey, article.level),
+                          ].filter(Boolean).join(' · ')}
                             className={`truncate ${article.depth === 0 ? 'font-medium' : ''} ${unassigned ? 'text-amber-800' : ''}`}>
                             {article.depth > 0 && !isParent && !unassigned && <span className="text-gray-300 mr-1">└</span>}
                             {unassigned && <span className="text-amber-500 mr-1">⚠</span>}
