@@ -130,6 +130,9 @@ class BulkOperationsController extends TenantController
             'ids.*'            => 'integer',
             'side'             => 'nullable|string|in:debit,credit,any',
             'set'              => 'required|array|min:1',
+            // Дата приходит календарным днём: время у каждой операции остаётся
+            // своё, его переносом мы не трогаем
+            'set.date'         => 'nullable|date',
             'set.in_bi_id'     => 'nullable|integer|exists:' . $this->dbName . '.balance_items,id',
             'set.out_bi_id'    => 'nullable|integer|exists:' . $this->dbName . '.balance_items,id',
             'set.project_id'   => 'nullable|integer|exists:' . $this->dbName . '.projects,id',
@@ -150,8 +153,8 @@ class BulkOperationsController extends TenantController
 
         $set = array_intersect_key($data['set'], array_flip(BulkOperationEditor::FIELDS));
 
-        // Счета, проект и признак проведения — «очистить» для них не бывает
-        foreach (['in_bi_id', 'out_bi_id', 'project_id', 'is_posted'] as $f) {
+        // Дата, счета, проект и признак проведения — «очистить» для них не бывает
+        foreach (['date', 'in_bi_id', 'out_bi_id', 'project_id', 'is_posted'] as $f) {
             if (array_key_exists($f, $set) && $set[$f] === null) unset($set[$f]);
         }
         if (array_key_exists('is_posted', $set)) $set['is_posted'] = (bool) $set['is_posted'];

@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\DB;
 final class BulkOperationEditor
 {
     /** Плоские поля операции, доступные для массовой правки. */
-    public const FIELDS = ['in_bi_id', 'out_bi_id', 'project_id', 'content', 'note', 'is_posted'];
+    public const FIELDS = ['date', 'in_bi_id', 'out_bi_id', 'project_id', 'content', 'note', 'is_posted'];
 
     public const ANALYTIC_TYPES = ['partner', 'employee', 'department', 'cash', 'flow', 'expenses', 'product', 'revenue'];
 
@@ -118,6 +118,11 @@ final class BulkOperationEditor
                 ->first(['id', 'date']);
             if (!$op) { $skipped++; continue; }                       // операция удалена
             if ($lockDate && substr((string) $op->date, 0, 10) <= $lockDate) { $skipped++; continue; }
+
+            // Правка могла вынести операцию из закрытого периода — возвращать
+            // её туда откатом нельзя, иначе запрет обходился бы в два шага
+            if ($lockDate && isset($before['date'])
+                && substr((string) $before['date'], 0, 10) <= $lockDate) { $skipped++; continue; }
 
             $wasValues = (array) DB::connection($db)->table('operations')->where('id', $id)->first();
 
@@ -217,6 +222,20 @@ final class BulkOperationEditor
             }
 
             $patch = $flat;
+
+            // Дата: у каждой операции своё время, и менять его мы не просили.
+            // Поэтому берём день из правки, а часы оставляем прежние — порядок
+            // операций внутри дня сохраняется
+            if (array_key_exists('date', $patch)) {
+                $patch['date'] = $this->movedDate((string) $op->date, (string) $flat['date']);
+
+                // Перенести операцию В закрытый период нельзя — это та же
+                // защита, что и запрет править то, что уже в нём лежит
+                if ($lock && substr($patch['date'], 0, 10) <= $lock) {
+                    $plan[] = ['id' => $op->id, 'skip' => 'locked'];
+                    continue;
+                }
+            }
 
             // Счета после правки — от них зависит и раскладка аналитики
             $eff = [
@@ -336,6 +355,25 @@ final class BulkOperationEditor
         return $out;
     }
 
+    /**
+     * Новая дата операции: день из правки, время — прежнее.
+     *
+     * Если в правке указали и время (из формы так не приходит, но API это
+     * позволяет), берём её целиком: явно заданное время важнее прежнего.
+     */
+    private function movedDate(string $current, string $wanted): string
+    {
+        $wanted = trim(str_replace('T', ' ', $wanted));
+
+        if (strlen($wanted) > 10) {
+            return substr($wanted . ':00', 0, 19);
+        }
+
+        $time = strlen($current) > 10 ? substr($current, 11, 8) : '00:00:00';
+
+        return substr($wanted, 0, 10) . ' ' . ($time ?: '00:00:00');
+    }
+
     /** null и '' считаем одним и тем же «пусто», числа сравниваем как строки. */
     private function same($a, $b): bool
     {
@@ -350,6 +388,11 @@ final class BulkOperationEditor
     private function describe(string $db, array $set, string $side): string
     {
         $parts = [];
+
+        if (array_key_exists('date', $set)) {
+            $day = substr(str_replace('T', ' ', (string) $set['date']), 0, 10);
+            $parts[] = 'дата → ' . implode('.', array_reverse(explode('-', $day)));
+        }
 
         foreach (['in_bi_id' => 'счёт дебета', 'out_bi_id' => 'счёт кредита'] as $f => $label) {
             if (!array_key_exists($f, $set)) continue;

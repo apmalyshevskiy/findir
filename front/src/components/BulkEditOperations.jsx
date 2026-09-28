@@ -5,6 +5,7 @@ import { previewBulk, applyBulkEdit, revertBulkEdit } from '../api/bulkOperation
 // Реквизиты, доступные для массовой правки. Новый — одна строка здесь
 // и одна в BulkOperationEditor::FIELDS на бэкенде.
 const FIELDS = [
+  { key: 'date',       label: 'Дата',         kind: 'date' },
   { key: 'in_bi_id',   label: 'Счёт дебета',  kind: 'account' },
   { key: 'out_bi_id',  label: 'Счёт кредита', kind: 'account' },
   { key: 'project_id', label: 'Проект',       kind: 'project' },
@@ -47,6 +48,90 @@ const flatInfo = (items) => {
 
   // Если у части записей родитель вне выборки — не теряем их
   return out.length === items.length ? out : items.map(i => ({ ...i, depth: 0 }))
+}
+
+const ic = 'w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+
+/**
+ * Строка одного реквизита: галочка «менять» и само поле.
+ *
+ * Объявлена на уровне модуля, а не внутри окна. Внутри React считал бы её на
+ * каждом рендере новым типом компонента и пересоздавал поле целиком: ввод
+ * терял фокус после каждого нажатия, а календарь у даты закрывался сразу
+ * после открытия.
+ */
+const Row = ({ label, on, onToggle, children }) => (
+  <div className="flex items-center gap-3 py-1.5">
+    <label className="flex items-center gap-2 w-44 flex-shrink-0 cursor-pointer">
+      <input type="checkbox" checked={on} onChange={onToggle}
+        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+      <span className={`text-sm ${on ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>{label}</span>
+    </label>
+    <div className="flex-1 min-w-0">
+      {on ? children : <div className="text-xs text-gray-300">не меняется</div>}
+    </div>
+  </div>
+)
+
+/** Сегодня в виде YYYY-MM-DD — без часовых поясов, по местному календарю */
+const today = () => {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** Последнее число месяца: `months = 0` — того, что выбран, `-1` — предыдущего */
+const monthEdge = (iso, months) => {
+  const base = iso ? new Date(iso + 'T00:00:00') : new Date()
+  const d = new Date(base.getFullYear(), base.getMonth() + months + 1, 0)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/**
+ * Ввод даты переноса: поле, быстрые кнопки и проверка глазами.
+ *
+ * Кнопки не украшение: массовый перенос почти всегда означает «поставить
+ * концом месяца» или «сегодняшним днём», и попадать в них мышью по календарю
+ * дольше, чем нажать. Выбранное показываем словами с днём недели — по
+ * «01.04.2026, среда» ошибку в месяце видно сразу, а по «2026-04-01» нет.
+ */
+const DateField = ({ value, onChange }) => {
+  const human = (iso) => {
+    if (!iso) return null
+    const d = new Date(iso + 'T00:00:00')
+    if (isNaN(d)) return null
+
+    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric', weekday: 'long' })
+  }
+
+  const quick = [
+    ['Сегодня',        () => today()],
+    ['Конец месяца',   () => monthEdge(value, 0)],
+    ['Конец прошлого', () => monthEdge(value, -1)],
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input type="date" className={`${ic} w-44`} value={value ?? ''}
+          onChange={e => onChange(e.target.value)} />
+
+        {quick.map(([label, calc]) => (
+          <button key={label} type="button" onClick={() => onChange(calc())}
+            className="px-2 py-1 rounded-lg border border-gray-200 text-[11px] text-gray-600 hover:border-blue-300 hover:text-blue-700">
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[11px] text-gray-400 mt-1">
+        {human(value)
+          ? <>Перенести на <span className="text-gray-600">{human(value)}</span>. Время у каждой операции останется прежним</>
+          : 'Выберите день. Время у каждой операции останется прежним, перенести в закрытый период нельзя'}
+      </p>
+    </div>
+  )
 }
 
 /**
@@ -154,24 +239,11 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
     }
   }
 
-  const ic = 'w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-
-  const Row = ({ fieldKey, label, children }) => (
-    <div className="flex items-center gap-3 py-1.5">
-      <label className="flex items-center gap-2 w-44 flex-shrink-0 cursor-pointer">
-        <input type="checkbox" checked={enabled.has(fieldKey)} onChange={() => toggle(fieldKey)}
-          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-        <span className={`text-sm ${enabled.has(fieldKey) ? 'text-gray-800 font-medium' : 'text-gray-500'}`}>
-          {label}
-        </span>
-      </label>
-      <div className="flex-1 min-w-0">
-        {enabled.has(fieldKey) ? children : <div className="text-xs text-gray-300">не меняется</div>}
-      </div>
-    </div>
-  )
-
   const skipList = Object.entries((result || preview)?.skipped || {})
+
+  const rowProps = (key, label) => ({
+    label, on: enabled.has(key), onToggle: () => toggle(key),
+  })
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -214,7 +286,7 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
             <div className="flex-1 overflow-y-auto p-5">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Реквизиты</div>
               {FIELDS.map(f => (
-                <Row key={f.key} fieldKey={f.key} label={f.label}>
+                <Row key={f.key} {...rowProps(f.key, f.label)}>
                   {f.kind === 'account' && (
                     <select className={ic} value={values[f.key] ?? ''}
                       onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value ? Number(e.target.value) : '' }))}>
@@ -230,6 +302,10 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
                       <option value="">— выберите проект —</option>
                       {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
+                  )}
+                  {f.kind === 'date' && (
+                    <DateField value={values[f.key] ?? ''}
+                      onChange={val => setValues(v => ({ ...v, [f.key]: val }))} />
                   )}
                   {f.kind === 'text' && (
                     <input type="text" className={ic} value={values[f.key] ?? ''}
@@ -249,7 +325,7 @@ export default function BulkEditOperations({ ids, balanceItems, projects, onClos
 
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mt-5 mb-2">Аналитика</div>
               {ANALYTICS.map(a => (
-                <Row key={a.key} fieldKey={'a:' + a.key} label={a.label}>
+                <Row key={a.key} {...rowProps('a:' + a.key, a.label)}>
                   <select className={ic} value={values['a:' + a.key] ?? ''}
                     onChange={e => setValues(v => ({ ...v, ['a:' + a.key]: e.target.value }))}>
                     <option value="">— очистить —</option>

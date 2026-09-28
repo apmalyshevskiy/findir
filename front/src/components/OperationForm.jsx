@@ -50,13 +50,21 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
 
   const isEdit = !!(op && op.id)
 
+  /** Подпись в списке недавних: сумма и содержание — по ним операцию и узнают */
+  const remember = (id, amount, content) => {
+    if (!id) return
+
+    const parts = [Number(amount || 0).toLocaleString('ru-RU'), content].filter(Boolean)
+    pushRecent('operation', id, parts.join(' · ') || `Операция #${id}`)
+  }
+
   // Открыли на просмотр — значит, к ней захотят вернуться. Пишем при открытии,
-  // а не при сохранении: список нужен как раз для тех, что закрыли не сохранив
+  // а не только при сохранении: список нужен как раз для тех, что закрыли не
+  // сохранив
   useEffect(() => {
     if (!isEdit) return
 
-    const parts = [Number(op.amount).toLocaleString('ru-RU'), op.content].filter(Boolean)
-    pushRecent('operation', op.id, parts.join(' · ') || `Операция #${op.id}`)
+    remember(op.id, op.amount, op.content)
   }, [op?.id])
   // Операцию, рождённую документом, сервер править не даст — и правильно:
   // документ пересоздаёт свои проводки при каждом проведении
@@ -263,7 +271,15 @@ export default function OperationForm({ operation, initial, onSuccess, onCancel,
         ? await updateOperation(op.id, payload)
         : await createOperation(payload)
 
-      onSuccess(res?.data?.data?.id ?? op?.id ?? null)
+      const savedId = res?.data?.data?.id ?? op?.id ?? null
+
+      // Только что заведённая операция тоже «недавняя»: при открытии её в
+      // списке не отметить — id ещё нет, он появляется здесь, в ответе
+      // сервера. Без этого свежая операция была единственной, к которой
+      // нельзя было вернуться одним нажатием
+      remember(savedId, form.amount, form.content)
+
+      onSuccess(savedId)
     } catch (err) {
       const errors = err.response?.data?.errors
       setError(errors ? Object.values(errors).flat().join(', ') : err.response?.data?.message || 'Ошибка')

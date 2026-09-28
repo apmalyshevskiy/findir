@@ -280,13 +280,18 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
   const [type, setType] = useState(typeProp || null)
   const [tab, setTab]   = useState('fields')   // 'fields' | 'changes' | 'history'
 
+  /** Подпись документа в списке недавних: вид, номер и контрагент */
+  const rememberDoc = (d) => {
+    if (!d?.id) return
+
+    const parts = [type?.name, d.number ? `№ ${d.number}` : null, d.info_1_name].filter(Boolean)
+    pushRecent('document', d.id, parts.join(' ') || `Документ #${d.id}`)
+  }
+
   // Открытый документ попадает в «Недавние» — вернуться к нему после
   // случайного закрытия иначе значит искать его в списке заново
   useEffect(() => {
-    if (!doc?.id) return
-
-    const parts = [type?.name, doc.number ? `№ ${doc.number}` : null, doc.info_1_name].filter(Boolean)
-    pushRecent('document', doc.id, parts.join(' ') || `Документ #${doc.id}`)
+    rememberDoc(doc)
   }, [doc?.id, type?.name])
 
   useEffect(() => {
@@ -601,6 +606,11 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
         const p = await postDocument(saved.id)
         saved = p.data.data
       }
+
+      // Только что заведённый документ тоже «недавний». Эффект выше сработать
+      // не успевает: при сохранении с закрытием формы id появляется и исчезает
+      // в одном шаге, а вернуться к документу хотят как раз после закрытия
+      rememberDoc(saved)
 
       if (close) {
         onSave()
