@@ -102,8 +102,10 @@ export default function Layout({ children }) {
     {
       label: 'Отчётность',
       children: [
-        { path: '/dashboard',     label: 'Дашборд',  section: 'dashboard' },
-        { path: '/balance-sheet', label: 'Оборотка', section: 'reports' },
+        { path: '/dashboard',          label: 'Дашборд',         section: 'dashboard' },
+        { path: '/balance-sheet',      label: 'Оборотка',        section: 'reports' },
+        { path: '/reports/balance',    label: 'Баланс',          section: 'reports' },
+        { path: '/reports/cash-flow',  label: 'Движение денег',  section: 'reports' },
       ],
     },
     {

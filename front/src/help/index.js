@@ -27,6 +27,7 @@ const ARTICLES = [
   { slug: 'operations',  group: 'Учёт',          routes: ['/operations'] },
   { slug: 'documents',   group: 'Учёт',          routes: ['/documents', '/document-types'] },
   { slug: 'osv',         group: 'Отчётность',    routes: ['/balance-sheet'] },
+  { slug: 'reports',     group: 'Отчётность',    routes: ['/reports/balance', '/reports/cash-flow'] },
   { slug: 'budget',      group: 'Планирование',  routes: ['/budget', '/payment-calendar'] },
   { slug: 'statement',   group: 'Обмен данными', routes: ['/bank-statement', '/classification-rules'] },
   { slug: 'onec',        group: 'Обмен данными', routes: ['/onec-postings'] },

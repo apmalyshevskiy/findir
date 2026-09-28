@@ -52,6 +52,7 @@ class HistoryPresenter
         'cogs_bi_id'    => 'Счёт себестоимости',
         'revenue_item_id' => 'Статья дохода',
         'expense_kind'  => 'Вид расхода',
+        'flow_kind'     => 'Вид деятельности',
     ];
 
     /** Вид статьи расхода — в журнале он должен читаться словом, а не кодом */
@@ -59,6 +60,13 @@ class HistoryPresenter
         'fixed'      => 'постоянная',
         'variable'   => 'переменная',
         'investment' => 'инвестиционная',
+    ];
+
+    /** Вид деятельности у статьи ДДС — тоже словом */
+    private const FLOW_KINDS = [
+        'operating' => 'операционная',
+        'investing' => 'инвестиционная',
+        'financing' => 'финансовая',
     ];
 
     /**
@@ -476,6 +484,7 @@ class HistoryPresenter
         if (in_array($field, ['is_posted', 'is_active'], true)) return $value ? 'да' : 'нет';
 
         if ($field === 'expense_kind') return self::EXPENSE_KINDS[$value] ?? (string) $value;
+        if ($field === 'flow_kind')    return self::FLOW_KINDS[$value] ?? (string) $value;
 
         if (is_numeric($value)) {
             if (str_contains($field, 'bi_id')) return $biNames[(int) $value] ?? '#' . $value;

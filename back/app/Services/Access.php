@@ -70,6 +70,7 @@ class Access
             'documents'              => 'documents',
 
             'balance-sheet'          => 'reports',
+            'reports'                => 'reports',
 
             'bank-statements'        => 'exchange',
             'integrations'           => 'exchange',

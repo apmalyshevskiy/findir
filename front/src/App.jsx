@@ -5,6 +5,8 @@ import DashboardPage from './pages/DashboardPage'
 import OperationsPage from './pages/OperationsPage'
 import InfoPage from './pages/InfoPage'
 import BalanceSheetPage from './pages/BalanceSheetPage'
+import BalanceReportPage from './pages/BalanceReportPage'
+import CashFlowReportPage from './pages/CashFlowReportPage'
 import HealthPage from './pages/HealthPage'
 import BankStatementPage from './pages/BankStatementPage'
 import DocumentsPage from './pages/DocumentsPage'
@@ -44,6 +46,8 @@ export default function App() {
         <Route path="/operations"           element={<PrivateRoute><OperationsPage /></PrivateRoute>} />
         <Route path="/info"                 element={<PrivateRoute><InfoPage /></PrivateRoute>} />
         <Route path="/balance-sheet"        element={<PrivateRoute><BalanceSheetPage /></PrivateRoute>} />
+        <Route path="/reports/balance"      element={<PrivateRoute><BalanceReportPage /></PrivateRoute>} />
+        <Route path="/reports/cash-flow"    element={<PrivateRoute><CashFlowReportPage /></PrivateRoute>} />
         <Route path="/bank-statement"       element={<PrivateRoute><BankStatementPage /></PrivateRoute>} />
         <Route path="/documents"            element={<PrivateRoute><DocumentsPage /></PrivateRoute>} />
         <Route path="/budget"               element={<PrivateRoute><BudgetPage /></PrivateRoute>} />

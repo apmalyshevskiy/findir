@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\OperationsController;
 use App\Http\Controllers\Api\V1\BalanceItemsController;
 use App\Http\Controllers\Api\V1\BalanceSheetController;
+use App\Http\Controllers\Api\V1\ReportsController;
 use App\Http\Controllers\Api\V1\InfoController;
 use App\Http\Controllers\Api\V1\BankStatementController;
 use App\Http\Controllers\Api\V1\ProjectsController;
@@ -112,6 +113,10 @@ Route::prefix('v1')->group(function () {
     Route::put('/balance-items/{id}',    [BalanceItemsController::class, 'update']);
     Route::delete('/balance-items/{id}', [BalanceItemsController::class, 'destroy']);
     Route::get('/balance-sheet',      [BalanceSheetController::class, 'index']);
+
+    // Отчётность для собственника: что у компании есть и куда ушли деньги
+    Route::get('/reports/balance',    [ReportsController::class, 'balance']);
+    Route::get('/reports/cash-flow',  [ReportsController::class, 'cashFlow']);
 
     // Шаблоны наполнения справочников (кнопка «Заполнить»)
     Route::get('/dictionary-templates',              [DictionaryTemplatesController::class, 'index']);

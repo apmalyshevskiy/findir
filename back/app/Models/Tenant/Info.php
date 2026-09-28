@@ -24,7 +24,7 @@ class Info extends Model
         'inn',
         'default_expense_id',
         'parent_id', 'sort_order', 'is_active',
-        'expense_kind',
+        'expense_kind', 'flow_kind',
     ];
 
     /**
@@ -32,6 +32,13 @@ class Info extends Model
      * промежуточные прибыли. У остальных типов справочника смысла не имеют.
      */
     public const EXPENSE_KINDS = ['fixed', 'variable', 'investment'];
+
+    /**
+     * Виды деятельности у статьи ДДС — разделы ОДДС. Порядок тот, в котором
+     * разделы идут в отчёте: сначала основная работа, потом вложения, потом
+     * привлечение и возврат денег.
+     */
+    public const FLOW_KINDS = ['operating', 'investing', 'financing'];
 
     protected $casts = [
         'is_active' => 'boolean',

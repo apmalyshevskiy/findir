@@ -6,7 +6,7 @@ import InfoTypeBadge from '../components/InfoTypeBadge'
 import InfoSelect from '../components/InfoSelect'
 import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
-import { EXPENSE_KINDS, EXPENSE_KIND_HINT } from '../utils/infoLabels'
+import { EXPENSE_KINDS, EXPENSE_KIND_HINT, FLOW_KINDS, FLOW_KIND_HINT } from '../utils/infoLabels'
 import { pushRecent } from '../utils/recent'
 
 const INFO_TYPES = [
@@ -52,7 +52,7 @@ const flattenTree = (nodes, depth = 0, expandedSet = new Set()) => {
   return result
 }
 
-const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '', expense_kind: 'fixed' }
+const emptyForm = { name: '', type: 'partner', code: '', description: '', inn: '', parent_id: '', sort_order: 0, default_expense_id: '', expense_kind: 'fixed', flow_kind: 'operating' }
 
 /**
  * Выбор элемента справочника: родитель и статья расхода по умолчанию.
@@ -153,6 +153,7 @@ export default function InfoPage() {
       sort_order:  item.sort_order || 0,
       default_expense_id: item.default_expense_id || '',
       expense_kind: item.expense_kind || 'fixed',
+      flow_kind:    item.flow_kind || 'operating',
     })
     setShowForm(true)
   }
@@ -174,6 +175,7 @@ export default function InfoPage() {
       // Вид держим только у статей расхода: у контрагента или кассы он
       // бессмыслен, а оставленный от прежнего типа сбил бы БДР
       expense_kind: form.type === 'expenses' ? (form.expense_kind || 'fixed') : 'fixed',
+      flow_kind:    form.type === 'flow' ? (form.flow_kind || 'operating') : 'operating',
     }
 
     try {
@@ -518,6 +520,24 @@ export default function InfoPage() {
                   </select>
                   <p className="text-xs text-gray-400 mt-1">
                     {EXPENSE_KIND_HINT[form.expense_kind || 'fixed']}
+                  </p>
+                </div>
+              )}
+
+              {/* Вид деятельности — только у статьи ДДС. По нему ОДДС
+                  раскладывает движение денег на три раздела; на проводки и на
+                  остальные отчёты он не влияет */}
+              {form.type === 'flow' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Вид деятельности</label>
+                  <select
+                    value={form.flow_kind || 'operating'}
+                    onChange={e => setForm({ ...form, flow_kind: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    {FLOW_KINDS.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {FLOW_KIND_HINT[form.flow_kind || 'operating']}
                   </p>
                 </div>
               )}
