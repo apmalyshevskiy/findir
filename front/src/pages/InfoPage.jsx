@@ -4,6 +4,7 @@ import Layout from '../components/Layout'
 import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
 import InfoTypeBadge from '../components/InfoTypeBadge'
 import InfoSelect from '../components/InfoSelect'
+import BulkEditInfo from '../components/BulkEditInfo'
 import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
 import { EXPENSE_KINDS, EXPENSE_KIND_HINT, FLOW_KINDS, FLOW_KIND_HINT } from '../utils/infoLabels'
@@ -90,8 +91,22 @@ export default function InfoPage() {
   const [copiedId, setCopiedId] = useState(null)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  // Выбранные для массовой правки. Живут в пределах одного справочника:
+  // родитель и вид у разных справочников разные, и общей правки для них нет
+  const [picked, setPicked] = useState(() => new Set())
+  const [showBulk, setShowBulk] = useState(false)
 
   useEffect(() => { loadItems() }, [filterType])
+
+  // Сменили справочник или начали искать — выделение снимаем: оно относилось
+  // к тому, что было на экране
+  useEffect(() => { setPicked(new Set()) }, [filterType])
+
+  const togglePick = (id) => setPicked(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   /**
    * Открыть элемент по ссылке `?open=123` — из журнала изменений и недавних.
@@ -291,6 +306,20 @@ export default function InfoPage() {
         ))}
       </div>
 
+      {/* Массовая правка — только внутри одного справочника: родитель из
+          чужого справочника сломал бы дерево, а вид есть не у всех */}
+      {picked.size > 0 && (
+        <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
+          <span className="text-sm text-blue-900 font-medium">Выбрано: {picked.size}</span>
+          <button onClick={() => setShowBulk(true)}
+            className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-medium hover:bg-blue-800">
+            Изменить выбранные
+          </button>
+          <button onClick={() => setPicked(new Set())}
+            className="text-xs text-blue-700 hover:text-blue-900">Снять выделение</button>
+        </div>
+      )}
+
       {/* Список */}
       {loading ? (
         <div className="text-center py-12 text-gray-400">Загрузка...</div>
@@ -326,7 +355,21 @@ export default function InfoPage() {
           return (
             <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
               <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-700">{typeLabel}</span>
+                <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  {/* Отмечать можно, только когда на экране один справочник:
+                      массовая правка работает внутри одного вида */}
+                  {filterType && (
+                    <input type="checkbox" title="Выбрать все показанные"
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={flat.length > 0 && flat.every(i => picked.has(i.id))}
+                      onChange={e => setPicked(prev => {
+                        const next = new Set(prev)
+                        flat.forEach(i => e.target.checked ? next.add(i.id) : next.delete(i.id))
+                        return next
+                      })} />
+                  )}
+                  {typeLabel}
+                </span>
                 <span className="text-xs text-gray-400">
                   {searching
                     ? `${typeItems.length} из ${items.filter(i => i.type === type).length}`
@@ -336,9 +379,20 @@ export default function InfoPage() {
               <table className="w-full">
                 <tbody>
                   {flat.map(item => (
-                    <tr key={item.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50 group">
+                    <tr key={item.id}
+                      className={`border-b border-gray-50 last:border-0 hover:bg-gray-50 group ${
+                        picked.has(item.id) ? 'bg-blue-50/60' : ''
+                      }`}>
+                      {filterType && (
+                        <td className="py-2.5 pl-6 w-8">
+                          <input type="checkbox"
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={picked.has(item.id)} onChange={() => togglePick(item.id)} />
+                        </td>
+                      )}
                       <td className="py-2.5 pr-4">
-                        <div className="flex items-center" style={{ paddingLeft: `${24 + item.depth * 20}px` }}>
+                        {/* Слева уже стоит колонка с галочкой — отступ ей не нужен */}
+                        <div className="flex items-center" style={{ paddingLeft: `${(filterType ? 4 : 24) + item.depth * 20}px` }}>
                           <div className="w-5 flex items-center justify-center flex-shrink-0 mr-1.5">
                             {item.children?.length > 0 ? (
                               <button onClick={() => toggleExpand(type, item.id)}
@@ -409,6 +463,17 @@ export default function InfoPage() {
             </div>
           )
         })
+      )}
+
+      {/* Массовая правка выбранных */}
+      {showBulk && (
+        <BulkEditInfo
+          ids={[...picked]}
+          type={filterType}
+          items={items.filter(i => i.type === filterType)}
+          onClose={() => setShowBulk(false)}
+          onApplied={() => { setPicked(new Set()); loadItems() }}
+        />
       )}
 
       {/* Шаблоны наполнения */}

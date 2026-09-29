@@ -8,6 +8,7 @@ use App\Models\Tenant\Info;
 use App\Models\Tenant\Operation;
 use App\Services\AccountScope;
 use App\Services\Documents\DocumentService;
+use App\Services\InfoReferences;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -116,11 +117,15 @@ final class HistoryRestorer
         // оказались бы в разрезе, который их не принимает
         $wasType = $snapshot['type'] ?? null;
         if ($wasType && $wasType !== $item->type) {
-            $used = $this->usedInOperations($id);
+            // Ссылки считает общая служба — то же правило, что запрещает смену
+            // справочника в карточке. Здесь оно раньше знало только про
+            // операции, и возврат версии проходил там, где правка не проходила
+            $refs = InfoReferences::count($this->conn, $id);
 
-            if ($used > 0) {
+            if ($refs) {
                 $problems[] = "В версии это «{$wasType}», сейчас «{$item->type}», "
-                    . "а на элемент уже ссылаются операции ($used). Смена вида сломала бы их разрезы";
+                    . 'а на элемент уже ссылаются: ' . InfoReferences::describe($refs)
+                    . '. Смена вида сломала бы их разрезы';
             }
         }
 
@@ -304,15 +309,6 @@ final class HistoryRestorer
             fn($mid) => "$label «" . ($names[$mid] ?? "#$mid") . "» удалён — сначала восстановите его",
             array_values($missing),
         );
-    }
-
-    private function usedInOperations(int $infoId): int
-    {
-        $q = DB::connection($this->conn)->table('operations')->whereNull('deleted_at');
-
-        return $q->where(function ($w) use ($infoId) {
-            foreach (self::OP_INFO_FIELDS as $f) $w->orWhere($f, $infoId);
-        })->count();
     }
 
     private function locked($date): bool

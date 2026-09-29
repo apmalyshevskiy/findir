@@ -115,6 +115,7 @@ class Access
     {
         return [
             'operations/bulk-preview',
+            'info/bulk-preview',
             'documents/calculate-cost',
             'backup/inspect',
             'bank-statements/parse',
