@@ -5,6 +5,7 @@ import DictionaryTemplatePicker from '../components/DictionaryTemplatePicker'
 import InfoTypeBadge from '../components/InfoTypeBadge'
 import InfoSelect from '../components/InfoSelect'
 import BulkEditInfo from '../components/BulkEditInfo'
+import InfoReferencesModal from '../components/InfoReferencesModal'
 import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
 import { EXPENSE_KINDS, EXPENSE_KIND_HINT, FLOW_KINDS, FLOW_KIND_HINT } from '../utils/infoLabels'
@@ -95,6 +96,9 @@ export default function InfoPage() {
   // родитель и вид у разных справочников разные, и общей правки для них нет
   const [picked, setPicked] = useState(() => new Set())
   const [showBulk, setShowBulk] = useState(false)
+  // Элемент, для которого смотрим ссылки. Считаем по требованию: узнать это
+  // для каждой строки списка — десятки запросов ради цифры, которую не просили
+  const [refsFor, setRefsFor] = useState(null)
 
   useEffect(() => { loadItems() }, [filterType])
 
@@ -452,6 +456,8 @@ export default function InfoPage() {
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 justify-end">
                           <button onClick={() => openEdit(item)}
                             className="text-xs text-blue-600 hover:text-blue-800">Изменить</button>
+                          <button onClick={() => setRefsFor(item)} title="Кто ссылается на элемент"
+                            className="text-xs text-gray-500 hover:text-gray-700">Ссылки</button>
                           <button onClick={() => handleDelete(item.id)}
                             className="text-xs text-red-400 hover:text-red-600">Удалить</button>
                         </div>
@@ -463,6 +469,11 @@ export default function InfoPage() {
             </div>
           )
         })
+      )}
+
+      {/* Где используется элемент */}
+      {refsFor && (
+        <InfoReferencesModal id={refsFor.id} name={refsFor.name} onClose={() => setRefsFor(null)} />
       )}
 
       {/* Массовая правка выбранных */}
@@ -659,16 +670,28 @@ export default function InfoPage() {
                   прошлое. Но раньше здесь истории не было вовсе — она жила
                   только в карточке из выпадающих списков */}
               {editItem && (
-                <div className="pt-3 border-t border-gray-100">
-                  {showHistory
-                    ? <ObjectHistory entity="info" id={editItem.id}
-                        /* Закрываем и перечитываем: в полях формы остались
-                           прежние значения, сохранение затёрло бы возврат */
-                        onRestored={() => { setShowForm(false); loadItems() }} />
-                    : <button type="button" onClick={() => setShowHistory(true)}
+                <div className="pt-3 border-t border-gray-100 space-y-2">
+                  <div className="flex items-center gap-4">
+                    {!showHistory && (
+                      <button type="button" onClick={() => setShowHistory(true)}
                         className="text-xs text-blue-700 hover:underline">
                         История изменений
-                      </button>}
+                      </button>
+                    )}
+                    {/* Рядом с историей нарочно: сюда приходят, когда карточка
+                        не даёт сменить справочник, — и первый вопрос «а кто
+                        держит?» */}
+                    <button type="button" onClick={() => setRefsFor(editItem)}
+                      className="text-xs text-blue-700 hover:underline">
+                      Где используется
+                    </button>
+                  </div>
+                  {showHistory && (
+                    <ObjectHistory entity="info" id={editItem.id}
+                      /* Закрываем и перечитываем: в полях формы остались
+                         прежние значения, сохранение затёрло бы возврат */
+                      onRestored={() => { setShowForm(false); loadItems() }} />
+                  )}
                 </div>
               )}
             </form>

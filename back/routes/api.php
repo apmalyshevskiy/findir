@@ -127,6 +127,8 @@ Route::prefix('v1')->group(function () {
     // Массовая правка элементов справочника — родитель и вид
     Route::post('/info/bulk-preview', [InfoController::class, 'bulkPreview']);
     Route::post('/info/bulk-update',  [InfoController::class, 'bulkUpdate']);
+    // Где используется элемент: сколько ссылок и какие именно
+    Route::get('/info/{id}/references', [InfoController::class, 'references']);
     Route::get('/info/{id}/history',  [InfoController::class, 'history']);
     Route::post('/info/{id}/restore/{version}', [InfoController::class, 'restore']);
     Route::post('/info',              [InfoController::class, 'store']);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getInfo, createInfo, updateInfo } from '../api/info'
 import { INFO_LABELS } from '../utils/infoLabels'
+import InfoReferencesModal from './InfoReferencesModal'
 import ObjectHistory from './ObjectHistory'
 
 /**
@@ -62,6 +63,7 @@ export default function InfoItemCard({
 }) {
   const isEdit = !!item
   const [showHistory, setShowHistory] = useState(false)
+  const [showRefs, setShowRefs]       = useState(false)
 
   const [fields, setFields] = useState(() => item ? {
     name:               item.name || '',
@@ -115,6 +117,7 @@ export default function InfoItemCard({
   const label = INFO_LABELS[infoType] || infoType
 
   return (
+    <>
     <div className="fixed inset-0 z-[80] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[88vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
@@ -221,17 +224,31 @@ export default function InfoItemCard({
           {/* История — только у заведённого элемента и свёрнутая: карточку
               открывают, чтобы поправить, а не читать прошлое */}
           {isEdit && (
-            <div className="pt-2 border-t border-gray-100">
-              {showHistory
-                ? <ObjectHistory entity="info" id={item.id} onRestored={onClose} />
-                : <button type="button" onClick={() => setShowHistory(true)}
+            <div className="pt-2 border-t border-gray-100 space-y-2">
+              <div className="flex items-center gap-4">
+                {!showHistory && (
+                  <button type="button" onClick={() => setShowHistory(true)}
                     className="text-xs text-blue-700 hover:underline">
                     История изменений
-                  </button>}
+                  </button>
+                )}
+                <button type="button" onClick={() => setShowRefs(true)}
+                  className="text-xs text-blue-700 hover:underline">
+                  Где используется
+                </button>
+              </div>
+              {showHistory && <ObjectHistory entity="info" id={item.id} onRestored={onClose} />}
             </div>
           )}
         </div>
       </div>
     </div>
+
+    {/* Вне подложки карточки: её onClick закрывает всё, а клик по списку
+        ссылок закрывать карточку не должен */}
+    {showRefs && (
+      <InfoReferencesModal id={item.id} name={item.name} onClose={() => setShowRefs(false)} />
+    )}
+    </>
   )
 }

@@ -32,6 +32,25 @@ class InfoController extends TenantController
         return response()->json(['data' => $query->get()]);
     }
 
+    /**
+     * GET /info/{id}/references — кто ссылается на элемент.
+     *
+     * Один и тот же ответ на два вопроса: «можно ли его тронуть» и «чем он
+     * вообще занят». Второй спрашивают чаще: статью заводят, пользуются ею
+     * месяцами, а потом не помнят, куда она попадает.
+     */
+    public function references(Request $request, int $id)
+    {
+        $this->initTenant($request);
+
+        $info = $this->model()->newQuery()->findOrFail($id);
+
+        return response()->json(
+            ['name' => $info->name, 'type' => $info->type]
+            + InfoReferences::lists($this->dbName, (int) $info->id, $this->scope)
+        );
+    }
+
     /** GET /info/{id}/history — кто и когда правил элемент справочника */
     public function history(Request $request, int $id)
     {
