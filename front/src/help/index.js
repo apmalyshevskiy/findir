@@ -37,6 +37,7 @@ const ARTICLES = [
   { slug: 'exchange',    group: 'Обмен данными', routes: ['/data-import', '/integrations'] },
   { slug: 'access',      group: 'Доступ',        routes: ['/users', '/roles', '/edit-lock-date'] },
   { slug: 'history',     group: 'Доступ',        routes: ['/change-log'] },
+  { slug: 'backup',      group: 'Настройки',     routes: ['/backup'] },
 ]
 
 /** Заголовок — первая строка вида «# Название» */
