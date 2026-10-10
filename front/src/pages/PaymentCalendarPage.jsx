@@ -342,6 +342,29 @@ export default function PaymentCalendarPage() {
   const showPlan = viewMode === 'plan' || viewMode === 'plan_fact'
   const showFact = viewMode === 'fact' || viewMode === 'plan_fact'
 
+  /**
+   * Дни, по которым факт в отчёте вообще есть.
+   *
+   * Ключ факта кончается датой и появляется только там, где были обороты по
+   * деньгам, — значит набор дат из ключей и отвечает на вопрос «есть ли факт
+   * за этот день».
+   */
+  const factDays = useMemo(
+    () => new Set(Object.keys(fact).map(k => k.slice(k.lastIndexOf(':') + 1))), [fact])
+
+  /**
+   * Будущий день, по которому фактов нет: вместо суммы показываем «—».
+   *
+   * Ноль в таком дне читался бы как «ничего не заплатили», хотя день просто не
+   * наступил. Но если движения по деньгам в будущем дне есть — платежи
+   * провели вперёд, или это демо-база с годом истории, — факт показываем.
+   *
+   * Строки «Движение» и «Остаток на конец» это не меняет: они остаются
+   * прогнозом по плану, иначе один проведённый вперёд платёж подменял бы
+   * фактом весь прогноз дня, а с ним и всю дальнейшую кривую остатка.
+   */
+  const isBlankFuture = (pd) => isFuture(pd) && !factDays.has(pd)
+
   // Сохранение настроек документа
   const saveDocSettings = async () => {
     if (!editDoc || !selectedDocId) return
@@ -615,7 +638,7 @@ export default function PaymentCalendarPage() {
                         const factVal = getArticleValue(article.id, pd, fact)
                         const today = isToday(pd) && granularity === 'day'
                         const weekend = granularity === 'day' && isWeekend(pd)
-                        const future = isFuture(pd)
+                        const future = isBlankFuture(pd)
                         const cellBg = today ? 'bg-blue-50' : weekend ? 'bg-gray-50' : ''
                         const isCopied = clipboard && clipboard.articleId === article.id && clipboard.periodDate === pd
                         const canPaste = !!clipboard && clipboard.articleId === article.id && clipboard.periodDate !== pd
@@ -657,13 +680,16 @@ export default function PaymentCalendarPage() {
                                 onClick={planClick}
                                 onContextMenu={planContext}
                                 title={canPaste ? 'ПКМ — вставить план' : isCopied ? 'Скопировано — ПКМ на другой ячейке' : 'ЛКМ — план, ПКМ — копировать'}
-                                className={`text-[11px] tabular-nums text-right px-2 py-1 hover:bg-blue-50 ${planVal ? 'text-blue-700 font-medium' : 'text-gray-300'}`}>
+                                className={`text-[11px] tabular-nums text-right px-2 pt-1 pb-0.5 hover:bg-blue-50 ${planVal ? 'text-blue-700 font-medium' : 'text-gray-300'}`}>
                                 {fmt(planVal) || '\u00A0'}
                               </button>
+                              {/* \u0424\u0430\u043A\u0442 \u0442\u0435\u043C \u0436\u0435 \u043A\u0435\u0433\u043B\u0435\u043C, \u0447\u0442\u043E \u0438 \u043F\u043B\u0430\u043D: \u0440\u0430\u0437\u043D\u044B\u043C\u0438 \u0438\u0445 \u0434\u0435\u0440\u0436\u0430\u0442 \u0446\u0432\u0435\u0442 \u0438
+                                  \u043D\u0430\u0441\u044B\u0449\u0435\u043D\u043D\u043E\u0441\u0442\u044C, \u0430 \u043D\u0435 \u0440\u0430\u0437\u043C\u0435\u0440. \u041C\u0435\u043B\u043A\u0438\u0439 \u0432\u0442\u043E\u0440\u043E\u0439 \u0440\u044F\u0434 \u0446\u0438\u0444\u0440 \u0433\u043B\u0430\u0437
+                                  \u0447\u0438\u0442\u0430\u0435\u0442 \u043A\u0430\u043A \u0441\u043D\u043E\u0441\u043A\u0443, \u0445\u043E\u0442\u044F \u044D\u0442\u043E \u0442\u0430\u043A\u0430\u044F \u0436\u0435 \u0441\u0443\u043C\u043C\u0430 */}
                               <button
                                 onClick={() => factClickable && openDrawer(article.id, article.name, pd)}
                                 disabled={!factClickable}
-                                className={`text-[10px] tabular-nums text-right px-2 pb-1 ${
+                                className={`text-[11px] tabular-nums text-right px-2 pt-0.5 pb-1 ${
                                   future ? 'text-gray-300' :
                                   factVal < 0 ? 'text-red-600' :
                                   factVal > 0 ? 'text-gray-600' :

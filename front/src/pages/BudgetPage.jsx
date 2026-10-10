@@ -624,6 +624,26 @@ export default function BudgetPage() {
   const budgetPeriodFrom = report?.budget_period_from || selectedDoc?.period_from?.slice(0, 10) || ''
   const isFactMonth = (pd) => budgetPeriodFrom && pd < budgetPeriodFrom
 
+  /**
+   * Месяцы, по которым факт в отчёте вообще есть.
+   *
+   * Ключ факта кончается периодом, и появляется он только там, где были
+   * обороты, — значит набор периодов из ключей и отвечает на вопрос «есть ли
+   * факт за этот месяц».
+   */
+  const factPeriods = useMemo(
+    () => new Set(Object.keys(fact).map(k => k.slice(k.lastIndexOf(':') + 1))), [fact])
+
+  /**
+   * Будущий месяц, по которому фактов нет: вместо суммы показываем «—».
+   *
+   * Ноль в таком месяце читался бы как полный провал плана, хотя месяц просто
+   * не наступил. Но если обороты в будущем месяце есть — документы оформили
+   * заранее, или это демо-база с годом истории вперёд, — факт показываем:
+   * данные в отчёте лежат, и прятать их незачем.
+   */
+  const isBlankFuture = (pd) => isFutureMonth(pd) && !factPeriods.has(pd)
+
   const { flatArticles, descendantLeafMap, descendantAllMap } = useMemo(() => {
     if (!report?.articles) return { flatArticles: [], descendantLeafMap: {}, descendantAllMap: {} }
     const arts = report.articles
@@ -810,7 +830,7 @@ export default function BudgetPage() {
       <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-gray-700">{label}</td>
       {periodDates.map(pd => {
         const { factVal, planVal } = calcFn(pd)
-        const future = isFutureMonth(pd)
+        const future = isBlankFuture(pd)
         const fm = isFactMonth(pd)
         if (isPlanOnly) {
           const val = fm ? factVal : planVal
@@ -1187,7 +1207,7 @@ export default function BudgetPage() {
                           </td>
                           {selectedDoc?.type === 'bdr' && totals ? periodDates.map(pd => {
                             const g = totals[pd] || { fact: 0, plan: 0 }
-                            const future = isFutureMonth(pd)
+                            const future = isBlankFuture(pd)
                             const fm = isFactMonth(pd)
                             if (isPlanOnly) {
                               const val = fm ? g.fact : g.plan
@@ -1285,7 +1305,7 @@ export default function BudgetPage() {
                         const sec = article.section || null
                         const factVal = getArticleValue(article.rowKey, pd, fact, sec, article.id)
                         const planVal = getArticleValue(article.rowKey, pd, plan, sec, article.id)
-                        const future = isFutureMonth(pd)
+                        const future = isBlankFuture(pd)
                         // По «Без статьи» план не ставят: это не план, а долг
                         // по разноске. Появится статья — появится и план
                         const editable = selectedDoc?.status === 'draft' && !unassigned
@@ -1381,7 +1401,7 @@ export default function BudgetPage() {
                 {selectedDoc?.type === 'dds' && (
                   <tr className="bg-gray-50 font-semibold border-t border-gray-200">
                     <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-gray-700">02 Движение</td>
-                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isFutureMonth(pd); const fm = isFactMonth(pd)
+                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isBlankFuture(pd); const fm = isFactMonth(pd)
                       if (isPlanOnly) { const val = fm ? fb.move : pb.move; return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${fm ? 'text-gray-400 italic' : 'text-blue-600'}`}>{fmt(val)}</td></Fragment> }
                       if (isFactOnly) { return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${future ? 'text-gray-300' : fb.move >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{future ? '—' : fmt(fb.move)}</td></Fragment> }
                       return <Fragment key={pd}><td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.move)}</td><td className={`text-right px-2 py-1.5 tabular-nums ${future ? 'text-gray-300' : fb.move >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{future ? '—' : fmt(fb.move)}</td>{showDelta && <DeltaCell fact={future ? null : fb.move} plan={pb.move} />}</Fragment>
@@ -1393,7 +1413,7 @@ export default function BudgetPage() {
                 {selectedDoc?.type === 'dds' && (<>
                   <tr className="bg-gray-50 font-semibold border-t-2 border-gray-300">
                     <td className="sticky left-0 z-10 bg-gray-50 px-3 py-2 text-gray-700">03 Остаток на конец</td>
-                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isFutureMonth(pd); const fm = isFactMonth(pd)
+                    {periodDates.map((pd, i) => { const fb = factBalances[i], pb = planBalances[i]; if (!fb || !pb) return <Fragment key={pd}>{Array(colsPerMonth).fill(null).map((_, j) => <td key={j} />)}</Fragment>; const future = isBlankFuture(pd); const fm = isFactMonth(pd)
                       if (isPlanOnly) { const val = fm ? fb.closing : pb.closing; return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${fm ? 'text-gray-400 italic' : 'text-blue-600'}`}>{fmt(val)}</td></Fragment> }
                       if (isFactOnly) { return <Fragment key={pd}><td className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${future ? 'text-gray-300' : 'text-gray-700'}`}>{future ? '—' : fmt(fb.closing)}</td></Fragment> }
                       return <Fragment key={pd}><td className="text-right px-2 py-1.5 tabular-nums text-blue-600 border-l border-gray-100">{fmt(pb.closing)}</td><td className={`text-right px-2 py-1.5 tabular-nums ${future ? 'text-gray-300' : 'text-gray-700'}`}>{future ? '—' : fmt(fb.closing)}</td>{showDelta && <DeltaCell fact={future ? null : fb.closing} plan={pb.closing} />}</Fragment>

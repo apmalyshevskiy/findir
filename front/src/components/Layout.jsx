@@ -3,12 +3,14 @@ import { Fragment, useState, useRef, useEffect } from 'react'
 import TenantSwitcher from './TenantSwitcher'
 import HelpDrawer from './HelpDrawer'
 import RecentMenu from './RecentMenu'
+import UserMenu from './UserMenu'
 import ObjectOpener from './ObjectOpener'
+import DemoSeeder from './DemoSeeder'
 import Logo from './Logo'
 import { TopBusy } from './Busy'
 import api from '../api/client'
 import { listAccounts, clearAccounts } from '../utils/accounts'
-import { canView, roleName } from '../utils/permissions'
+import { canView } from '../utils/permissions'
 
 /**
  * Общая сетка шапки и страницы. Ширина и поля заданы в одном месте: пока они
@@ -173,8 +175,21 @@ export default function Layout({ children }) {
       {/* Полоса шапки во всю ширину, а её содержимое — по той же сетке, что и
           страница ниже: иначе меню и карточки живут по разным левым краям */}
       <header className="bg-white border-b border-gray-200">
-        <div className={`${SHELL} py-3 flex flex-wrap justify-between items-center gap-x-3 gap-y-2`}>
-          <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+        {/*
+          Три части шапки: компания, меню и личная группа.
+
+          Все три в одну строку помещаются только на широком экране: шесть
+          разделов меню плюс «Недавние», справка и профиль — это больше 1300
+          пикселей, и на обычном ноутбуке что-то неизбежно переносится. Раньше
+          переносилась личная группа, и выглядело это поломкой: хвост шапки
+          болтался под меню.
+
+          Теперь перенос задан нарочно. До 2xl меню уходит на свою строку
+          целиком (`order-last w-full`), а первая строка держит компанию слева и
+          личную группу справа. Получается двухэтажная шапка, а не обрывок.
+        */}
+        <div className={`${SHELL} py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2`}>
+          <div className="flex items-center gap-2 md:gap-3 min-w-0">
             {/* Знак не ссылка: раздел «Дашборд» открыт не всякой должности,
                 и логотип, ведущий в отказ по правам, — плохая кнопка */}
             <div className="flex items-center gap-2 shrink-0">
@@ -187,8 +202,11 @@ export default function Layout({ children }) {
             {/* Название компании и переключение баз — см. TenantSwitcher */}
             <TenantSwitcher />
             {/* Тариф (trial/plan) переедет в настройки → подписка */}
+          </div>
 
-            <nav ref={navRef} className="flex flex-wrap gap-1 md:ml-2">
+          <nav ref={navRef}
+            className="order-last w-full flex flex-wrap gap-1
+                       2xl:order-none 2xl:w-auto 2xl:flex-1 2xl:ml-2">
               {nav.map(n => (
                 n.children ? (
                   <div key={n.label} className="relative">
@@ -250,28 +268,23 @@ export default function Layout({ children }) {
                   </button>
                 )
               ))}
-            </nav>
-          </div>
+          </nav>
 
-          <div className="flex items-center gap-4">
+          {/* Личная группа держится первой строки: до 2xl её прижимает вправо
+              ml-auto, на широком экране она встаёт после меню */}
+          <div className="flex items-center gap-3 lg:gap-4 shrink-0 ml-auto 2xl:order-last">
             {/* Недавно открытые — личный список, живёт в браузере */}
             <RecentMenu />
 
             {/* Справка про текущую страницу — одним нажатием и не уходя с неё */}
             <button onClick={() => setHelpOpen(true)} title="Справка по этой странице"
-              className="w-6 h-6 rounded-full border border-gray-200 text-gray-400 text-xs font-medium hover:border-blue-300 hover:text-blue-600 transition-colors">
+              className="w-6 h-6 rounded-full border border-gray-200 text-gray-400 text-xs font-medium hover:border-blue-300 hover:text-blue-600 transition-colors shrink-0">
               ?
             </button>
 
-            <span className="text-sm text-gray-500">
-              {user.name}
-              {/* Должность рядом с именем: человек должен понимать, почему
-                  часть разделов ему не видна */}
-              {roleName() && <span className="text-gray-400"> · {roleName()}</span>}
-            </span>
-            <button onClick={logout} className="text-sm text-gray-400 hover:text-red-600 transition-colors">
-              Выйти
-            </button>
+            {/* Имя, должность и выход — в кружке с инициалами: текстом они
+                занимали полстроки и сталкивали шапку на вторую */}
+            <UserMenu user={user} onLogout={logout} />
           </div>
         </div>
       </header>
@@ -288,6 +301,10 @@ export default function Layout({ children }) {
       {/* Открывает объект поверх любой страницы — по зову из журнала
           изменений и списка недавних */}
       <ObjectOpener />
+
+      {/* Заполнение чистой компании демо-данными. Кнопки нет: вызывается
+          набором слова «demo» — см. сам компонент */}
+      <DemoSeeder />
 
       <main className={`${SHELL} py-4 md:py-6`}>{children}</main>
     </div>

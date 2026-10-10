@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\V1\OperationTemplatesController;
 use App\Http\Controllers\Api\V1\DictionaryTemplatesController;
 use App\Http\Controllers\Api\V1\BulkOperationsController;
 use App\Http\Controllers\Api\V1\BackupController;
+use App\Http\Controllers\Api\V1\DemoController;
 use App\Http\Controllers\Api\V1\IntegrationsController;
 use App\Http\Controllers\Api\V1\OneCController;
 use App\Http\Controllers\Api\V1\UsersController;
@@ -195,6 +196,10 @@ Route::prefix('v1')->group(function () {
     Route::post  ('/integrations/{id}/object',        [IntegrationsController::class, 'object']);
     Route::post  ('/integrations/{id}/sync',          [IntegrationsController::class, 'sync']);
     Route::get   ('/integrations/{id}/runs',          [IntegrationsController::class, 'runs']);
+
+    // Демо-данные для показа: заливаются только в чистую компанию
+    Route::get ('/demo/datasets', [DemoController::class, 'datasets']);
+    Route::post('/demo/seed',     [DemoController::class, 'seed']);
 
     // Архивная копия данных компании
     Route::get ('/backup/summary', [BackupController::class, 'summary']);

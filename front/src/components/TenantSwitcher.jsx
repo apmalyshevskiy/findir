@@ -61,17 +61,21 @@ export default function TenantSwitcher() {
 
   return (
     <div className="relative" ref={boxRef}>
+      {/* Ширина плашки ограничена, а длинное имя обрезается многоточием.
+          Без этого «ООО Торговый дом Северный путь» растягивал шапку и сталкивал
+          правую группу — недавние, справку, выход — на вторую строку.
+          Полное имя остаётся в подсказке и в списке компаний ниже */}
       <button
         onClick={() => { setAccounts(listAccounts()); setOpen(!open); setAdding(false) }}
-        title="Текущая база — нажмите, чтобы переключиться"
+        title={`${active?.name || 'Компания'} — нажмите, чтобы переключиться`}
         style={{ backgroundColor: tone.bg }}
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-white
-                   text-base font-bold leading-none whitespace-nowrap
+                   text-base font-bold leading-none max-w-[11rem] lg:max-w-[16rem]
                    hover:brightness-125 transition-[filter]"
       >
         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: tone.dot }} />
-        {active?.name || 'Компания'}
-        <span className="text-[10px] font-normal opacity-70">▾</span>
+        <span className="truncate min-w-0">{active?.name || 'Компания'}</span>
+        <span className="text-[10px] font-normal opacity-70 shrink-0">▾</span>
       </button>
 
       {open && (

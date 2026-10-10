@@ -182,6 +182,11 @@ final class DictionaryTemplates
                     'parent_id'   => $parentId,
                     'sort_order'  => $order,
                     'is_active'   => true,
+                    // Вид держим только у того справочника, у которого он есть:
+                    // «переменности» у контрагента не бывает, а оставленный от
+                    // соседней строки шаблона сбил бы БДР
+                    'expense_kind' => $type === 'expenses' ? ($item['expense_kind'] ?? 'fixed') : 'fixed',
+                    'flow_kind'    => $type === 'flow'     ? ($item['flow_kind'] ?? 'operating') : 'operating',
                     'created_at'  => $now,
                     'updated_at'  => $now,
                 ]);
