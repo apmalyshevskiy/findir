@@ -33,8 +33,18 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     sockets
 
 # ── Redis расширение ───────────────────────────────────────────────
-RUN pecl install redis \
- && docker-php-ext-enable redis
+# Не через pecl: канал pecl.php.net отвечает «No releases available for
+# package redis» и подвешивает сборку на минуты. Срочное обновление PHP из-за
+# этого встало бы целиком, поэтому исходники берём с GitHub по тегу.
+#
+# Версия прибита гвоздями намеренно: обновление php — не повод заодно менять
+# клиент Redis, иначе при разборе последствий не понять, что именно поехало.
+ARG PHPREDIS_VERSION=6.3.0
+RUN curl -fsSL "https://github.com/phpredis/phpredis/archive/refs/tags/${PHPREDIS_VERSION}.tar.gz" -o /tmp/phpredis.tar.gz \
+ && mkdir -p /usr/src/php/ext/redis \
+ && tar -xzf /tmp/phpredis.tar.gz -C /usr/src/php/ext/redis --strip-components=1 \
+ && rm /tmp/phpredis.tar.gz \
+ && docker-php-ext-install -j$(nproc) redis
 
 # ── Composer ──────────────────────────────────────────────────────
 COPY --from=composer:2.7 /usr/bin/composer /usr/bin/composer
