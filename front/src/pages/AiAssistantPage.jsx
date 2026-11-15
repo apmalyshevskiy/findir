@@ -39,7 +39,7 @@ export default function AiAssistantPage() {
     <Layout>
       <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">AI-помощник</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">AI-помощник</h1>
           <p className="text-sm text-gray-500 mt-1">
             Опишите операцию словами, продиктуйте голосом или приложите чек, счёт и выписку.
             Помощник разберёт, посчитает показатели и подготовит проводку — записывать её будете вы.

@@ -5,6 +5,7 @@ import { BusyLabel, SkeletonRows } from '../components/Busy'
 import { openObject } from '../components/ObjectOpener'
 import { localDate } from '../utils/period'
 import { dayBound, whenUtc } from '../utils/datetime'
+import { RotateCcw, X } from 'lucide-react'
 
 /**
  * Журнал изменений: что вообще происходило в базе.
@@ -19,14 +20,14 @@ import { dayBound, whenUtc } from '../utils/datetime'
  */
 
 const ENTITY_TONE = {
-  operation: 'bg-blue-50 text-blue-700 ring-blue-200',
+  operation: 'bg-brand-50 text-brand-700 ring-brand-200',
   document:  'bg-violet-50 text-violet-700 ring-violet-200',
   info:      'bg-emerald-50 text-emerald-700 ring-emerald-200',
 }
 
 const ACTION_TONE = {
   created:  'text-green-700',
-  updated:  'text-blue-700',
+  updated:  'text-brand-700',
   deleted:  'text-red-600',
   restored: 'text-violet-700',
 }
@@ -38,7 +39,7 @@ const ENTITY_OPTIONS = [
   { value: 'info',      label: 'Справочники' },
 ]
 
-const sel = 'px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500'
+const sel = 'px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 export default function ChangeLogPage() {
   const [rows, setRows]       = useState(null)
@@ -95,15 +96,15 @@ export default function ChangeLogPage() {
     <Layout>
       <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Журнал изменений</h2>
-          <p className="text-xs text-gray-500 mt-1">
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Журнал изменений</h1>
+          <p className="text-sm text-gray-500 mt-1">
             Кто и что менял в операциях, документах и справочниках. Ведётся с 14 сентября 2026 года
           </p>
         </div>
         <BusyLabel active={loading}>Читаю журнал</BusyLabel>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4 flex items-center gap-2 flex-wrap">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-4 mb-4 flex items-center gap-2 flex-wrap">
         <input type="date" value={q.date_from} onChange={e => set({ date_from: e.target.value })} className={sel} />
         <span className="text-gray-300">—</span>
         <input type="date" value={q.date_to} onChange={e => set({ date_to: e.target.value })} className={sel} />
@@ -124,14 +125,16 @@ export default function ChangeLogPage() {
 
         {q.batch && (
           <button onClick={() => set({ batch: '' })}
-            className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 ring-1 ring-amber-200 text-xs">
-            одна пачка ×
+            title="Снять отбор по пачке"
+            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-amber-50 text-amber-900 ring-1 ring-amber-200 text-xs">
+            одна пачка <X className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         )}
 
         {isDirty && (
           <button onClick={() => set({ entity: '', source: '', user_id: '', batch: '' })}
-            className="text-xs text-gray-400 hover:text-red-600">↺ сбросить</button>
+            className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-red-600">
+            <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Сбросить</button>
         )}
 
         <span className="text-xs text-gray-400 ml-auto">
@@ -141,7 +144,7 @@ export default function ChangeLogPage() {
 
       {error && <div className="mb-4 bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-clip">
         {!rows ? (
           <div className="p-4"><SkeletonRows rows={8} height="h-10" /></div>
         ) : rows.length === 0 ? (
@@ -158,7 +161,7 @@ export default function ChangeLogPage() {
             </thead>
             <tbody>
               {rows.map(r => (
-                <tr key={`${r.entity}-${r.entity_id}-${r.version}`} className="border-t border-gray-100 align-top hover:bg-blue-50/30">
+                <tr key={`${r.entity}-${r.entity_id}-${r.version}`} className="border-t border-gray-100 align-top hover:bg-brand-50/30">
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600 text-xs">
                     {whenUtc(r.created_at)}
                     <div className={`${ACTION_TONE[r.action] || ''} font-medium`}>{r.action_label}</div>
@@ -171,7 +174,7 @@ export default function ChangeLogPage() {
                         что приехало вместе */}
                     {r.batch_size > 1 && (
                       <button onClick={() => set({ batch: r.batch })}
-                        className="text-[11px] text-blue-600 hover:underline">
+                        className="text-2xs text-brand-600 hover:underline">
                         ещё {r.batch_size - 1} в пачке
                       </button>
                     )}
@@ -179,10 +182,10 @@ export default function ChangeLogPage() {
 
                   <td className="px-3 py-2">
                     <button onClick={() => open(r)} className="text-left group">
-                      <span className={`px-1.5 py-0.5 rounded ring-1 text-[11px] font-medium ${ENTITY_TONE[r.entity]}`}>
+                      <span className={`px-1.5 py-0.5 rounded ring-1 text-2xs font-medium ${ENTITY_TONE[r.entity]}`}>
                         {r.entity_label}
                       </span>
-                      <div className="text-xs text-gray-700 group-hover:text-blue-700 group-hover:underline mt-0.5 max-w-xs truncate"
+                      <div className="text-xs text-gray-700 group-hover:text-brand-700 group-hover:underline mt-0.5 max-w-xs truncate"
                         title={r.title}>
                         {r.title}
                       </div>
@@ -192,7 +195,7 @@ export default function ChangeLogPage() {
                   <td className="px-3 py-2">
                     {r.changes.length === 0
                       ? <span className="text-gray-300 text-xs">—</span>
-                      : <table className="text-[11px]">
+                      : <table className="text-2xs">
                           <tbody>
                             {r.changes.map((c, i) => (
                               <tr key={i} className="align-top">
@@ -215,7 +218,7 @@ export default function ChangeLogPage() {
       {meta.has_more && (
         <div className="mt-3 text-center">
           <button onClick={() => load((meta.page || 1) + 1, true)} disabled={loading}
-            className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50">
+            className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-brand-300 hover:text-brand-700 disabled:opacity-50">
             {loading ? 'Загружаю…' : 'Показать ещё'}
           </button>
         </div>

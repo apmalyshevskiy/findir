@@ -11,6 +11,7 @@ import {
   getOneCSettings, saveOneCSettings, saveOneCAnalytics,
   previewOneCPostings, importOneCPostings, fillOneCInn,
 } from '../api/onec'
+import { Button, useEscClose } from '../components/ui'
 
 /**
  * Загрузка проводок из 1С:Бухгалтерии.
@@ -28,7 +29,7 @@ import {
  */
 
 const STATUS = {
-  new:       { label: 'новая',               chip: 'bg-blue-50 text-blue-800 ring-blue-200',    pick: true,  auto: true },
+  new:       { label: 'новая',               chip: 'bg-brand-50 text-brand-800 ring-brand-200',    pick: true,  auto: true },
   changed:   { label: 'изменилась',          chip: 'bg-amber-50 text-amber-900 ring-amber-200', pick: true,  auto: true },
   // Отметить можно и загруженную — перезальётся. Просто не сама: без нужды
   // переписывать операцию незачем
@@ -65,16 +66,16 @@ const fmtDate = (s) => {
   return d ? `${d}.${m}.${y}` : s
 }
 
-const inputCls = 'px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const inputCls = 'px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 const Chip = ({ status }) => {
   const s = STATUS[status] || STATUS.new
-  return <span className={`px-2 py-0.5 rounded text-[11px] font-medium ring-1 whitespace-nowrap ${s.chip}`}>{s.label}</span>
+  return <span className={`px-2 py-0.5 rounded text-2xs font-medium ring-1 whitespace-nowrap ${s.chip}`}>{s.label}</span>
 }
 
 const Field = ({ label, value }) => (
   <div>
-    <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
+    <div className="text-2xs uppercase tracking-wide text-gray-400">{label}</div>
     <div className="text-gray-800 font-medium">{value ?? '—'}</div>
   </div>
 )
@@ -275,12 +276,12 @@ export default function OneCPostingsPage() {
 
   return (
     <Layout>
-      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Проводки из 1С</h2>
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+        <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Проводки из 1С</h1>
         <div className="flex items-center gap-4">
-          <Link to="/integrations" className="text-sm text-blue-700 hover:underline">Настройка интеграций →</Link>
+          <Link to="/integrations" className="text-sm text-brand-700 hover:underline">Настройка интеграций →</Link>
           {preview && (
-            <button onClick={() => fileInput.current?.click()} className="text-sm text-blue-700 hover:underline">
+            <button onClick={() => fileInput.current?.click()} className="text-sm text-brand-700 hover:underline">
               Выбрать другой файл
             </button>
           )}
@@ -294,19 +295,19 @@ export default function OneCPostingsPage() {
       )}
 
       {!preview && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-8">
           <div className="text-sm text-gray-700 font-medium mb-1">Выгрузка проводок из 1С:Бухгалтерии</div>
           <p className="text-sm text-gray-500 max-w-2xl">
             Файл готовит внешняя обработка «Выгрузка проводок в FINDIR» — она лежит в папке
             <span className="font-medium text-gray-700"> 1c</span> в составе системы. Здесь файл только
             разбирается: пока вы не нажмёте загрузку, в учёте ничего не меняется.
           </p>
-          <button
+          <Button variant="primary" className="mt-4"
             onClick={() => fileInput.current?.click()}
-            disabled={busy}
-            className="mt-4 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            disabled={busy}>
+
             {busy ? 'Разбираю…' : 'Выбрать файл выгрузки'}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -374,12 +375,12 @@ export default function OneCPostingsPage() {
               />
 
               <div className="flex items-center gap-3 flex-wrap">
-                <button
+                <Button variant="primary"
                   onClick={load}
-                  disabled={busy || !selected.length || !projectId}
-                  className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+                  disabled={busy || !selected.length || !projectId}>
+
                   {busy ? 'Загружаю…' : `Загрузить отмеченные (${selected.length})`}
-                </button>
+                </Button>
 
                 {!projectId && (
                   <span className="text-sm text-red-700">Сначала выберите проект — проводки 1С проекта не знают</span>
@@ -449,12 +450,12 @@ function Tabs({ tab, onTab, counts }) {
       onClick={() => onTab(key)}
       className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 ${
         tab === key
-          ? 'border-b-blue-700 text-blue-800'
+          ? 'border-b-brand-700 text-brand-800'
           : 'border-b-transparent text-gray-500 hover:text-gray-700'
       }`}>
       {label}
       {badge > 0 && (
-        <span className={`px-1.5 py-0.5 rounded text-[11px] ring-1 ${badgeCls}`}>{badge}</span>
+        <span className={`px-1.5 py-0.5 rounded text-2xs ring-1 ${badgeCls}`}>{badge}</span>
       )}
     </button>
   )
@@ -486,9 +487,10 @@ function Tabs({ tab, onTab, counts }) {
  * применится, если отметить проводку и загрузить заново.
  */
 function DiffModal({ row, onOpen, onClose }) {
+  useEscClose(onClose)
   return (
-    <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[88vh] flex flex-col"
+    <div className="fixed inset-0 z-[70] bg-brand-950/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-pop w-full max-w-2xl max-h-[88vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
 
         <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
@@ -524,10 +526,9 @@ function DiffModal({ row, onOpen, onClose }) {
         </div>
 
         <div className="px-5 py-4 border-t border-gray-100 flex items-center gap-3 flex-wrap">
-          <button type="button" onClick={onOpen}
-            className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
+          <Button variant="primary" type="button" onClick={onOpen}>
             Открыть операцию №{row.operation_id}
-          </button>
+          </Button>
           <span className="text-xs text-gray-500">
             Отметьте проводку и загрузите — операция станет такой, как в файле
           </span>
@@ -538,6 +539,7 @@ function DiffModal({ row, onOpen, onClose }) {
 }
 
 function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClose }) {
+  useEscClose(onClose)
   const suggested = sub.types || []
 
   // Открываемся на виде уже подобранного элемента, иначе на единственном слоте
@@ -556,8 +558,8 @@ function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClo
   const src = SOURCE[sub.source]
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[88vh] flex flex-col"
+    <div className="fixed inset-0 z-[70] bg-brand-950/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-pop w-full max-w-lg max-h-[88vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
 
         <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
@@ -581,7 +583,7 @@ function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClo
 
         <div className="p-5 space-y-3 overflow-y-auto">
           <div>
-            <span className="block text-[11px] text-gray-500 mb-1">
+            <span className="block text-2xs text-gray-500 mb-1">
               Вид аналитики
               {suggested.length > 0 && (
                 <span className="ml-1 text-gray-400">
@@ -619,7 +621,7 @@ function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClo
                 {items.map(i => (
                   <button key={i.id} type="button" disabled={busy}
                     onClick={() => onApply('bind', i.id)}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b border-gray-50 last:border-0 flex justify-between gap-2 ${
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-brand-50 border-b border-gray-50 last:border-0 flex justify-between gap-2 ${
                       String(i.id) === String(sub.info_id) ? 'bg-violet-50' : ''
                     }`}>
                     <span className="truncate">{i.name}</span>
@@ -629,7 +631,7 @@ function BindModal({ sub, infoByType, ensureType, busy, onApply, onCreate, onClo
               </div>
 
               <button type="button" onClick={() => onCreate(type)} disabled={busy}
-                className="w-full px-3 py-2 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-50 disabled:opacity-50">
+                className="w-full px-3 py-2 border border-brand-200 text-brand-700 rounded-lg text-sm hover:bg-brand-50 disabled:opacity-50">
                 + Создать «{sub.name}» как {(INFO_LABELS[type] || type).toLowerCase()}
               </button>
             </>
@@ -660,7 +662,7 @@ function FileCard({ meta, stats, problems, name }) {
   const p   = meta?.period
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5">
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
         <Field label="Файл" value={name} />
         {org && <Field label="Организация" value={org} />}
@@ -694,7 +696,7 @@ function FileCard({ meta, stats, problems, name }) {
  */
 function SetupCard({ integrations, integrationId, onIntegration, projects, projectId, onProject, onSave, saving }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5">
       <div className="flex items-end gap-3 flex-wrap">
         {integrations.length > 1 && (
           <div>
@@ -731,7 +733,7 @@ function SetupCard({ integrations, integrationId, onIntegration, projects, proje
 /** Счёт 1С → счёт FINDIR. Заполняется один раз и сохраняется. */
 function AccountsCard({ accounts, chart, value, onChange, onSave, saving, saved, notSet }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-clip">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="text-sm font-medium text-gray-800">Счета</div>
@@ -743,12 +745,12 @@ function AccountsCard({ accounts, chart, value, onChange, onSave, saving, saved,
         </div>
         <div className="flex items-center gap-3">
           {saved && <span className="text-sm text-green-700">Сохранено</span>}
-          <button
+          <Button variant="primary"
             onClick={onSave}
-            disabled={saving}
-            className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            disabled={saving}>
+
             {saving ? 'Сохраняю…' : 'Сохранить счета'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -860,7 +862,7 @@ function AnalyticsCard({ subconto, onOpen, onFillInn, busy }) {
   )
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-clip">
       <div className="px-5 py-4 border-b border-gray-100">
         <div className="text-sm font-medium text-gray-800">Аналитика</div>
         <p className="text-sm text-gray-500">
@@ -870,7 +872,7 @@ function AnalyticsCard({ subconto, onOpen, onFillInn, busy }) {
         {innMissing.length > 0 && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <button type="button" onClick={onFillInn} disabled={busy}
-              className="px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-sm hover:bg-blue-50 disabled:opacity-50">
+              className="px-3 py-1.5 border border-brand-200 text-brand-700 rounded-lg text-sm hover:bg-brand-50 disabled:opacity-50">
               Проставить ИНН — {innMissing.length}
             </button>
             <span className="text-xs text-gray-500">
@@ -891,7 +893,7 @@ function ResultCard({ result }) {
   const warnings = result.warnings || []
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5">
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
         <Field label="Создано" value={result.created} />
         <Field label="Обновлено" value={result.updated} />
@@ -944,7 +946,7 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
     : 0
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-clip">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-clip">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2 flex-wrap">
         {/* Стоит первой: при повторной загрузке с неё и начинают */}
         {todoCount > 0 && todoCount < rows.length && (
@@ -975,8 +977,8 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
 
         {only && (
           <button type="button" onClick={() => setOnly(null)}
-            className="text-xs text-blue-700 hover:underline">
-            × показать все
+            className="text-xs text-brand-700 hover:underline">
+            Показать все
           </button>
         )}
 
@@ -1045,14 +1047,14 @@ function PostingsCard({ rows, picked, onPick, onPickAll, onBind, onDiff, onOpenO
                         поэтому ссылка стоит прямо под плашкой */}
                     {r.changes?.length > 0 && (
                       <button type="button" onClick={() => onDiff(r)}
-                        className="block text-xs text-blue-700 hover:underline mt-1">
+                        className="block text-xs text-brand-700 hover:underline mt-1">
                         что изменилось ({r.changes.length})
                       </button>
                     )}
 
                     {r.operation_id && (
                       <button type="button" onClick={() => onOpenOperation(r.operation_id)}
-                        className="block text-xs text-gray-500 hover:text-blue-700 hover:underline mt-0.5">
+                        className="block text-xs text-gray-500 hover:text-brand-700 hover:underline mt-0.5">
                         операция №{r.operation_id}
                       </button>
                     )}

@@ -4,10 +4,12 @@ import ChartOfAccountsPicker from '../components/ChartOfAccountsPicker'
 import { getBalanceItemsList, createBalanceItem, updateBalanceItem, deleteBalanceItem } from '../api/balanceItems'
 import { isAnySlot, slotTypes } from '../utils/analyticSlots'
 import { ACCOUNT_CODE } from '../utils/accountCode'
-import { confirm } from '../components/ui'
+import { Button, confirm, useEscClose } from '../components/ui'
+import { Plus, X } from 'lucide-react'
+import { SkeletonRows } from '../components/Busy'
 
-const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-const lc = 'block text-[11px] text-gray-500 mb-0.5'
+const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
+const lc = 'block text-2xs text-gray-500 mb-0.5'
 
 const INFO_TYPES = [
   { v: 'partner',    label: 'Контрагент' },
@@ -56,7 +58,7 @@ function SlotEditor({ n, value, onChange, turnoverOnly, onTurnoverOnly }) {
           {[{ k: 'none', t: 'Нет' }, { k: 'pick', t: 'Выбрать' }, { k: 'any', t: 'Любой' }].map(m => (
             <button key={m.k} type="button" onClick={() => setMode(m.k)}
               className={`px-2.5 py-1 transition-colors ${
-                mode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'
+                mode === m.k ? 'bg-brand-800 text-white' : 'text-gray-600 hover:bg-gray-50'
               }`}>
               {m.t}
             </button>
@@ -76,7 +78,7 @@ function SlotEditor({ n, value, onChange, turnoverOnly, onTurnoverOnly }) {
             <button key={t.v} type="button" onClick={() => toggle(t.v)}
               className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
                 types.includes(t.v)
-                  ? 'bg-blue-50 border-blue-300 text-blue-800'
+                  ? 'bg-brand-50 border-brand-300 text-brand-800'
                   : 'border-gray-200 text-gray-500 hover:border-gray-300'
               }`}>
               {t.label}
@@ -86,7 +88,7 @@ function SlotEditor({ n, value, onChange, turnoverOnly, onTurnoverOnly }) {
       )}
 
       {mode === 'any' && (
-        <p className="text-[11px] text-gray-500 mt-1.5 pl-9">
+        <p className="text-2xs text-gray-500 mt-1.5 pl-9">
           В операции и документе сюда выбирается элемент любого справочника.
         </p>
       )}
@@ -121,6 +123,8 @@ export default function BalanceItemsPage() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState(null)      // { ...поля, id? }
+  // Карточка счёта закрывалась только кликом мимо — теперь и по Esc
+  useEscClose(() => setForm(null), !!form)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -183,10 +187,10 @@ export default function BalanceItemsPage() {
 
   return (
     <Layout>
-      <div className="py-2 space-y-4">
+      <div className="space-y-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">План счетов</h1>
+            <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">План счетов</h1>
             <p className="text-sm text-gray-500 mt-1">
               Счета учёта и их аналитика. Код счёта используется в карте разноски и при разборе
               выписки — менять его у задействованных счетов нельзя.
@@ -197,10 +201,9 @@ export default function BalanceItemsPage() {
               className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
               Добавить из списка
             </button>
-            <button onClick={startNew}
-              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
-              + Счёт
-            </button>
+            <Button variant="primary" icon={Plus} onClick={startNew}>
+              Счёт
+            </Button>
           </div>
         </div>
 
@@ -209,9 +212,9 @@ export default function BalanceItemsPage() {
 
         {/* Карточка счёта — окном по центру, чтобы не уезжала за экран при правке нижних строк */}
         {form && (
-          <div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center p-4"
+          <div className="fixed inset-0 z-[70] bg-brand-950/40 flex items-center justify-center p-4"
             onClick={() => setForm(null)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[88vh] overflow-y-auto p-4 space-y-3"
+          <div className="bg-white rounded-xl shadow-pop w-full max-w-2xl max-h-[88vh] overflow-y-auto p-4 space-y-3"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between sticky top-0 bg-white pb-2 -mt-1">
               <h2 className="text-sm font-semibold text-gray-800">
@@ -277,10 +280,9 @@ export default function BalanceItemsPage() {
             </label>
 
             <div className="flex gap-2 pt-1">
-              <button onClick={save} disabled={saving || !form.code.trim() || !form.name.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">
+              <Button variant="primary" onClick={save} disabled={saving || !form.code.trim() || !form.name.trim()}>
                 {saving ? '…' : form.id ? 'Сохранить' : 'Создать'}
-              </button>
+              </Button>
               <button onClick={() => setForm(null)}
                 className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">
                 Отмена
@@ -291,9 +293,9 @@ export default function BalanceItemsPage() {
         )}
 
         {/* Список */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-x-auto">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-x-auto">
           {loading ? (
-            <div className="text-sm text-gray-400 py-10 text-center">Загрузка…</div>
+            <SkeletonRows rows={4} height="h-9" />
           ) : (
             <table className="w-full text-sm min-w-[720px]">
               <thead>
@@ -313,8 +315,8 @@ export default function BalanceItemsPage() {
                     </td>
                     <td className="px-3 py-2 text-gray-800">
                       {i.name}
-                      {i.has_quantity && <span className="ml-2 text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">кол-во</span>}
-                      {i.is_system && <span className="ml-2 text-[10px] text-gray-400">системный</span>}
+                      {i.has_quantity && <span className="ml-2 text-2xs text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded">кол-во</span>}
+                      {i.is_system && <span className="ml-2 text-2xs text-gray-400">системный</span>}
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-500">{analytics(i) || <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-2 text-right text-xs tabular-nums text-gray-600">
@@ -329,7 +331,7 @@ export default function BalanceItemsPage() {
                         {/* Удалять можно и счёт из списка: что мешает — скажет
                             сервер, а вернуть его можно кнопкой «Добавить из списка» */}
                         <button onClick={() => remove(i)} title="Удалить"
-                          className="text-gray-300 hover:text-red-500 p-1 rounded hover:bg-red-50 text-base leading-none">×</button>
+                          className="text-gray-400 hover:text-red-500 p-1 rounded hover:bg-red-50 text-base leading-none"><X className="w-4 h-4" aria-hidden="true" /></button>
                       </div>
                     </td>
                   </tr>

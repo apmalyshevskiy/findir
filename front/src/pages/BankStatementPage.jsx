@@ -8,7 +8,12 @@ import { getBalanceItems } from '../api/operations'
 import { classifyStatement, applyRules } from '../api/ai'
 import Layout from '../components/Layout'
 import InfoSelect from '../components/InfoSelect'
-import { apiError, confirm, toast } from '../components/ui'
+import {
+  AlertTriangle, ArrowDownLeft, ArrowUpRight, Check, CheckCircle2, ChevronDown, Copy, FileUp, Link2, Pencil,
+  Plus, RotateCcw, Save, Sparkles, X,
+} from 'lucide-react'
+import { apiError, confirm, toast, Badge, Button, IconButton, PageHeader } from '../components/ui'
+import { date as fmtDate } from '../utils/format'
 import { slotLabel, slotAccepts, slotSelect } from '../utils/analyticSlots'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -16,7 +21,7 @@ const fmt = (n) => n == null ? '—' : new Intl.NumberFormat('ru-RU', { minimumF
 
 // ── Строка операции внутри строки выписки ─────────────────────────────────────
 const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direction, counterpartyInn, counterpartyAccount, suggestedExpenseId, onChange, onRemove, onInfoCreated }) => {
-  const ic = 'w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400'
+  const ic = 'w-full h-8 px-2 text-xs bg-white border border-gray-200 rounded-lg hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
   // ── Нога комиссии эквайринг-свода: свободный режим, обе стороны — обычные счета ──
   // Не привязана к А100. Дт (in) и Кт (out) выбираются вручную; аналитика info_1
@@ -31,18 +36,18 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
     )
     return (
       <div className="space-y-2 p-2 bg-amber-50 rounded-lg border border-amber-100">
-        <div className="text-[10px] text-amber-700 font-medium">Комиссия эквайринга (отдельная операция)</div>
+        <div className="text-xs text-amber-800 font-medium">Комиссия эквайринга — отдельная операция</div>
         <div className="grid gap-x-2 gap-y-1.5" style={{ gridTemplateColumns: '110px 1fr 1fr 24px' }}>
           {/* Сумма */}
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">Сумма</div>
+            <div className="text-2xs font-medium text-gray-500 mb-1">Сумма</div>
             <input type="number" step="0.01" className={ic}
               value={op.amount || ''}
               onChange={e => onChange({ ...op, amount: parseFloat(e.target.value) || 0 })} />
           </div>
           {/* Счёт Дт (расход) */}
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">Счёт Дт</div>
+            <div className="text-2xs font-medium text-gray-500 mb-1">Счёт Дт</div>
             <select className={ic} value={op.in_bi_id || ''}
               onChange={e => onChange({ ...op, in_bi_id: parseInt(e.target.value) || null, in_info_1_id: null })}>
               <option value="">— Выбрать счёт —</option>
@@ -52,7 +57,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
           {/* info_1 ноги Дт */}
           {dtInfo1Type ? (
             <div>
-              <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(dtInfo1Type)}</div>
+              <div className="text-2xs font-medium text-gray-500 mb-1">{slotLabel(dtInfo1Type)}</div>
               <InfoSelect {...slotSelect(dtInfo1Type, infoCache, onInfoCreated)} value={op.in_info_1_id}
                 onChange={v => onChange({ ...op, in_info_1_id: v })} placeholder="Выбрать..." />
             </div>
@@ -60,14 +65,14 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
           {/* Удалить */}
           <div className="flex items-end justify-center">
             {!isOnly && (
-              <button onClick={onRemove} className="text-gray-300 hover:text-red-500 text-base leading-none pb-1" title="Удалить операцию">×</button>
+              <IconButton icon={X} size="sm" variant="danger" label="Убрать эту операцию" onClick={onRemove} />
             )}
           </div>
         </div>
         <div className="grid gap-x-2" style={{ gridTemplateColumns: ktInfo1Type ? '1fr 1fr' : '1fr' }}>
           {/* Счёт Кт (доход, наследован) */}
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">Счёт Кт</div>
+            <div className="text-2xs font-medium text-gray-500 mb-1">Счёт Кт</div>
             <select className={ic} value={op.out_bi_id || ''}
               onChange={e => onChange({ ...op, out_bi_id: parseInt(e.target.value) || null, out_info_1_id: null })}>
               <option value="">— Выбрать счёт —</option>
@@ -77,7 +82,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
           {/* info_1 ноги Кт */}
           {ktInfo1Type && (
             <div>
-              <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(ktInfo1Type)}</div>
+              <div className="text-2xs font-medium text-gray-500 mb-1">{slotLabel(ktInfo1Type)}</div>
               <InfoSelect {...slotSelect(ktInfo1Type, infoCache, onInfoCreated)} value={op.out_info_1_id}
                 onChange={v => onChange({ ...op, out_info_1_id: v })} placeholder="Выбрать..." />
             </div>
@@ -164,7 +169,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
 
         {/* Сумма */}
         <div>
-          <div className="text-[10px] text-gray-400 mb-0.5">Сумма</div>
+          <div className="text-2xs font-medium text-gray-500 mb-1">Сумма</div>
           <input
             type="number" step="0.01"
             className={ic + (Math.abs(op.amount || 0) > totalAmount ? ' border-red-400' : '')}
@@ -175,7 +180,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
 
         {/* А100 — фиксированная наша сторона */}
         <div>
-          <div className="text-[10px] text-gray-400 mb-0.5">
+          <div className="text-2xs font-medium text-gray-500 mb-1">
             {direction === 'in' ? 'Счёт Дт' : 'Счёт Кт'} (А100)
           </div>
           <div className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded border border-blue-100 truncate">
@@ -186,7 +191,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Статья ДДС — info_2 стороны А100 */}
         {a100Info2Type && (
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(a100Info2Type)}</div>
+            <div className="text-2xs font-medium text-gray-500 mb-1">{slotLabel(a100Info2Type)}</div>
             <InfoSelect
               {...slotSelect(a100Info2Type, infoCache, onInfoCreated)}
               value={op[a100Info2Field]}
@@ -199,9 +204,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Удалить */}
         <div className="flex items-end justify-center">
           {!isOnly && (
-            <button onClick={onRemove}
-              className="text-gray-300 hover:text-red-500 transition-colors text-base leading-none pb-1"
-              title="Удалить операцию">×</button>
+            <IconButton icon={X} size="sm" variant="danger" label="Убрать эту операцию" onClick={onRemove} />
           )}
         </div>
       </div>
@@ -211,7 +214,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
 
         {/* Корреспондирующий счёт */}
         <div>
-          <div className="text-[10px] text-gray-400 mb-0.5">
+          <div className="text-2xs font-medium text-gray-500 mb-1">
             {direction === 'in' ? 'Счёт Кт' : 'Счёт Дт'}
           </div>
           <select
@@ -231,14 +234,18 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Аналитика 1 корреспондирующего счёта */}
         {counterInfo1Type && (
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">
+            <div className="text-2xs font-medium text-gray-500 mb-1">
               {slotLabel(counterInfo1Type)}
               {/* Подсказка если ИНН есть но партнёр не найден */}
               {slotAccepts(counterInfo1Type, 'partner') && counterpartyInn && !op[counterInfo1Field] && (
-                <span className="ml-1 text-amber-500" title={`ИНН ${counterpartyInn} не найден в справочнике`}>⚠</span>
+                <span className="ml-1 inline-flex align-[-2px] text-amber-600" title={`ИНН ${counterpartyInn} не найден в справочнике`}>
+                  <AlertTriangle className="w-3 h-3" aria-label="не найден" />
+                </span>
               )}
               {slotAccepts(counterInfo1Type, 'partner') && counterpartyInn && op[counterInfo1Field] && (
-                <span className="ml-1 text-emerald-500" title={`Найден по ИНН ${counterpartyInn}`}>✓</span>
+                <span className="ml-1 inline-flex align-[-2px] text-emerald-600" title={`Найден по ИНН ${counterpartyInn}`}>
+                  <Check className="w-3 h-3" aria-label="найден" />
+                </span>
               )}
             </div>
             <InfoSelect
@@ -253,7 +260,7 @@ const OperationLine = ({ op, totalAmount, isOnly, balanceItems, infoCache, direc
         {/* Аналитика 2 корреспондирующего счёта */}
         {counterInfo2Type && (
           <div>
-            <div className="text-[10px] text-gray-400 mb-0.5">{slotLabel(counterInfo2Type)}</div>
+            <div className="text-2xs font-medium text-gray-500 mb-1">{slotLabel(counterInfo2Type)}</div>
             <InfoSelect
               {...slotSelect(counterInfo2Type, infoCache, onInfoCreated)}
               value={op[counterInfo2Field]}
@@ -459,99 +466,103 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
     onOperationsChange(ops, ignored, false, readyForCreate)
   }, [ops, ignored, readyForCreate])
 
+  // Полоса слева — состояние строки: глаз пробегает список по цвету и видит,
+  // сколько ещё не размечено, не читая каждую строку
   const statusColor = isPosted
-    ? 'bg-green-50 border-l-4 border-l-green-400'
+    ? 'bg-white border-l-emerald-500'
     : ignored
-    ? 'bg-gray-50 border-l-4 border-l-gray-300 opacity-60'
+    ? 'bg-gray-50 border-l-gray-300 opacity-60'
     : isMatched
-    ? 'bg-emerald-50 border-l-4 border-l-emerald-400'
-    : 'bg-white border-l-4 border-l-amber-400'
+    ? 'bg-white border-l-brand-500'
+    : 'bg-white border-l-amber-400'
 
   return (
-    <div className={`rounded-xl border border-gray-100 mb-2 overflow-hidden ${statusColor}`}>
+    <div className={`rounded-xl border border-gray-200/80 border-l-4 shadow-card mb-2 overflow-hidden ${statusColor}`}>
       {/* Заголовок строки */}
       <div
-        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-black/5 transition-colors"
+        className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-gray-50/80 transition-colors"
         onClick={() => !ignored && setExpanded(e => !e)}
       >
         {/* Направление */}
-        <span className={`text-xs font-bold w-5 text-center ${row.direction === 'in' ? 'text-emerald-600' : 'text-red-500'}`}>
-          {row.direction === 'in' ? '↑' : '↓'}
+        <span title={row.direction === 'in' ? 'Поступление' : 'Списание'}
+          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${row.direction === 'in' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
+          {row.direction === 'in'
+            ? <ArrowDownLeft className="w-4 h-4" aria-label="Поступление" />
+            : <ArrowUpRight className="w-4 h-4" aria-label="Списание" />}
         </span>
 
         {/* Дата + тип документа */}
         <div className="w-32 shrink-0">
-          <div className="text-xs text-gray-500">{row.doc_date}</div>
-          <div className="text-[10px] text-gray-400">{row.doc_type?.replace('Платежное поручение', 'П/П') || ''} №{row.doc_number}</div>
+          <div className="text-sm text-gray-700 tabular-nums">{fmtDate(row.doc_date)}</div>
+          <div className="text-xs text-gray-500">{row.doc_type?.replace('Платежное поручение', 'П/П') || ''} №{row.doc_number}</div>
         </div>
 
         {/* Сумма */}
-        <div className={`w-28 shrink-0 text-sm font-semibold tabular-nums ${row.direction === 'in' ? 'text-emerald-700' : 'text-red-600'}`}>
+        <div className={`w-32 shrink-0 text-right text-sm font-semibold tabular-nums ${row.direction === 'in' ? 'text-emerald-700' : 'text-gray-900'}`}>
           {row.direction === 'in' ? '+' : '−'}{fmt(row.amount)}
         </div>
 
         {/* Контрагент */}
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-medium text-gray-700 truncate">{row.counterparty_raw || '—'}</div>
+          <div className="text-sm font-medium text-gray-800 truncate">{row.counterparty_raw || '—'}</div>
           {row.counterparty_inn && (
             <button
               type="button"
               onClick={copyInn}
               title="Скопировать ИНН"
-              className="inline-flex items-center gap-1 text-[10px] font-mono text-gray-400 hover:text-blue-600"
+              className="inline-flex items-center gap-1 text-xs font-mono text-gray-500 hover:text-brand-700"
             >
               ИНН {row.counterparty_inn}
-              <span className="text-gray-300">{innCopied ? '✓' : '⧉'}</span>
+              {innCopied
+                ? <Check className="w-3 h-3 text-emerald-600" aria-label="скопировано" />
+                : <Copy className="w-3 h-3 text-gray-400" aria-hidden="true" />}
             </button>
           )}
-          <div className="text-[10px] text-gray-400 leading-snug line-clamp-2 break-words">{row.purpose_raw || ''}</div>
+          <div className="mt-0.5 text-xs text-gray-500 leading-snug line-clamp-2 break-words">{row.purpose_raw || ''}</div>
         </div>
 
         {/* Статус */}
-        <div className="w-36 shrink-0 text-right flex items-center justify-end gap-2">
+        <div className="w-44 shrink-0 flex items-center justify-end gap-2">
           {isPosted ? (
             <>
-              <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
-                🔗 Создано ({postedIds.length})
-              </span>
-              <button
-                onClick={e => { e.stopPropagation(); loadAndExpand() }}
-                disabled={loadingOps}
-                className="text-[10px] text-orange-500 hover:text-orange-700 border border-orange-200 hover:border-orange-400 px-1.5 py-0.5 rounded transition-colors shrink-0 disabled:opacity-50"
-                title="Скорректировать"
-              >
-                {loadingOps ? '...' : '✎ Изменить'}
-              </button>
+              <Badge tone="green"><Link2 className="w-3 h-3" aria-hidden="true" />Создано · {postedIds.length}</Badge>
+              <Button size="xs" variant="ghost" icon={Pencil} loading={loadingOps}
+                onClick={e => { e.stopPropagation(); loadAndExpand() }} title="Поправить созданные операции">
+                Изменить
+              </Button>
             </>
           ) : ignored ? (
-            <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">Пропущено</span>
+            <Badge tone="gray">Пропущено</Badge>
           ) : isMatched ? (
-            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✓ Готово</span>
+            <Badge tone="brand"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />Готово</Badge>
           ) : (
-            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Не размечено</span>
+            <Badge tone="amber">Не размечено</Badge>
           )}
         </div>
 
-        {/* Кнопка игнорировать */}
+        {/* Пропустить строку — словом, а не значком ⊘: значок никто не
+            опознавал, и строки, которые не нужны, создавались операциями */}
         {!isPosted && (
           <button
             onClick={e => { e.stopPropagation(); setIgnored(v => !v) }}
-            className="text-[10px] text-gray-400 hover:text-gray-600 shrink-0"
-            title={ignored ? 'Восстановить' : 'Пропустить'}
+            className="w-20 shrink-0 text-xs text-gray-500 hover:text-gray-900 hover:underline underline-offset-2"
+            title={ignored ? 'Вернуть строку к разметке' : 'Не создавать по этой строке операций'}
           >
-            {ignored ? '↩' : '⊘'}
+            {ignored ? 'Вернуть' : 'Пропустить'}
           </button>
         )}
 
-        {/* Стрелка раскрытия */}
-        {(!isPosted || expanded) && !ignored && (
-          <span className="text-gray-400 text-xs shrink-0" onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}>{expanded ? '▲' : '▼'}</span>
-        )}
+        {/* Раскрыть разметку */}
+        {(!isPosted || expanded) && !ignored ? (
+          <span className="shrink-0 text-gray-400" onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}>
+            <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-label={expanded ? 'Свернуть' : 'Раскрыть'} />
+          </span>
+        ) : <span className="w-4 shrink-0" />}
       </div>
 
       {/* Панель разметки */}
       {expanded && !ignored && (
-        <div className="px-4 pb-3 space-y-2">
+        <div className="px-4 pt-1 pb-4 space-y-2 border-t border-gray-100 bg-gray-50/50">
           {ops.map((op, idx) => (
             <OperationLine
               key={idx}
@@ -572,38 +583,34 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
 
           {/* Счётчик распределения */}
           {ops.length > 1 && (
-            <div className={`text-xs px-2 py-1 rounded ${Math.abs(remainder) < 0.01 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-700 bg-amber-50'}`}>
+            <div className={`text-xs px-2.5 py-1.5 rounded-lg ${Math.abs(remainder) < 0.01 ? 'text-emerald-700 bg-emerald-50' : 'text-amber-800 bg-amber-50'}`}>
               Распределено: {fmt(distributed)} из {fmt(targetAmount)}
               {Math.abs(remainder) > 0.01 && ` · Остаток: ${fmt(remainder)}`}
             </div>
           )}
 
           {/* Кнопка «Разбить» */}
-          <button
-            onClick={() => setOps([...ops, { ...makeDefaultOp(), amount: Math.max(0, remainder) }])}
-            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-          >
-            <span>+</span> Добавить операцию (разбить)
-          </button>
+          <Button size="xs" variant="ghost" icon={Plus} className="text-brand-700"
+            onClick={() => setOps([...ops, { ...makeDefaultOp(), amount: Math.max(0, remainder) }])}>
+            Разбить на несколько операций
+          </Button>
 
           {/* Кнопка сохранения изменений — перезаписываем существующие операции */}
           {isPosted && (
             <div className="pt-2 border-t border-gray-200 flex items-center justify-between gap-3">
-              <span className="text-[10px] text-gray-400">
-                Обновление {postedIds.length} операции(й) без удаления
+              <span className="text-xs text-gray-500">
+                Созданные операции ({postedIds.length}) будут обновлены, а не созданы заново
               </span>
               <div className="flex gap-2">
-              <button
+              <Button size="sm" variant="ghost"
                 onClick={() => {
                   if (savedOps) setOps(savedOps)
                   setExpanded(false)
-                }}
-                className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 px-3 py-1.5 rounded-lg transition-colors"
-              >
+                }}>
                 Отмена
-              </button>
-              <button
-                disabled={reloading || !isReady}
+              </Button>
+              <Button size="sm" variant="primary" icon={Save} loading={reloading}
+                disabled={!isReady}
                 onClick={async () => {
                   setReloading(true)
                   try {
@@ -655,16 +662,16 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
                     }
                     setPostedIds(newIds)
                     setExpanded(false)
+                    toast.success('Операции обновлены')
                   } catch(e) {
                     toast.error(apiError(e, e.message))
                   } finally {
                     setReloading(false)
                   }
                 }}
-                className="text-xs bg-orange-500 text-white px-3 py-1.5 rounded-lg hover:bg-orange-600 disabled:opacity-40 transition-colors"
               >
-                {reloading ? 'Сохраняем...' : '↻ Сохранить изменения'}
-              </button>
+                Сохранить изменения
+              </Button>
               </div>
             </div>
           )}
@@ -681,7 +688,9 @@ export default function BankStatementPage() {
   const [dragging, setDragging] = useState(false)
   const [parsing, setParsing]   = useState(false)
   const [saving, setSaving]     = useState(false)
-  const [error, setError]       = useState('')
+  // Ошибки — уведомлением, а не плашкой над формой: выписку размечают внизу
+  // длинного списка, и плашка вверху страницы оставалась за краем экрана
+  const setError = (msg) => { if (msg) toast.error(msg) }
 
   // Данные из парсера
   const [header, setHeader]         = useState(null)
@@ -950,56 +959,21 @@ export default function BankStatementPage() {
     }
   }
 
-  const ic = 'px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+  const ic = 'h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
   return (
     <Layout>
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Банковская выписка</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Загрузите TXT-файл формата 1C ClientBankExchange</p>
-        </div>
-        {rows.length > 0 && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setAllIgnored(true)}
-              className="px-3 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-              title="Пропустить все строки"
-            >
-              Снять все
-            </button>
-            <button
-              onClick={() => setAllIgnored(false)}
-              className="px-3 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-              title="Выбрать все строки"
-            >
-              Выбрать все
-            </button>
-            {readyRows.length > 0 && (
-              <button
-                onClick={handleCreate}
-                disabled={saving || !projectId || !cashInfoId}
-                className="bg-blue-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors flex items-center gap-2"
-              >
-                {saving ? 'Создаём...' : `Создать операции (${readyRows.length})`}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">{error}</div>
-      )}
+      <PageHeader title="Банковская выписка"
+        subtitle="Загрузите файл выписки из банка — строки станут операциями. Формат 1С: ClientBankExchange, .txt" />
 
       {/* ── Шапка формы ── */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
-        <div className="grid grid-cols-2 gap-4 mb-4">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5 mb-5">
+        <div className={`grid grid-cols-2 gap-4 ${header ? 'mb-4' : ''}`}>
           {/* Загрузка файла */}
           <div
-            className={`col-span-2 border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
-              dragging ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
-            }`}
+            className={`col-span-2 border-2 border-dashed rounded-xl text-center cursor-pointer transition-colors ${
+              header ? 'px-5 py-3' : 'px-6 py-10'
+            } ${dragging ? 'border-brand-400 bg-brand-50' : 'border-gray-200 hover:border-brand-300 hover:bg-gray-50'}`}
             onDragOver={e => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
@@ -1007,24 +981,32 @@ export default function BankStatementPage() {
           >
             <input id="bank-file-input" type="file" accept=".txt" className="hidden" onChange={onFileInput} />
             {parsing ? (
-              <div className="text-blue-600 text-sm">Парсим файл...</div>
+              <div className="text-brand-700 text-sm">Читаю файл…</div>
             ) : header ? (
-              <div className="text-sm text-gray-600">
-                <span className="font-medium text-gray-800">{header.bank_name}</span>
-                {' · '}счёт {header.account_number}
-                {' · '}{header.date_from} — {header.date_to}
-                <span className="ml-3 text-xs text-gray-400">Нажмите для замены файла</span>
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm text-gray-600">
+                <FileUp className="w-4 h-4 text-gray-400" aria-hidden="true" />
+                <span className="font-medium text-gray-900">{header.bank_name}</span>
+                <span>счёт <span className="font-mono">{header.account_number}</span></span>
+                <span className="tabular-nums">{fmtDate(header.date_from)} — {fmtDate(header.date_to)}</span>
+                <span className="text-xs text-brand-700">Заменить файл</span>
               </div>
             ) : (
-              <div className="text-gray-400 text-sm">
-                Перетащите TXT-файл сюда или нажмите для выбора
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 mb-3 rounded-2xl bg-brand-50 text-brand-600 flex items-center justify-center">
+                  <FileUp className="w-6 h-6" aria-hidden="true" />
+                </div>
+                <div className="text-sm font-medium text-gray-800">Перетащите файл выписки сюда</div>
+                <div className="mt-1 text-sm text-gray-500">или нажмите, чтобы выбрать на компьютере</div>
+                <div className="mt-3 text-xs text-gray-500 max-w-md">
+                  В интернет-банке выберите «Экспорт в 1С» — получится файл .txt. Операции появятся только после проверки и нажатия «Создать».
+                </div>
               </div>
             )}
           </div>
         </div>
 
         {header && (
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Расчётный счёт */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Расчётный счёт</label>
@@ -1058,13 +1040,13 @@ export default function BankStatementPage() {
             {/* Остатки */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Остаток на начало</label>
-              <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm font-mono text-gray-700">
+              <div className="h-9 flex items-center px-3 bg-gray-50 rounded-lg text-sm tabular-nums text-gray-800">
                 {fmt(header.opening_balance)}
               </div>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Остаток на конец</label>
-              <div className="px-3 py-2 bg-gray-50 rounded-lg text-sm font-mono text-gray-700">
+              <div className="h-9 flex items-center px-3 bg-gray-50 rounded-lg text-sm tabular-nums text-gray-800">
                 {fmt(header.closing_balance)}
               </div>
             </div>
@@ -1073,15 +1055,13 @@ export default function BankStatementPage() {
 
         {/* Статистика */}
         {stats && (
-          <div className="flex gap-4 mt-4 pt-4 border-t border-gray-100">
-            <span className="text-xs text-gray-500">Строк: <b>{stats.total}</b></span>
-            <span className="text-xs text-emerald-600">Сопоставлено: <b>{stats.matched}</b></span>
-            {stats.existing > 0 && (
-              <span className="text-xs text-blue-600">Уже загружено: <b>{stats.existing}</b></span>
+          <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">
+            <Badge tone="gray">Строк в файле · {stats.total}</Badge>
+            <Badge tone="brand">Распознано правилами · {stats.matched}</Badge>
+            {stats.existing > 0 && <Badge tone="green">Уже загружено раньше · {stats.existing}</Badge>}
+            {stats.total - stats.matched - stats.existing > 0 && (
+              <Badge tone="amber">Нужно разметить · {stats.total - stats.matched - stats.existing}</Badge>
             )}
-            <span className="text-xs text-amber-600">
-              Требует разметки: <b>{stats.total - stats.matched - stats.existing}</b>
-            </span>
           </div>
         )}
       </div>
@@ -1089,16 +1069,17 @@ export default function BankStatementPage() {
       {/* ── Таблица строк ── */}
       {rows.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-700">Строки выписки</h2>
-            <div className="text-xs text-gray-400">
-              Готово к созданию: <span className="font-medium text-emerald-600">{readyRows.length}</span> из {rows.length}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold text-gray-800">Строки выписки · {rows.length}</h2>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setAllIgnored(true)} title="Пропустить все строки">Пропустить все</Button>
+              <Button size="sm" variant="ghost" onClick={() => setAllIgnored(false)} title="Вернуть все строки к разметке">Вернуть все</Button>
             </div>
           </div>
 
           {/* ── ИИ: доразбор нераспознанного + предложения правил ── */}
           {(unmatchedIdx.length > 0 || aiRules.length > 0 || aiDone > 0) && (
-            <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+            <div className="mb-3 rounded-xl border border-brand-200 bg-brand-50/60 p-3.5">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="text-sm text-gray-700">
                   {unmatchedIdx.length > 0 ? (
@@ -1109,27 +1090,23 @@ export default function BankStatementPage() {
                   {aiDone > 0 && <span className="text-green-700"> · ИИ разметил {aiDone}</span>}
                 </div>
                 {unmatchedIdx.length > 0 && (
-                  <button onClick={runAi} disabled={aiBusy}
-                    className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-medium hover:bg-blue-800 disabled:opacity-40">
+                  <Button size="sm" variant="primary" icon={Sparkles} loading={aiBusy} onClick={runAi}>
                     {aiBusy
-                      ? (aiProgress ? `Разбираю… ${aiProgress.done}/${aiProgress.total}` : 'Разбираю…')
-                      : `Разобрать ИИ (${unmatchedIdx.length})`}
-                  </button>
+                      ? (aiProgress ? `Разбираю… ${aiProgress.done} из ${aiProgress.total}` : 'Разбираю…')
+                      : `Разобрать с помощью ИИ · ${unmatchedIdx.length}`}
+                  </Button>
                 )}
               </div>
 
               {aiError && <p className="text-xs text-red-600 mt-2">{aiError}</p>}
 
               {aiRules.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-blue-200">
+                <div className="mt-3 pt-3 border-t border-brand-200">
                   <div className="flex items-center justify-between gap-3 mb-2">
-                    <p className="text-xs font-medium text-blue-800">
+                    <p className="text-xs font-medium text-brand-800">
                       Закрепить правилами ({aiRules.length}) — дальше такие платежи распознаются бесплатно:
                     </p>
-                    <button onClick={saveAiRules} disabled={aiBusy}
-                      className="px-3 py-1 bg-violet-600 text-white rounded-lg text-xs font-medium hover:bg-violet-700 disabled:opacity-40">
-                      Создать правила
-                    </button>
+                    <Button size="sm" disabled={aiBusy} onClick={saveAiRules}>Создать правила</Button>
                   </div>
                   <div className="space-y-1 max-h-40 overflow-y-auto">
                     {aiRules.map((r, k) => (
@@ -1141,8 +1118,8 @@ export default function BankStatementPage() {
                           <span className="text-gray-400">→</span> <b>{r.category}</b>
                           {r.reason && <span className="block text-gray-400">{r.reason}</span>}
                         </span>
-                        <button onClick={() => setAiRules(list => list.filter((_, j) => j !== k))}
-                          className="text-gray-300 hover:text-red-500 px-1" title="Не создавать это правило">×</button>
+                        <IconButton icon={X} size="xs" variant="danger" label="Не создавать это правило"
+                          onClick={() => setAiRules(list => list.filter((_, j) => j !== k))} />
                       </div>
                     ))}
                   </div>
@@ -1176,6 +1153,25 @@ export default function BankStatementPage() {
               }}
             />
           ))}
+
+          {/* Итог и главное действие — прилипают к низу экрана. Раньше кнопка
+              «Создать» жила в шапке страницы: разметив строки внизу списка,
+              за ней приходилось прокручивать наверх */}
+          <div className="sticky bottom-0 z-10 -mx-4 md:-mx-6 mt-4 px-4 md:px-6 py-3 bg-white/90 backdrop-blur border-t border-gray-200">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-gray-600">
+                Готово к созданию: <span className="font-semibold text-gray-900 tabular-nums">{readyRows.length}</span> из {rows.length}
+                {(!projectId || !cashInfoId) && (
+                  <span className="ml-2 text-amber-700">· выберите {!cashInfoId ? 'расчётный счёт' : 'проект'} вверху</span>
+                )}
+              </div>
+              <Button variant="primary" icon={Check} loading={saving}
+                disabled={!readyRows.length || !projectId || !cashInfoId}
+                onClick={handleCreate}>
+                Создать операции{readyRows.length ? ` · ${readyRows.length}` : ''}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </Layout>

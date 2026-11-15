@@ -5,6 +5,8 @@ import { getFundPlanDoc, saveFundPlanDoc } from '../api/funds'
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import AmountInput from '../components/AmountInput'
+import { Button } from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
 
 const DOW_SHORT = { 0: 'Вс', 1: 'Пн', 2: 'Вт', 3: 'Ср', 4: 'Чт', 5: 'Пт', 6: 'Сб' }
 const localDate = (d) => { const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return x.toISOString().slice(0, 10) }
@@ -16,7 +18,7 @@ const weekStartFor = (dateIso, dow) => {
 const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return localDate(d) }
 const fmtShort = (iso) => { const [, m, d] = iso.split('-'); return `${d}.${m}` }
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(v || 0)
-const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 let seq = 0
 const lid = () => `l${Date.now().toString(36)}${(seq++).toString(36)}`
@@ -163,34 +165,34 @@ export default function FundPlanningPage() {
 
   const Stat = ({ label, value, cls = 'text-gray-800' }) => (
     <div className="text-right">
-      <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
+      <div className="text-2xs text-gray-400 uppercase tracking-wide">{label}</div>
       <div className={`text-sm font-semibold tabular-nums ${cls}`}>{money(value)}</div>
     </div>
   )
 
   return (
     <Layout>
-      <div className="py-1 space-y-4">
+      <div className="space-y-4">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Акт финансового планирования</h1>
+            <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Акт финансового планирования</h1>
             <p className="text-sm text-gray-500 mt-1">По каждому фонду планируем расходы (статья ДДС + сумма + комментарий). Остаток переходит на следующую неделю.</p>
           </div>
-          <button onClick={() => navigate('/fund-schemes')} className="text-sm text-blue-600 hover:text-blue-700">Модели распределения →</button>
+          <button onClick={() => navigate('/fund-schemes')} className="text-sm text-brand-600 hover:text-brand-700">Модели распределения →</button>
         </div>
 
         {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3">{notice}</div>}
 
         {loading ? (
-          <div className="text-sm text-gray-400 py-8 text-center">Загрузка…</div>
+          <SkeletonRows rows={4} height="h-9" />
         ) : schemes.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-10 text-center text-sm text-gray-500">
-            Нет моделей распределения. <button onClick={() => navigate('/fund-schemes')} className="text-blue-600 hover:underline">Создайте модель</button>.
+          <div className="bg-white rounded-xl border border-gray-200/80 shadow-card px-5 py-10 text-center text-sm text-gray-500">
+            Нет моделей распределения. <button onClick={() => navigate('/fund-schemes')} className="text-brand-600 hover:underline">Создайте модель</button>.
           </div>
         ) : (
           <>
             {/* Модель, неделя, статус */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center gap-4 flex-wrap">
+            <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-4 flex items-center gap-4 flex-wrap">
               <label className="flex items-center gap-2 text-sm text-gray-600">Модель
                 <select className={ic} value={schemeId || ''} onChange={e => changeScheme(Number(e.target.value))}>
                   {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -221,7 +223,7 @@ export default function FundPlanningPage() {
                 )}
                 {locked
                   ? <button onClick={() => save('draft')} disabled={saving} className="px-4 py-1.5 text-amber-600 text-sm hover:text-amber-700">Снять утверждение</button>
-                  : <button onClick={() => save('approved')} disabled={saving} className="px-4 py-1.5 bg-blue-900 text-white rounded-lg text-sm hover:bg-blue-800 disabled:opacity-40">Утвердить</button>}
+                  : <Button variant="primary" onClick={() => save('approved')} disabled={saving}>Утвердить</Button>}
               </div>
             </div>
 
@@ -233,15 +235,15 @@ export default function FundPlanningPage() {
             )}
 
             {/* Поступление */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div className="bg-white rounded-xl border border-gray-200/80 shadow-card px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
               <span className="text-sm font-medium text-gray-600">Поступление за неделю (факт)</span>
               <div className="flex items-center gap-3">
                 <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${percentOk ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                  {percentOk ? `Распределение: ${percentSum}%` : `⚠ Распределение: ${percentSum}% — должно быть 100%`}
+                  {percentOk ? `Распределение: ${percentSum}%` : `Распределение: ${percentSum}% — должно быть 100%`}
                 </span>
                 {!locked && <button onClick={resetPercents} className="text-xs text-gray-400 hover:text-gray-700">Сбросить %</button>}
               </div>
-              <span className="text-2xl font-bold text-blue-600">{money(incomeWeek)}</span>
+              <span className="text-2xl font-semibold tracking-tight tabular-nums text-brand-600">{money(incomeWeek)}</span>
             </div>
 
             {/* Фонды */}
@@ -250,20 +252,20 @@ export default function FundPlanningPage() {
               const articles = f.flow_info_ids || []
               const fLines = linesOf(f.id)
               return (
-                <div key={f.id} className="bg-white rounded-xl border border-gray-100 shadow-sm">
+                <div key={f.id} className="bg-white rounded-xl border border-gray-200/80 shadow-card">
                   <div className="flex items-center gap-4 px-5 py-3 border-b border-gray-100 flex-wrap">
                     <div className="flex items-center gap-2 sm:min-w-[240px]">
                       <span className="font-semibold text-gray-800">{f.name}</span>
                       <span className="flex items-center gap-1 text-sm text-gray-500">
                         <input type="number" step="1" min="0" max="100" value={d.pct} disabled={locked}
                           onChange={e => setPercent(f.id, e.target.value)} title="Процент распределения"
-                          className={`w-14 px-1.5 py-0.5 border rounded text-right text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:bg-gray-50 ${percentOk ? 'border-gray-200' : 'border-red-300 bg-red-50'}`} />
+                          className={`w-14 px-1.5 py-0.5 border rounded text-right text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 disabled:opacity-60 disabled:bg-gray-50 ${percentOk ? 'border-gray-200' : 'border-red-300 bg-red-50'}`} />
                         %
                       </span>
                     </div>
                     <div className="flex items-stretch gap-5 flex-wrap">
                       <div className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-2">
-                        <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1 text-center">Факт · остатки</div>
+                        <div className="text-2xs text-gray-400 uppercase tracking-wider mb-1 text-center">Факт · остатки</div>
                         <div className="flex items-center gap-5 sm:gap-8">
                           <Stat label="Ост. начало" value={d.carriedIn} />
                           <Stat label="Пред. план" value={f.planned_prev || 0} cls="text-gray-400" />
@@ -271,12 +273,12 @@ export default function FundPlanningPage() {
                           <Stat label="Ост. конец" value={d.factAfter} cls={d.factAfter < 0 ? 'text-gray-500' : 'text-gray-700'} />
                         </div>
                       </div>
-                      <div className="rounded-lg bg-blue-50/50 border border-blue-100 px-4 py-2">
-                        <div className="text-[9px] text-blue-400 uppercase tracking-wider mb-1 text-center">Текущее планирование</div>
+                      <div className="rounded-lg bg-brand-50/50 border border-brand-100 px-4 py-2">
+                        <div className="text-2xs text-brand-400 uppercase tracking-wider mb-1 text-center">Текущее планирование</div>
                         <div className="flex items-center gap-5 sm:gap-8">
                           <Stat label="Распред." value={d.distributed} />
                           <Stat label="Разрешено" value={d.allowed} cls={d.allowed < 0 ? 'text-red-600' : 'text-green-700'} />
-                          <Stat label="Заплан." value={d.planned} cls="text-blue-700" />
+                          <Stat label="Заплан." value={d.planned} cls="text-brand-700" />
                           <Stat label="Ост. план" value={d.virtualAfter} cls={d.virtualAfter < 0 ? 'text-red-600' : 'text-gray-500'} />
                         </div>
                       </div>
@@ -310,7 +312,7 @@ export default function FundPlanningPage() {
                             <input type="text" placeholder="Комментарий" disabled={locked} className={`${ic} flex-1 min-w-[140px] disabled:bg-gray-50 disabled:text-gray-500`} value={l.comment || ''} onChange={e => editLine(l._id, { comment: e.target.value })} />
                           </div>
                         ))}
-                        {!locked && <button onClick={() => planNext(f)} className="text-blue-600 text-sm hover:text-blue-700">Запланировать</button>}
+                        {!locked && <button onClick={() => planNext(f)} className="text-brand-600 text-sm hover:text-brand-700">Запланировать</button>}
                       </>
                     )}
                   </div>
@@ -319,12 +321,12 @@ export default function FundPlanningPage() {
             })}
 
             {/* Итоги */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between flex-wrap gap-3">
+            <div className="bg-white rounded-xl border border-gray-200/80 shadow-card px-5 py-4 flex items-center justify-between flex-wrap gap-3">
               <input disabled={locked} className={`${ic} flex-1 min-w-[220px] disabled:bg-gray-50 disabled:text-gray-500`} placeholder="Примечание к акту" value={note} onChange={e => setNote(e.target.value)} />
               <div className="flex items-center gap-6 flex-wrap">
-                <div className="text-right"><div className="text-[10px] text-gray-400 uppercase">Запланировано</div><div className="text-lg font-bold text-blue-700 tabular-nums">{money(totalPlanned)}</div></div>
-                <div className="text-right"><div className="text-[10px] text-gray-400 uppercase">Разрешено (на фондах)</div><div className={`text-lg font-bold tabular-nums ${totalAllowed < 0 ? 'text-red-600' : 'text-gray-900'}`}>{money(totalAllowed)}</div></div>
-                <div className="text-right"><div className="text-[10px] text-gray-400 uppercase">Остаток план</div><div className="text-lg font-bold text-gray-500 tabular-nums">{money(totalVirtual)}</div></div>
+                <div className="text-right"><div className="text-2xs text-gray-400 uppercase">Запланировано</div><div className="text-lg font-bold text-brand-700 tabular-nums">{money(totalPlanned)}</div></div>
+                <div className="text-right"><div className="text-2xs text-gray-400 uppercase">Разрешено (на фондах)</div><div className={`text-lg font-bold tabular-nums ${totalAllowed < 0 ? 'text-red-600' : 'text-gray-900'}`}>{money(totalAllowed)}</div></div>
+                <div className="text-right"><div className="text-2xs text-gray-400 uppercase">Остаток план</div><div className="text-lg font-bold text-gray-500 tabular-nums">{money(totalVirtual)}</div></div>
               </div>
             </div>
             <p className="text-xs text-gray-400">

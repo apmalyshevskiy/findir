@@ -9,9 +9,11 @@ import { getInfo } from '../api/info'
 import { getBalanceItems } from '../api/operations'
 import { ACCOUNT_CODE } from '../utils/accountCode'
 import Layout from '../components/Layout'
-import { confirm } from '../components/ui'
+import { Button, confirm, useEscClose } from '../components/ui'
+import { AlertTriangle, Plus } from 'lucide-react'
+import { SkeletonRows } from '../components/Busy'
 
-const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 const DIRECTIONS = [
   { value: 'any', label: 'Любое' },
@@ -43,6 +45,9 @@ export default function ClassificationRulesPage() {
   const [postingForm, setPostingForm] = useState(null)   // null = закрыта, иначе объект
   const [postingEditId, setPostingEditId] = useState(null)
   const [ruleForm, setRuleForm] = useState(null)
+  // Окна разноски и правила закрывались только кликом мимо — теперь и по Esc
+  useEscClose(() => setPostingForm(null), !!postingForm)
+  useEscClose(() => setRuleForm(null), !!ruleForm)
   const [ruleEditId, setRuleEditId] = useState(null)
 
   const load = async () => {
@@ -154,16 +159,16 @@ export default function ClassificationRulesPage() {
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto py-6 space-y-8">
+      <div className="max-w-6xl mx-auto space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Правила автозаполнения</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Правила автозаполнения</h1>
           <p className="text-sm text-gray-500 mt-1">
             Разноска задаёт, куда проводить категорию (счёт и статью ДДС). Правила распознают строку выписки и присваивают категорию.
           </p>
         </div>
 
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
-        {loading && <div className="text-gray-400 text-sm">Загрузка…</div>}
+        {loading && <SkeletonRows rows={4} height="h-9" />}
 
         {/* ───── Секция РАЗНОСКА ───── */}
         <section className="bg-white border border-gray-200 rounded-xl p-5">
@@ -172,9 +177,9 @@ export default function ClassificationRulesPage() {
               <h2 className="text-lg font-semibold text-gray-900">Разноска по категориям</h2>
               <p className="text-xs text-gray-500">Категория → корр-счёт, статья ДДС, контрагент</p>
             </div>
-            <button onClick={openPostingNew} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              + Категория
-            </button>
+            <Button variant="primary" icon={Plus} onClick={openPostingNew}>
+              Категория
+            </Button>
           </div>
 
           <div className="overflow-x-auto">
@@ -206,10 +211,10 @@ export default function ClassificationRulesPage() {
                         {p.partner_mode === 'from_inn' ? 'по ИНН' : (p.partner_mode === 'none' ? '—' : <span className="text-amber-600">не задан</span>)}
                       </td>
                       <td className="py-2.5 pr-4">
-                        <button onClick={() => openPostingEdit(p)} className="text-blue-600 hover:underline text-xs">изменить</button>
+                        <button onClick={() => openPostingEdit(p)} className="text-brand-600 hover:underline text-xs">изменить</button>
                       </td>
                       <td className="py-2.5">
-                        <button onClick={() => removePosting(p.id)} className="text-gray-300 hover:text-red-500 text-xs">удалить</button>
+                        <button onClick={() => removePosting(p.id)} className="text-gray-400 hover:text-red-500 text-xs">удалить</button>
                       </td>
                     </tr>
                   )
@@ -229,9 +234,9 @@ export default function ClassificationRulesPage() {
               <h2 className="text-lg font-semibold text-gray-900">Правила классификации</h2>
               <p className="text-xs text-gray-500">Проверяются по убыванию приоритета, первое совпадение побеждает</p>
             </div>
-            <button onClick={openRuleNew} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              + Правило
-            </button>
+            <Button variant="primary" icon={Plus} onClick={openRuleNew}>
+              Правило
+            </Button>
           </div>
 
           <div className="overflow-x-auto">
@@ -258,15 +263,17 @@ export default function ClassificationRulesPage() {
                     <td className="py-2.5 pr-4 font-mono text-xs">
                       {r.category}
                       {categoriesWithoutPosting.has(r.category) && (
-                        <span className="ml-1 text-amber-600" title="Нет разноски для этой категории">⚠</span>
+                        <span className="ml-1 inline-flex align-[-2px] text-amber-600" title="Нет разноски для этой категории">
+                          <AlertTriangle className="w-3.5 h-3.5" aria-label="нет разноски" />
+                        </span>
                       )}
                     </td>
                     <td className="py-2.5 pr-4 text-xs text-gray-400">{r.hit_count ?? 0}</td>
                     <td className="py-2.5 pr-4">
-                      <button onClick={() => openRuleEdit(r)} className="text-blue-600 hover:underline text-xs">изменить</button>
+                      <button onClick={() => openRuleEdit(r)} className="text-brand-600 hover:underline text-xs">изменить</button>
                     </td>
                     <td className="py-2.5">
-                      <button onClick={() => removeRule(r.id)} className="text-gray-300 hover:text-red-500 text-xs">удалить</button>
+                      <button onClick={() => removeRule(r.id)} className="text-gray-400 hover:text-red-500 text-xs">удалить</button>
                     </td>
                   </tr>
                 ))}
@@ -286,7 +293,7 @@ export default function ClassificationRulesPage() {
 
       {/* ───── Модалка РАЗНОСКА ───── */}
       {postingForm && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setPostingForm(null)}>
+        <div className="fixed inset-0 bg-brand-950/40 flex items-center justify-center z-50 p-4" onClick={() => setPostingForm(null)}>
           <div className="bg-white rounded-xl p-6 w-full max-w-lg space-y-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">{postingEditId ? 'Разноска' : 'Новая разноска'}</h3>
 
@@ -331,8 +338,7 @@ export default function ClassificationRulesPage() {
 
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setPostingForm(null)} className="px-4 py-2 text-gray-600 text-sm">Отмена</button>
-              <button onClick={savePosting} disabled={!postingForm.category.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">Сохранить</button>
+              <Button variant="primary" onClick={savePosting} disabled={!postingForm.category.trim()}>Сохранить</Button>
             </div>
           </div>
         </div>
@@ -340,7 +346,7 @@ export default function ClassificationRulesPage() {
 
       {/* ───── Модалка ПРАВИЛО ───── */}
       {ruleForm && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setRuleForm(null)}>
+        <div className="fixed inset-0 bg-brand-950/40 flex items-center justify-center z-50 p-4" onClick={() => setRuleForm(null)}>
           <div className="bg-white rounded-xl p-6 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold">{ruleEditId ? 'Правило' : 'Новое правило'}</h3>
 
@@ -412,8 +418,7 @@ export default function ClassificationRulesPage() {
 
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setRuleForm(null)} className="px-4 py-2 text-gray-600 text-sm">Отмена</button>
-              <button onClick={saveRule} disabled={!ruleForm.category.trim()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40">Сохранить</button>
+              <Button variant="primary" onClick={saveRule} disabled={!ruleForm.category.trim()}>Сохранить</Button>
             </div>
           </div>
         </div>

@@ -6,7 +6,8 @@ import {
   getIntegrationTypes, getIntegrations, createIntegration, updateIntegration,
   deleteIntegration, testIntegration,
 } from '../api/integrations'
-import { confirm } from '../components/ui'
+import { Button, confirm } from '../components/ui'
+import { Plus } from 'lucide-react'
 
 /**
  * Настройки интеграций: связь с учётной системой и правила переноса.
@@ -109,21 +110,20 @@ export default function IntegrationsPage() {
 
   return (
     <Layout>
-      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Настройка интеграций</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Настройка интеграций</h1>
+          <p className="text-sm text-gray-500 mt-1">
             Связь с учётной системой и правила переноса. Заполняется один раз —
             сама загрузка живёт рядом, в{' '}
-            <Link to="/data-import" className="text-blue-700 hover:underline">загрузке из учётных систем</Link>.
+            <Link to="/data-import" className="text-brand-700 hover:underline">загрузке из учётных систем</Link>.
           </p>
         </div>
         <div className="flex gap-2">
           {Object.entries(types).map(([key, t]) => (
-            <button key={key} onClick={() => openNew(key)}
-              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
-              + {t.label}
-            </button>
+            <Button variant="primary" icon={Plus} key={key} onClick={() => openNew(key)}>
+              {t.label}
+            </Button>
           ))}
         </div>
       </div>
@@ -131,7 +131,7 @@ export default function IntegrationsPage() {
       <div className="grid gap-4 lg:grid-cols-[320px_1fr] items-start">
 
         {/* ── Список ──────────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-3">
           {items.length === 0 && (
             <div className="text-sm text-gray-500 p-3">
               Пока ни одной. Интеграция забирает данные из учётной системы и раскладывает
@@ -141,12 +141,12 @@ export default function IntegrationsPage() {
           {items.map(i => (
             <button key={i.id} onClick={() => openEdit(i)}
               className={'w-full text-left px-3 py-2.5 rounded-lg mb-1 ' +
-                (editing?.id === i.id ? 'bg-blue-50' : 'hover:bg-gray-50')}>
+                (editing?.id === i.id ? 'bg-brand-50' : 'hover:bg-gray-50')}>
               <div className="flex items-center gap-2">
                 <span className={'w-2 h-2 rounded-full shrink-0 ' + (i.is_active ? 'bg-green-500' : 'bg-gray-300')} />
                 <span className="text-sm font-medium text-gray-800 truncate">{i.name}</span>
               </div>
-              <div className="text-[11px] text-gray-400 mt-0.5 pl-4">
+              <div className="text-2xs text-gray-400 mt-0.5 pl-4">
                 {types[i.type]?.label || i.type}
                 {!i.is_ready && <span className="text-amber-700"> · не настроена до конца</span>}
               </div>
@@ -156,16 +156,16 @@ export default function IntegrationsPage() {
 
         {/* ── Карточка ────────────────────────────────────────────── */}
         {editing ? (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-6 space-y-6">
 
             <div className="flex items-end gap-3 flex-wrap">
               <div className="flex-1 min-w-[220px]">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Название</label>
-                <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500"
                   value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} />
               </div>
               <label className="flex items-center gap-2 cursor-pointer pb-2">
-                <input type="checkbox" className="w-4 h-4 accent-blue-900"
+                <input type="checkbox" className="w-4 h-4 accent-brand-900"
                   checked={!!editing.is_active}
                   onChange={e => setEditing({ ...editing, is_active: e.target.checked })} />
                 <span className="text-sm text-gray-700">Включена</span>
@@ -188,10 +188,9 @@ export default function IntegrationsPage() {
             )}
 
             <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
-              <button onClick={save} disabled={busy === 'save'}
-                className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+              <Button variant="primary" onClick={save} disabled={busy === 'save'}>
                 {busy === 'save' ? 'Сохраняю...' : 'Сохранить'}
-              </button>
+              </Button>
               {/* У файлового обмена связи нет: проверять нечего, и кнопка
                   только сбивала бы с толку */}
               {types[editing.type]?.kind !== 'file' && (
@@ -211,13 +210,13 @@ export default function IntegrationsPage() {
             {editing.id && (
               <div className="pt-4 border-t border-gray-100 text-sm text-gray-500">
                 Настроили — дальше грузите данные в{' '}
-                <Link to="/data-import" className="text-blue-700 hover:underline font-medium">загрузке из учётных систем</Link>.
+                <Link to="/data-import" className="text-brand-700 hover:underline font-medium">загрузке из учётных систем</Link>.
                 Сюда возвращаться не нужно.
               </div>
             )}
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8 text-sm text-gray-500">
+          <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-8 text-sm text-gray-500">
             Выберите интеграцию слева или добавьте новую.
           </div>
         )}

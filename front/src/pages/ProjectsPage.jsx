@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import Layout from '../components/Layout'
-import { confirm } from '../components/ui'
+import { Button, confirm } from '../components/ui'
+import { Pencil, Plus, X } from 'lucide-react'
+import { SkeletonRows } from '../components/Busy'
 
-const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 // Частые валюты и часовые пояса — для выпадашек. Можно ввести своё значение.
 const CURRENCIES = ['RUB', 'USD', 'EUR', 'KZT', 'BYN', 'UAH', 'CNY']
@@ -171,22 +173,21 @@ export default function ProjectsPage() {
       </div>
       <div className="flex justify-end gap-2 pt-1">
         <button onClick={closeForm} className="px-4 py-2 text-gray-600 text-sm">Отмена</button>
-        <button
+        <Button variant="primary"
           onClick={save}
-          disabled={saving || !form.name.trim()}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40"
-        >
+          disabled={saving || !form.name.trim()}>
+
           {saving ? 'Сохранение…' : 'Сохранить'}
-        </button>
+        </Button>
       </div>
     </div>
   )
 
   return (
     <Layout>
-      <div className="max-w-4xl mx-auto py-6 space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Проекты</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Проекты</h1>
           <p className="text-sm text-gray-500 mt-1">
             Направления учёта. Каждая операция и документ относятся к проекту.
             Проект можно вложить в другой для иерархии.
@@ -196,20 +197,20 @@ export default function ProjectsPage() {
         {error &&  <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>}
         {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3">{notice}</div>}
 
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Список проектов</h2>
             {editId !== 'new' && (
-              <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-                + Проект
-              </button>
+              <Button variant="primary" icon={Plus} onClick={openCreate}>
+                Проект
+              </Button>
             )}
           </div>
 
           {editId === 'new' && <div className="mb-4">{renderForm()}</div>}
 
           {loading ? (
-            <div className="text-sm text-gray-500 py-8 text-center">Загрузка…</div>
+            <SkeletonRows rows={4} height="h-9" />
           ) : projects.length === 0 ? (
             <div className="text-sm text-gray-500 py-8 text-center">
               Проектов нет. Нажмите «+ Проект», чтобы добавить первый.
@@ -238,8 +239,8 @@ export default function ProjectsPage() {
                       <td className="py-2 pr-3 text-gray-600">{p.currency}</td>
                       <td className="py-2 pr-3 text-gray-600">{p.timezone}</td>
                       <td className="py-2 text-right whitespace-nowrap">
-                        <button onClick={() => openEdit(p)} className="text-gray-400 hover:text-blue-600 text-sm px-1.5" title="Редактировать">✎</button>
-                        <button onClick={() => remove(p)} className="text-gray-400 hover:text-red-600 text-sm px-1.5" title="Удалить">✕</button>
+                        <button onClick={() => openEdit(p)} className="text-gray-400 hover:text-brand-600 text-sm px-1.5" title="Редактировать"><Pencil className="w-4 h-4" aria-hidden="true" /></button>
+                        <button onClick={() => remove(p)} className="text-gray-400 hover:text-red-600 text-sm px-1.5" title="Удалить"><X className="w-4 h-4" aria-hidden="true" /></button>
                       </td>
                     </tr>
                   )

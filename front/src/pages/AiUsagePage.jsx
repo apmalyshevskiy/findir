@@ -55,13 +55,13 @@ export default function AiUsagePage() {
   // наценки не должна переписывать историю
   const withMarkup = (v) => Number(v || 0) * (1 + markup / 100)
 
-  const ic = 'px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+  const ic = 'px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
   return (
     <Layout>
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Расход на ИИ</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Расход на ИИ</h1>
           <p className="text-sm text-gray-500 mt-1">
             Токены и стоимость по данным шлюза. {markup > 0
               ? `Показано с наценкой ${markup}%.`
@@ -88,14 +88,14 @@ export default function AiUsagePage() {
                 {money(withMarkup(data.totals.cost), currency)}
               </p>
               {data.totals.without_cost > 0 && (
-                <p className="text-[11px] text-amber-600 mt-1">
+                <p className="text-2xs text-amber-600 mt-1">
                   {data.totals.without_cost} вызовов без цены от шлюза — в сумму не вошли
                 </p>
               )}
             </div>
             <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
               <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Токенов</p>
-              <p className="text-3xl font-bold text-blue-600">{num(data.totals.total_tokens)}</p>
+              <p className="text-3xl font-bold text-brand-600">{num(data.totals.total_tokens)}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
               <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Обращений к ИИ</p>
@@ -103,7 +103,7 @@ export default function AiUsagePage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mb-6">
+          <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden mb-6">
             <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 text-sm font-semibold text-gray-700">
               По видам работ
             </div>
@@ -140,7 +140,7 @@ export default function AiUsagePage() {
           </div>
 
           {data.recent.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
               <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 text-sm font-semibold text-gray-700">
                 Последние обращения
               </div>

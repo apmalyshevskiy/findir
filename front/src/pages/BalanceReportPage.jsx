@@ -104,7 +104,7 @@ export default function BalanceReportPage() {
   /** Одна строка раздела; дети — у строки прибыли */
   const row = (r, depth = 0) => (
     <Fragment key={`${r.bi_id ?? 'calc'}-${r.name}`}>
-      <tr className="border-b border-gray-50 hover:bg-blue-50/40">
+      <tr className="border-b border-gray-50 hover:bg-brand-50/40">
         <td className="py-1.5 pr-3 text-gray-700" style={{ paddingLeft: 12 + depth * 16 }}>
           {r.code && <span className="text-gray-400 mr-1.5 tabular-nums">{r.code}</span>}
           {r.name}
@@ -130,7 +130,7 @@ export default function BalanceReportPage() {
   )
 
   const column = (key, title) => (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
       <div className="px-4 py-2.5 border-b border-gray-100 flex items-baseline justify-between">
         <h3 className="font-semibold text-gray-800">{title}</h3>
         <span className="text-sm tabular-nums font-semibold text-gray-700">
@@ -168,7 +168,7 @@ export default function BalanceReportPage() {
   return (
     <Layout>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Баланс</h2>
+        <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Баланс</h1>
         <BusyLabel active={loading}>Считаю баланс</BusyLabel>
 
         <div className="flex items-center gap-3 flex-wrap ml-auto">

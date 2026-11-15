@@ -151,7 +151,7 @@ function StructureEditor({ doc, resolved, available, onSaved }) {
                   )}
                   <button type="button" title="Убрать уровень"
                     onClick={() => edit(section, levels.filter((_, k) => k !== i))}
-                    className="text-gray-300 hover:text-red-600 px-1">×</button>
+                    className="text-gray-400 hover:text-red-600 px-1">×</button>
                 </div>
               ))}
             </div>

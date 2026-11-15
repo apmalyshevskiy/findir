@@ -8,6 +8,7 @@ import OperationsPeek from '../components/OperationsPeek'
 import { getCashFlowReport } from '../api/reports'
 import { getProjects } from '../api/projects'
 import { cashFlowSheetRows } from '../utils/reportSheets'
+import { ChevronRight } from 'lucide-react'
 
 /**
  * ОДДС прямым методом: откуда деньги пришли и куда ушли.
@@ -99,12 +100,12 @@ export default function CashFlowReportPage() {
 
     return (
       <Fragment key={key}>
-        <tr className={`border-b border-gray-50 hover:bg-blue-50/40 ${item.unassigned ? 'bg-amber-50/70' : ''}`}>
+        <tr className={`border-b border-gray-50 hover:bg-brand-50/40 ${item.unassigned ? 'bg-amber-50/70' : ''}`}>
           <td className="py-1.5 pr-3 text-gray-700" style={{ paddingLeft: 12 + depth * 18 }}>
             <span className="inline-flex items-center gap-1.5">
               {hasChildren ? (
                 <button onClick={() => toggle(key)} className="text-gray-400 hover:text-gray-600 w-3">
-                  {open ? '▾' : '▸'}
+                  <ChevronRight className={`w-3.5 h-3.5 inline-block align-[-2px] transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
                 </button>
               ) : <span className="w-3" />}
               {/* Подпорка — статья другого вида деятельности, стоящая здесь
@@ -141,7 +142,7 @@ export default function CashFlowReportPage() {
   return (
     <Layout>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Движение денег</h2>
+        <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Движение денег</h1>
         <BusyLabel active={loading}>Считаю движение</BusyLabel>
 
         <div className="flex items-center gap-3 flex-wrap ml-auto">
@@ -181,7 +182,7 @@ export default function CashFlowReportPage() {
       {!report && loading && <SkeletonRows rows={8} />}
 
       {report && !report.message && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-gray-400 border-b border-gray-100">
@@ -218,7 +219,7 @@ export default function CashFlowReportPage() {
       {peek && <OperationsPeek {...peek} onClose={() => setPeek(null)} />}
 
       {report && !report.message && (
-        <p className="text-[11px] text-gray-400 mt-3">
+        <p className="text-2xs text-gray-400 mt-3">
           Переводы между своими кассами и счетами в отчёт не входят: деньги не пришли
           и не ушли, они переложены. Вид деятельности у статьи задаётся в справочнике.
         </p>

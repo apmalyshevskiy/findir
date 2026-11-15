@@ -1,7 +1,8 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
-import { promptText } from '../components/ui'
+import { Button, promptText } from '../components/ui'
 import { getBackupSummary, downloadBackup, inspectBackup, importBackup } from '../api/backup'
+import { AlertTriangle, CheckCircle2, FileUp } from 'lucide-react'
 
 const TABLE_LABELS = {
   operations:                   'Операции',
@@ -128,7 +129,7 @@ export default function BackupPage() {
 
   return (
     <Layout>
-      <h2 className="text-xl font-semibold text-gray-800 mb-6">Архивная копия</h2>
+      <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900 mb-5">Архивная копия</h1>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">{error}</div>
@@ -137,7 +138,7 @@ export default function BackupPage() {
       <div className="grid gap-4 lg:grid-cols-2">
 
         {/* ── Выгрузка ─────────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-6">
           <h3 className="font-semibold text-gray-800">Выгрузить</h3>
           <p className="text-xs text-gray-500 mt-1">
             Один файл со всеми данными компании: операции, документы, справочники,
@@ -166,11 +167,11 @@ export default function BackupPage() {
               не в каждой копии: для переноса компании — да, для «снимка перед
               загрузкой выписки» — вряд ли */}
           <label className="flex items-start gap-2 mt-4 cursor-pointer">
-            <input type="checkbox" className="w-4 h-4 accent-blue-900 mt-0.5"
+            <input type="checkbox" className="w-4 h-4 accent-brand-900 mt-0.5"
               checked={withHistory} onChange={e => setWithHistory(e.target.checked)} />
             <span className="text-sm text-gray-700">
               С историей правок
-              <span className="block text-[11px] text-gray-400">
+              <span className="block text-2xs text-gray-400">
                 кто и что менял{summary?.counts?.object_versions
                   ? ` — ${summary.counts.object_versions} записей`
                   : ''}. Без неё файл заметно легче
@@ -178,12 +179,11 @@ export default function BackupPage() {
             </span>
           </label>
 
-          <button onClick={handleExport} disabled={busy === 'export'}
-            className="mt-3 w-full px-4 py-2.5 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
-            {busy === 'export' ? 'Формирую...' : '↓ Скачать копию'}
-          </button>
+          <Button variant="primary" className="mt-3 w-full" onClick={handleExport} disabled={busy === 'export'}>
+            {busy === 'export' ? 'Формирую…' : 'Скачать копию'}
+          </Button>
 
-          <p className="text-[11px] text-gray-400 mt-3">
+          <p className="text-2xs text-gray-400 mt-3">
             В копию входят учётные записи и должности — вместе с паролями
             (в зашифрованном виде). Храните файл как пароль: кто его получил,
             тот получил и компанию.
@@ -191,19 +191,24 @@ export default function BackupPage() {
         </div>
 
         {/* ── Загрузка ─────────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-6">
           <h3 className="font-semibold text-gray-800">Восстановить</h3>
           <p className="text-xs text-gray-500 mt-1">
             Данные компании будут <span className="text-red-600 font-medium">заменены</span> содержимым
             файла. Сначала покажем, что внутри.
           </p>
 
+          {/* Своя кнопка вместо системной: та подписана по-английски
+              («Choose File / No file chosen») и выглядит чужой в русском интерфейсе */}
           <input ref={fileRef} type="file" accept=".gz,.json,application/gzip,application/json"
             onChange={e => handlePick(e.target.files?.[0] || null)}
-            className="mt-4 block w-full text-sm text-gray-600
-                       file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0
-                       file:text-sm file:font-medium file:bg-gray-100 file:text-gray-700
-                       hover:file:bg-gray-200" />
+            className="hidden" />
+          <div className="mt-4 flex items-center gap-3 min-w-0">
+            <Button icon={FileUp} onClick={() => fileRef.current?.click()}>
+              {file ? 'Выбрать другой файл' : 'Выбрать файл копии'}
+            </Button>
+            <span className="text-sm text-gray-500 truncate">{file ? file.name : 'Файл .json.gz, выгруженный здесь же'}</span>
+          </div>
 
           {busy === 'inspect' && <div className="text-xs text-gray-400 mt-3">Читаю файл...</div>}
 
@@ -214,9 +219,10 @@ export default function BackupPage() {
               </div>
 
               {preview.tenant !== tenant.id && (
-                <div className="text-xs text-red-700 mt-1.5">
-                  ⚠ Файл от другой компании ({preview.tenant}), а вы работаете в «{tenant.id}».
-                  Восстановление перенесёт чужие данные сюда.
+                <div className="flex gap-1.5 text-xs text-red-700 mt-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                  <span>Файл от другой компании ({preview.tenant}), а вы работаете в «{tenant.id}».
+                  Восстановление перенесёт чужие данные сюда.</span>
                 </div>
               )}
 
@@ -242,7 +248,10 @@ export default function BackupPage() {
 
           {result && (
             <div className="mt-4 border border-green-200 bg-green-50/60 rounded-lg p-3 text-xs text-gray-700">
-              ✓ Восстановлено записей: <span className="font-semibold">{result.total}</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-800">
+                <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                Восстановлено записей: <span className="font-semibold">{result.total}</span>
+              </span>
               {result.skipped?.length > 0 && (
                 <div className="text-gray-500 mt-1">
                   Пропущены таблицы, которых нет в базе: {result.skipped.join(', ')}
@@ -268,7 +277,7 @@ export default function BackupPage() {
             </div>
           )}
 
-          <p className="text-[11px] text-gray-400 mt-3">
+          <p className="text-2xs text-gray-400 mt-3">
             Перед восстановлением сделайте свежую выгрузку — вернуть текущее
             состояние иначе будет нечем.
           </p>

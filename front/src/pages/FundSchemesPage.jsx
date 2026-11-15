@@ -3,9 +3,11 @@ import { getFundSchemes, getFundScheme, createFundScheme, updateFundScheme, dele
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import FlowMultiSelect from '../components/FlowMultiSelect'
-import { confirm } from '../components/ui'
+import { Button, confirm } from '../components/ui'
+import { X } from 'lucide-react'
+import { SkeletonRows } from '../components/Busy'
 
-const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 const DOW = [
   { v: 1, label: 'Понедельник' }, { v: 2, label: 'Вторник' }, { v: 3, label: 'Среда' },
   { v: 4, label: 'Четверг' }, { v: 5, label: 'Пятница' }, { v: 6, label: 'Суббота' }, { v: 0, label: 'Воскресенье' },
@@ -108,9 +110,9 @@ export default function FundSchemesPage() {
 
   return (
     <Layout>
-      <div className="py-2 space-y-4">
+      <div className="space-y-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Модели распределения (фонды)</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Модели распределения (фонды)</h1>
           <p className="text-sm text-gray-500 mt-1">
             Модель — это набор фондов с процентами распределения поступлений (в сумме 100%).
             Каждому фонду привязываются статьи ДДС; в пределах модели они не пересекаются.
@@ -122,16 +124,16 @@ export default function FundSchemesPage() {
 
         <div className="flex flex-col lg:flex-row gap-5 items-stretch lg:items-start">
           {/* Список моделей */}
-          <div className="w-full lg:w-60 flex-shrink-0 bg-white rounded-xl border border-gray-100 shadow-sm">
+          <div className="w-full lg:w-60 flex-shrink-0 bg-white rounded-xl border border-gray-200/80 shadow-card">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
               <h2 className="font-semibold text-gray-800 text-sm">Модели</h2>
-              <button onClick={startNew} className="text-blue-600 text-sm hover:text-blue-700">+ Модель</button>
+              <button onClick={startNew} className="text-brand-600 text-sm hover:text-brand-700">+ Модель</button>
             </div>
             <div className="p-2">
               {schemes.length === 0 && <p className="text-sm text-gray-400 px-2 py-3">Пока нет моделей</p>}
               {schemes.map(s => (
                 <button key={s.id} onClick={() => selectScheme(s.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 ${scheme?.id === s.id ? 'bg-blue-50 text-blue-900' : 'hover:bg-gray-50 text-gray-700'}`}>
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm mb-1 ${scheme?.id === s.id ? 'bg-brand-50 text-brand-900' : 'hover:bg-gray-50 text-gray-700'}`}>
                   <div className="font-medium truncate">{s.name}</div>
                   <div className="text-xs text-gray-400">
                     {s.funds_count} фонд(ов) · <span className={Math.abs(s.percent_sum - 100) < 0.01 ? '' : 'text-red-500'}>{s.percent_sum}%</span>
@@ -144,20 +146,19 @@ export default function FundSchemesPage() {
           {/* Редактор модели */}
           <div className="flex-1 min-w-0">
             {loading ? (
-              <div className="text-sm text-gray-400 py-8 text-center">Загрузка…</div>
+              <SkeletonRows rows={4} height="h-9" />
             ) : !scheme ? (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-10 text-center text-sm text-gray-400">
+              <div className="bg-white rounded-xl border border-gray-200/80 shadow-card px-5 py-10 text-center text-sm text-gray-400">
                 Выберите модель слева или создайте новую.
               </div>
             ) : (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+              <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
                 <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100">
                   <input className={`${ic} font-medium flex-1`} value={scheme.name} onChange={e => patch({ name: e.target.value })} placeholder="Название модели" />
                   {scheme.id && <button onClick={remove} className="text-sm text-gray-400 hover:text-red-600">Удалить</button>}
-                  <button onClick={save} disabled={saving}
-                    className="px-4 py-1.5 bg-blue-900 text-white rounded-lg text-sm hover:bg-blue-800 disabled:opacity-40">
+                  <Button variant="primary" onClick={save} disabled={saving}>
                     {saving ? 'Сохранение…' : 'Сохранить'}
-                  </button>
+                  </Button>
                 </div>
 
                 {/* Настройки модели */}
@@ -197,7 +198,7 @@ export default function FundSchemesPage() {
                           <td className="px-2 py-2 text-right"><input type="number" step="1" min="0" max="100" className={`${ic} w-16 text-right`} value={f.percent} onChange={e => editFund(i, { percent: e.target.value })} /></td>
                           <td className="px-2 py-2"><FlowMultiSelect options={opts} value={f.flow_info_ids || []} onChange={ids => editFund(i, { flow_info_ids: ids })} /></td>
                           <td className="px-2 py-2 text-right"><input type="number" step="1" className={`${ic} w-24 text-right`} value={f.opening_balance ?? 0} onChange={e => editFund(i, { opening_balance: e.target.value })} /></td>
-                          <td className="px-2 py-2 text-right"><button onClick={() => removeFund(i)} className="text-gray-400 hover:text-red-600">✕</button></td>
+                          <td className="px-2 py-2 text-right"><button onClick={() => removeFund(i)} className="text-gray-400 hover:text-red-600"><X className="w-4 h-4" aria-hidden="true" /></button></td>
                         </tr>
                       )
                     })}
@@ -212,7 +213,7 @@ export default function FundSchemesPage() {
                 </table>
                 </div>
                 <div className="px-4 py-3 flex items-center justify-between">
-                  <button onClick={addFund} className="text-blue-600 text-sm hover:text-blue-700">+ Фонд</button>
+                  <button onClick={addFund} className="text-brand-600 text-sm hover:text-brand-700">+ Фонд</button>
                   {Math.abs(percentSum - 100) >= 0.01 && <span className="text-xs text-red-600">Для сохранения сумма процентов должна быть 100%</span>}
                 </div>
               </div>

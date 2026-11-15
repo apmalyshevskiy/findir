@@ -5,7 +5,8 @@ import {
   getUsers, createUser, updateUser, setUserPassword, deleteUser, getRoles, changeMyPassword,
 } from '../api/users'
 import { whenUtc } from '../utils/datetime'
-import { confirm, promptText } from '../components/ui'
+import { Button, confirm, promptText } from '../components/ui'
+import { Plus } from 'lucide-react'
 
 /**
  * Пользователи компании — те, кто входит в систему.
@@ -22,7 +23,7 @@ import { confirm, promptText } from '../components/ui'
  * должен читаться.
  */
 
-const ic  = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic  = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 const lbl = 'block text-xs font-medium text-gray-500 mb-1'
 
 // Время входа записал сервер, а он живёт в UTC — см. utils/datetime
@@ -113,24 +114,23 @@ export default function UsersPage() {
 
   return (
     <Layout>
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Пользователи</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Пользователи</h1>
           <p className="text-sm text-gray-500 mt-1">
             Кто имеет доступ к компании и что каждому позволено. Набор прав задаётся должностью.
           </p>
         </div>
-        <button onClick={() => { setForm({ ...EMPTY, role_id: roles[0]?.id || '' }); setError('') }}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800">
-          + Добавить пользователя
-        </button>
+        <Button variant="primary" icon={Plus} onClick={() => { setForm({ ...EMPTY, role_id: roles[0]?.id || '' }); setError('') }}>
+          Добавить пользователя
+        </Button>
       </div>
 
       {error &&  <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
       {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3 mb-4">{notice}</div>}
 
       {form && (
-        <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 mb-4 space-y-4">
+        <div className="bg-white rounded-xl border border-brand-200 shadow-sm p-5 mb-4 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className={lbl}>Имя</label>
@@ -155,15 +155,14 @@ export default function UsersPage() {
                 <input className={ic} value={form.password} type="text"
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                   placeholder="не короче 8 символов" />
-                <p className="text-[11px] text-gray-400 mt-1">Передайте пользователю — он сменит его сам</p>
+                <p className="text-2xs text-gray-400 mt-1">Передайте пользователю — он сменит его сам</p>
               </div>
             )}
           </div>
           <div className="flex gap-2">
-            <button onClick={save} disabled={saving}
-              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            <Button variant="primary" onClick={save} disabled={saving}>
               {saving ? 'Сохранение...' : 'Сохранить'}
-            </button>
+            </Button>
             <button onClick={() => setForm(null)}
               className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
               Отмена
@@ -172,7 +171,7 @@ export default function UsersPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mb-6">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden mb-6">
         {users === null ? (
           <div className="p-4"><SkeletonRows rows={3} /></div>
         ) : (
@@ -192,7 +191,7 @@ export default function UsersPage() {
                   <td className="px-5 py-3">
                     <div className="font-medium text-gray-800">
                       {u.name}
-                      {u.id === me && <span className="ml-2 text-[11px] text-blue-600">это вы</span>}
+                      {u.id === me && <span className="ml-2 text-2xs text-brand-600">это вы</span>}
                     </div>
                     <div className="text-xs text-gray-400">{u.email}</div>
                   </td>
@@ -208,7 +207,7 @@ export default function UsersPage() {
                   </td>
                   <td className="px-5 py-3 text-right whitespace-nowrap">
                     <button onClick={() => { setForm({ id: u.id, name: u.name, email: u.email, role_id: u.role_id, password: '' }); setError('') }}
-                      className="text-xs text-blue-600 hover:text-blue-800 mr-3">Изменить</button>
+                      className="text-xs text-brand-600 hover:text-brand-800 mr-3">Изменить</button>
                     <button onClick={() => resetPassword(u)}
                       className="text-xs text-gray-500 hover:text-gray-700 mr-3">Сменить пароль</button>
                     {u.id !== me && (
@@ -224,7 +223,7 @@ export default function UsersPage() {
 
       {/* Свой пароль меняет сам пользователь: выданный администратором иначе
           останется у него навсегда */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 max-w-xl">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5 max-w-xl">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Мой доступ</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -242,7 +241,7 @@ export default function UsersPage() {
           className="mt-3 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40">
           Сменить пароль
         </button>
-        <p className="text-[11px] text-gray-400 mt-2">Остальные ваши сессии будут завершены</p>
+        <p className="text-2xs text-gray-400 mt-2">Остальные ваши сессии будут завершены</p>
       </div>
     </Layout>
   )

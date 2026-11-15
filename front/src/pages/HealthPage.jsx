@@ -43,8 +43,8 @@ export default function HealthPage() {
 
   return (
     <Layout>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Состояние системы</h1>
+      <div className="flex justify-between items-center mb-5">
+        <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Состояние системы</h1>
         <button 
           onClick={loadHealth}
           className="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors shadow-sm"
@@ -59,7 +59,7 @@ export default function HealthPage() {
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Статус системы</p>
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${data?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-            <p className={`text-2xl font-bold ${data?.status === 'ok' ? 'text-gray-800' : 'text-red-600'}`}>
+            <p className={`text-2xl font-semibold tracking-tight tabular-nums ${data?.status === 'ok' ? 'text-gray-800' : 'text-red-600'}`}>
               {data?.status === 'ok' ? 'В норме' : 'Ошибка'}
             </p>
           </div>
@@ -67,20 +67,20 @@ export default function HealthPage() {
 
         <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">База данных (Latency)</p>
-          <p className="text-2xl font-bold text-blue-600">
+          <p className="text-2xl font-semibold tracking-tight tabular-nums text-brand-600">
             {data?.checks?.mysql?.latency_ms ? `${data.checks.mysql.latency_ms} ms` : '—'}
           </p>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
           <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Свободно на диске</p>
-          <p className="text-2xl font-bold text-gray-700">{data?.checks?.server?.disk_free || '—'}</p>
+          <p className="text-2xl font-semibold tracking-tight tabular-nums text-gray-700">{data?.checks?.server?.disk_free || '—'}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Детальные проверки */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
             <h2 className="font-semibold text-gray-800 text-sm uppercase">Сервисы</h2>
           </div>
@@ -113,7 +113,7 @@ export default function HealthPage() {
         </div>
 
         {/* Версии ПО */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
             <h2 className="font-semibold text-gray-800 text-sm uppercase">Окружение</h2>
           </div>

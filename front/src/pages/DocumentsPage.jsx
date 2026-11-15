@@ -1037,7 +1037,7 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
                           {/* Удалить */}
                           {!isPosted ? (
                             <button type="button" onClick={() => removeItem(item._key)}
-                              className="w-6 h-6 flex items-center justify-center rounded text-gray-300 hover:text-red-500 hover:bg-red-50 text-sm transition-colors">
+                              className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-red-500 hover:bg-red-50 text-sm transition-colors">
                               ✕
                             </button>
                           ) : <div />}

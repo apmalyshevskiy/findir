@@ -4,7 +4,8 @@ import { SkeletonRows } from '../components/Busy'
 import { getRoles, createRole, updateRole, deleteRole } from '../api/users'
 import { getBalanceItemsList } from '../api/balanceItems'
 import LockIcon from '../components/LockIcon'
-import { confirm } from '../components/ui'
+import { Button, confirm } from '../components/ui'
+import { ChevronDown, Plus } from 'lucide-react'
 
 /**
  * Должности — наборы прав по разделам.
@@ -16,11 +17,11 @@ import { confirm } from '../components/ui'
  * от самой себя — вместе с этой же страницей.
  */
 
-const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 const LEVEL_STYLE = {
   none: 'bg-gray-100 text-gray-500',
-  view: 'bg-blue-50 text-blue-700',
+  view: 'bg-brand-50 text-brand-700',
   edit: 'bg-green-50 text-green-700',
 }
 
@@ -53,7 +54,7 @@ function AccountTree({ items, denied, onToggle }) {
           <span className="font-mono text-xs text-gray-500 w-16 flex-shrink-0">{item.code}</span>
           <span className="truncate">{item.name?.replace(/^[А-ЯA-Z]\d+\s/, '')}</span>
           {inheritedClosed && !own && (
-            <span className="text-[10px] text-gray-400 flex-shrink-0">закрыт вместе с группой</span>
+            <span className="text-2xs text-gray-400 flex-shrink-0">закрыт вместе с группой</span>
           )}
         </label>
         {render(item.id, depth + 1, closed)}
@@ -136,24 +137,23 @@ export default function RolesPage() {
 
   return (
     <Layout>
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Должности</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Должности</h1>
           <p className="text-sm text-gray-500 mt-1">
             Набор прав по разделам. Уровни: нет доступа, просмотр, изменение.
           </p>
         </div>
-        <button onClick={startNew}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800">
-          + Добавить должность
-        </button>
+        <Button variant="primary" icon={Plus} onClick={startNew}>
+          Добавить должность
+        </Button>
       </div>
 
       {error &&  <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{error}</div>}
       {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3 mb-4">{notice}</div>}
 
       {form && (
-        <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 mb-4 space-y-4">
+        <div className="bg-white rounded-xl border border-brand-200 shadow-sm p-5 mb-4 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Название</label>
@@ -168,7 +168,7 @@ export default function RolesPage() {
           </div>
 
           {isAdminRole && (
-            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <div className="text-2xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               Права администратора не ограничиваются: иначе компанию можно закрыть от самой себя.
               Меняется только название.
             </div>
@@ -187,8 +187,8 @@ export default function RolesPage() {
                 <div key={key} className="flex items-center justify-between gap-4 px-4 py-2 border-b border-gray-50 last:border-0">
                   <span className="text-sm text-gray-700">
                     {label}
-                    {!canEdit && <span className="block text-[11px] text-gray-400">раздел только читает</span>}
-                    {hints[key] && <span className="block text-[11px] text-gray-400">{hints[key]}</span>}
+                    {!canEdit && <span className="block text-2xs text-gray-400">раздел только читает</span>}
+                    {hints[key] && <span className="block text-2xs text-gray-400">{hints[key]}</span>}
                   </span>
                   <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 text-xs flex-shrink-0">
                     {choices.map(([lvl, lvlLabel]) => (
@@ -222,12 +222,12 @@ export default function RolesPage() {
                       : 'должность видит все счета'}
                   </span>
                 </span>
-                <span className="text-[10px] text-gray-400">{showAccounts ? '▲' : '▼'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAccounts ? 'rotate-180' : ''}`} aria-hidden="true" />
               </button>
 
               {showAccounts && (
                 <div className="border-t border-gray-100">
-                  <p className="px-4 py-2 text-[11px] text-gray-500 bg-gray-50">
+                  <p className="px-4 py-2 text-2xs text-gray-500 bg-gray-50">
                     Отмеченные счета не видны в операциях, документах и отчётах. Отметка на группе
                     закрывает все счета внутри неё, включая те, что появятся позже.
                   </p>
@@ -241,10 +241,9 @@ export default function RolesPage() {
           )}
 
           <div className="flex gap-2">
-            <button onClick={save} disabled={saving}
-              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            <Button variant="primary" onClick={save} disabled={saving}>
               {saving ? 'Сохранение...' : 'Сохранить'}
-            </button>
+            </Button>
             <button onClick={() => setForm(null)}
               className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
               Отмена
@@ -253,7 +252,7 @@ export default function RolesPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
         {roles === null ? (
           <div className="p-4"><SkeletonRows rows={2} /></div>
         ) : (
@@ -271,7 +270,7 @@ export default function RolesPage() {
                 <tr key={r.id} className="border-b border-gray-50 last:border-0 align-top">
                   <td className="px-5 py-3">
                     <div className="font-medium text-gray-800">{r.name}</div>
-                    {r.is_system && <div className="text-[11px] text-amber-600">заводская</div>}
+                    {r.is_system && <div className="text-2xs text-amber-600">заводская</div>}
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex flex-wrap gap-1">
@@ -282,17 +281,17 @@ export default function RolesPage() {
                         if (lvl === 'edit' && !editable.includes(key)) lvl = 'view'
                         if (lvl === 'none') return null
                         return (
-                          <span key={key} className={`text-[10px] px-1.5 py-0.5 rounded ${LEVEL_STYLE[lvl]}`}>
+                          <span key={key} className={`text-2xs px-1.5 py-0.5 rounded ${LEVEL_STYLE[lvl]}`}>
                             {label}: {(levels[lvl] || lvl).toLowerCase()}
                           </span>
                         )
                       })}
                       {Object.values(r.permissions).every(l => l === 'none') && (
-                        <span className="text-[11px] text-gray-400">нет доступа никуда</span>
+                        <span className="text-2xs text-gray-400">нет доступа никуда</span>
                       )}
                     </div>
                     {r.denied_accounts?.length > 0 && (
-                      <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-1.5">
+                      <div className="text-2xs text-gray-500 mt-1 flex items-center gap-1.5">
                         <LockIcon className="w-3 h-3 text-gray-400" />
                         закрыто счетов: {r.denied_accounts.length}
                       </div>
@@ -301,7 +300,7 @@ export default function RolesPage() {
                   <td className="px-5 py-3 text-right tabular-nums text-gray-600">{r.users_count || '—'}</td>
                   <td className="px-5 py-3 text-right whitespace-nowrap">
                     <button onClick={() => { setForm({ ...r, denied_accounts: r.denied_accounts || [] }); setError(''); setShowAccounts(false) }}
-                      className="text-xs text-blue-600 hover:text-blue-800 mr-3">Изменить</button>
+                      className="text-xs text-brand-600 hover:text-brand-800 mr-3">Изменить</button>
                     {!r.is_system && (
                       <button onClick={() => remove(r)} className="text-xs text-red-400 hover:text-red-600">Удалить</button>
                     )}

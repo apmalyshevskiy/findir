@@ -6,7 +6,8 @@ import { INFO_LABELS } from '../utils/infoLabels'
 import {
   getDocumentTypes, createDocumentType, updateDocumentType, deleteDocumentType,
 } from '../api/documentTypes'
-import { apiError, confirm, toast } from '../components/ui'
+import { Button, apiError, confirm, toast } from '../components/ui'
+import { Plus, X } from 'lucide-react'
 
 /**
  * Виды документов.
@@ -25,7 +26,7 @@ const EMPTY = {
   is_active: true, sort_order: 0,
 }
 
-const ic  = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic  = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 const lbl = 'block text-xs font-medium text-gray-500 mb-1'
 
 /** Наглядная подпись проводки: понятнее любого описания сторон */
@@ -38,7 +39,7 @@ function PostingHint({ type, accounts }) {
   const credit = type.head_side === 'debit' ? itemLabel : headLabel
 
   return (
-    <div className="text-[11px] leading-relaxed">
+    <div className="text-2xs leading-relaxed">
       <div><span className="text-green-700 font-medium">Дт</span> <span className="text-gray-600">{debit}</span></div>
       <div><span className="text-red-500 font-medium">Кт</span> <span className="text-gray-600">{credit}</span></div>
     </div>
@@ -101,21 +102,20 @@ export default function DocumentTypesPage() {
 
   return (
     <Layout>
-      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Виды документов</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Виды документов</h1>
+          <p className="text-sm text-gray-500 mt-1">
             Из чего состоит документ и какой проводкой он ложится в учёт
           </p>
         </div>
-        <button onClick={startCreate}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800">
-          + Добавить вид
-        </button>
+        <Button variant="primary" icon={Plus} onClick={startCreate}>
+          Добавить вид
+        </Button>
       </div>
 
       {form && (
-        <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-5 mb-4 space-y-4">
+        <div className="bg-white rounded-xl border border-brand-200 shadow-sm p-5 mb-4 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className={lbl}>Название</label>
@@ -147,7 +147,7 @@ export default function DocumentTypesPage() {
                   </button>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">Строки идут в противоположную сторону</p>
+              <p className="text-2xs text-gray-400 mt-1">Строки идут в противоположную сторону</p>
             </div>
           </div>
 
@@ -159,7 +159,7 @@ export default function DocumentTypesPage() {
                 <option value="">— не выбран</option>
                 {accounts.map(b => <option key={b.id} value={b.id}>{b.code} — {b.name}</option>)}
               </select>
-              <p className="text-[11px] text-gray-400 mt-1">В самом документе его можно сменить</p>
+              <p className="text-2xs text-gray-400 mt-1">В самом документе его можно сменить</p>
             </div>
             <div>
               <label className={lbl}>Колонки в строках</label>
@@ -176,7 +176,7 @@ export default function DocumentTypesPage() {
                   </label>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">Сумма есть всегда</p>
+              <p className="text-2xs text-gray-400 mt-1">Сумма есть всегда</p>
             </div>
             <div>
               <label className={lbl}>Порядок и видимость</label>
@@ -189,7 +189,7 @@ export default function DocumentTypesPage() {
                   Активен
                 </label>
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">Выключенный не появляется вкладкой</p>
+              <p className="text-2xs text-gray-400 mt-1">Выключенный не появляется вкладкой</p>
             </div>
           </div>
 
@@ -221,14 +221,14 @@ export default function DocumentTypesPage() {
                   </label>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">
+              <p className="text-2xs text-gray-400 mt-1">
                 Отмеченное станет колонкой в строке. Что не заполнено в строке — берётся из шапки
               </p>
             </div>
           )}
 
           {form.is_system && (
-            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <div className="text-2xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               Системный вид: счета и проводка заданы его собственной логикой в коде,
               меняется только название, порядок и видимость.
             </div>
@@ -237,10 +237,9 @@ export default function DocumentTypesPage() {
           {error && <div className="text-sm text-red-600">{error}</div>}
 
           <div className="flex gap-2">
-            <button onClick={save} disabled={saving}
-              className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
+            <Button variant="primary" onClick={save} disabled={saving}>
               {saving ? 'Сохранение...' : 'Сохранить'}
-            </button>
+            </Button>
             <button onClick={() => setForm(null)}
               className="px-4 py-2 border border-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50">
               Отмена
@@ -249,7 +248,7 @@ export default function DocumentTypesPage() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
         {types === null ? (
           <div className="p-4"><SkeletonRows rows={4} /></div>
         ) : types.length === 0 ? (
@@ -270,7 +269,7 @@ export default function DocumentTypesPage() {
                 <tr key={t.id} className={`border-b border-gray-50 hover:bg-gray-50 ${t.is_active ? '' : 'opacity-50'}`}>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-800">{t.name}</div>
-                    <div className="text-[11px] text-gray-400">
+                    <div className="text-2xs text-gray-400">
                       {t.is_system && <span className="text-amber-600">системный · </span>}
                       {!t.is_active && 'выключен · '}
                       {t.code}
@@ -281,7 +280,7 @@ export default function DocumentTypesPage() {
                     {[t.show_quantity && 'кол-во', t.show_price && 'цена', 'сумма', t.show_vat && 'НДС']
                       .filter(Boolean).join(', ')}
                     {t.line_head_fields?.length > 0 && (
-                      <div className="text-[11px] text-blue-600 mt-0.5">
+                      <div className="text-2xs text-brand-600 mt-0.5">
                         по строкам: {t.line_head_fields.map(f => {
                           if (f === 'bi') return 'счёт корр.'
                           const head = accounts.find(b => b.id == t.head_bi_id)
@@ -294,12 +293,12 @@ export default function DocumentTypesPage() {
                   <td className="px-4 py-3 text-right tabular-nums text-gray-600">{t.documents_count || '—'}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <button onClick={() => startEdit(t)}
-                      className="text-gray-300 hover:text-blue-600 p-1" title="Изменить">
+                      className="text-gray-300 hover:text-brand-600 p-1" title="Изменить">
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
                     </button>
                     {!t.is_system && (
                       <button onClick={() => remove(t)}
-                        className="text-gray-300 hover:text-red-500 p-1" title="Удалить">×</button>
+                        className="text-gray-400 hover:text-red-500 p-1" title="Удалить"><X className="w-4 h-4" aria-hidden="true" /></button>
                     )}
                   </td>
                 </tr>

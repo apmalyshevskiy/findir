@@ -10,7 +10,9 @@ import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
 import { EXPENSE_KINDS, EXPENSE_KIND_HINT, FLOW_KINDS, FLOW_KIND_HINT } from '../utils/infoLabels'
 import { pushRecent } from '../utils/recent'
-import { apiError, confirm, toast, useEscClose } from '../components/ui'
+import { BookOpen, Check, ChevronRight, Link2, Pencil, Plus, Search, Trash2, Wand2, X } from 'lucide-react'
+import { apiError, confirm, toast, useEscClose, Button, EmptyState, IconButton, PageHeader } from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -263,19 +265,12 @@ export default function InfoPage() {
 
   return (
     <Layout>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Справочники</h2>
-        <div className="flex gap-2">
-          <button onClick={() => setShowTemplates(true)}
-            className="border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-            Заполнить из шаблона
-          </button>
-          <button onClick={openCreate}
-            className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors">
-            + Добавить
-          </button>
-        </div>
-      </div>
+      <PageHeader title="Справочники"
+        subtitle="Контрагенты, статьи, кассы, сотрудники — всё, чем подписываются операции"
+        actions={<>
+          <Button icon={Wand2} onClick={() => setShowTemplates(true)}>Заполнить из шаблона</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>Добавить запись</Button>
+        </>} />
 
       {/* Поиск: по названию, коду, ИНН, описанию и номеру */}
       <div className="relative mb-4 max-w-md">
@@ -285,20 +280,17 @@ export default function InfoPage() {
           onChange={e => setSearch(e.target.value)}
           onKeyDown={e => { if (e.key === 'Escape') setSearch('') }}
           placeholder="Поиск: название, код, ИНН, описание, #номер"
-          className="w-full pl-9 pr-9 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full h-9 pl-9 pr-9 bg-white border border-gray-200 rounded-lg text-sm hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500"
         />
-        <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
-        </svg>
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true" />
         {searching && (
-          <button onClick={() => setSearch('')} title="Очистить (Esc)"
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-sm">✕</button>
+          <IconButton icon={X} size="sm" label="Очистить (Esc)" onClick={() => setSearch('')}
+            className="absolute right-1 top-1/2 -translate-y-1/2" />
         )}
       </div>
 
       {searching && (
-        <div className="text-xs text-gray-400 mb-4">
+        <div className="text-xs text-gray-500 mb-4">
           {found.length === 0
             ? 'Ничего не найдено'
             : `Найдено: ${found.length} — показаны списком, без вложенности`}
@@ -306,14 +298,14 @@ export default function InfoPage() {
       )}
 
       {/* Фильтр по типу */}
-      <div className="flex gap-2 flex-wrap mb-6">
+      <div className="flex gap-1.5 flex-wrap mb-5">
         <button onClick={() => setFilterType('')}
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filterType === '' ? 'bg-blue-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+          className={`h-8 px-3 rounded-full text-sm font-medium border transition-colors ${filterType === '' ? 'bg-brand-800 border-brand-800 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-brand-300 hover:text-brand-700'}`}>
           Все
         </button>
         {INFO_TYPES.map(t => (
           <button key={t.value} onClick={() => setFilterType(t.value)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${filterType === t.value ? 'bg-blue-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            className={`h-8 px-3 rounded-full text-sm font-medium border transition-colors ${filterType === t.value ? 'bg-brand-800 border-brand-800 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-brand-300 hover:text-brand-700'}`}>
             {t.label}
           </button>
         ))}
@@ -322,38 +314,27 @@ export default function InfoPage() {
       {/* Массовая правка — только внутри одного справочника: родитель из
           чужого справочника сломал бы дерево, а вид есть не у всех */}
       {picked.size > 0 && (
-        <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
-          <span className="text-sm text-blue-900 font-medium">Выбрано: {picked.size}</span>
-          <button onClick={() => setShowBulk(true)}
-            className="px-3 py-1.5 bg-blue-900 text-white rounded-lg text-xs font-medium hover:bg-blue-800">
-            Изменить выбранные
-          </button>
-          <button onClick={() => setPicked(new Set())}
-            className="text-xs text-blue-700 hover:text-blue-900">Снять выделение</button>
+        <div className="flex items-center gap-3 mb-4 px-4 py-2.5 bg-gold-50 border border-gold-200 rounded-xl">
+          <span className="text-sm text-gold-900 font-medium">Отмечено: {picked.size}</span>
+          <Button size="sm" variant="primary" icon={Pencil} onClick={() => setShowBulk(true)}>Изменить отмеченные</Button>
+          <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Снять отметки</Button>
         </div>
       )}
 
       {/* Список */}
       {loading ? (
-        <div className="text-center py-12 text-gray-400">Загрузка...</div>
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-4"><SkeletonRows rows={8} height="h-9" /></div>
       ) : searching && found.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 px-6 text-center">
-          <p className="text-gray-500 text-sm">По запросу «{search}» ничего нет</p>
-          <p className="text-gray-400 text-xs mt-1.5">
-            Ищем по названию, коду, ИНН, описанию и номеру записи
-          </p>
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
+          <EmptyState icon={Search} title={`По запросу «${search}» ничего нет`}
+            text="Ищем по названию, коду, ИНН, описанию и номеру записи"
+            action={<Button onClick={() => setSearch('')}>Очистить поиск</Button>} />
         </div>
       ) : items.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm py-12 px-6 text-center">
-          <p className="text-gray-500 text-sm">Справочники пока пустые</p>
-          <p className="text-gray-400 text-xs mt-1.5 max-w-md mx-auto">
-            Набор статей зависит от бизнеса, поэтому при регистрации мы ничего не навязываем.
-            Возьмите готовый шаблон и правьте под себя — или заводите записи вручную.
-          </p>
-          <button onClick={() => setShowTemplates(true)}
-            className="mt-5 px-5 py-2.5 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
-            Заполнить из шаблона
-          </button>
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
+          <EmptyState icon={BookOpen} title="Справочники пока пустые"
+            text="Набор статей зависит от бизнеса, поэтому при регистрации мы ничего не навязываем. Возьмите готовый шаблон и правьте под себя — или заводите записи вручную."
+            action={<Button variant="primary" icon={Wand2} onClick={() => setShowTemplates(true)}>Заполнить из шаблона</Button>} />
         </div>
       ) : (
         Object.entries(grouped).map(([type, typeItems]) => {
@@ -366,14 +347,14 @@ export default function InfoPage() {
             : flattenTree(buildTree(typeItems), 0, expandedSet)
 
           return (
-            <div key={type} className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4 overflow-hidden">
-              <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <div key={type} className="bg-white rounded-xl border border-gray-200/80 shadow-card mb-4 overflow-hidden">
+              <div className="px-6 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                   {/* Отмечать можно, только когда на экране один справочник:
                       массовая правка работает внутри одного вида */}
                   {filterType && (
                     <input type="checkbox" title="Выбрать все показанные"
-                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      className="w-4 h-4 rounded border-gray-300 accent-brand-700"
                       checked={flat.length > 0 && flat.every(i => picked.has(i.id))}
                       onChange={e => setPicked(prev => {
                         const next = new Set(prev)
@@ -383,7 +364,7 @@ export default function InfoPage() {
                   )}
                   {typeLabel}
                 </span>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-500 tabular-nums">
                   {searching
                     ? `${typeItems.length} из ${items.filter(i => i.type === type).length}`
                     : typeItems.length}
@@ -394,12 +375,12 @@ export default function InfoPage() {
                   {flat.map(item => (
                     <tr key={item.id}
                       className={`border-b border-gray-50 last:border-0 hover:bg-gray-50 group ${
-                        picked.has(item.id) ? 'bg-blue-50/60' : ''
+                        picked.has(item.id) ? 'bg-gold-50/70' : ''
                       }`}>
                       {filterType && (
                         <td className="py-2.5 pl-6 w-8">
                           <input type="checkbox"
-                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            className="w-4 h-4 rounded border-gray-300 accent-brand-700"
                             checked={picked.has(item.id)} onChange={() => togglePick(item.id)} />
                         </td>
                       )}
@@ -409,13 +390,9 @@ export default function InfoPage() {
                           <div className="w-5 flex items-center justify-center flex-shrink-0 mr-1.5">
                             {item.children?.length > 0 ? (
                               <button onClick={() => toggleExpand(type, item.id)}
-                                className="text-gray-400 hover:text-gray-600 transition-colors p-0.5">
-                                <svg
-                                  className={`w-3 h-3 transition-transform duration-200 ${expandedSet.has(item.id) ? 'rotate-90' : ''}`}
-                                  viewBox="0 0 24 24" fill="currentColor"
-                                >
-                                  <path d="M8 5v14l11-7z" />
-                                </svg>
+                                aria-label={expandedSet.has(item.id) ? 'Свернуть' : 'Раскрыть'}
+                                className="text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors p-0.5">
+                                <ChevronRight className={`w-3.5 h-3.5 transition-transform duration-200 ${expandedSet.has(item.id) ? 'rotate-90' : ''}`} aria-hidden="true" />
                               </button>
                             ) : item.depth > 0 ? (
                               <span className="text-gray-300 text-xs">└</span>
@@ -450,8 +427,8 @@ export default function InfoPage() {
                       </td>
                       <td className="py-2.5 pr-4 whitespace-nowrap">
                         <button type="button" onClick={() => copyId(item.id)} title="Скопировать ID"
-                          className="text-[10px] font-mono text-gray-400 hover:text-blue-600">
-                          {copiedId === item.id ? '✓ скопировано' : `#${item.id}`}
+                          className="inline-flex items-center gap-1 text-2xs font-mono text-gray-400 hover:text-brand-700">
+                          {copiedId === item.id ? <><Check className="w-3 h-3 text-emerald-600" aria-hidden="true" />скопировано</> : `#${item.id}`}
                         </button>
                       </td>
                       <td className="py-2.5 pr-4">
@@ -462,13 +439,10 @@ export default function InfoPage() {
                         )}
                       </td>
                       <td className="py-2.5 pr-6 text-right">
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 justify-end">
-                          <button onClick={() => openEdit(item)}
-                            className="text-xs text-blue-600 hover:text-blue-800">Изменить</button>
-                          <button onClick={() => setRefsFor(item)} title="Кто ссылается на элемент"
-                            className="text-xs text-gray-500 hover:text-gray-700">Ссылки</button>
-                          <button onClick={() => handleDelete(item.id)}
-                            className="text-xs text-red-400 hover:text-red-600">Удалить</button>
+                        <div className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex gap-0.5 justify-end">
+                          <IconButton icon={Pencil} size="sm" label="Изменить" onClick={() => openEdit(item)} />
+                          <IconButton icon={Link2} size="sm" label="Где используется" onClick={() => setRefsFor(item)} />
+                          <IconButton icon={Trash2} size="sm" variant="danger" label="Удалить" onClick={() => handleDelete(item.id)} />
                         </div>
                       </td>
                     </tr>
@@ -506,13 +480,13 @@ export default function InfoPage() {
 
       {/* Форма */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="text-lg font-semibold text-gray-800">
-                {editItem ? 'Редактировать' : 'Новая запись'}
+        <div className="fixed inset-0 bg-brand-950/40 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-pop w-full max-w-md animate-pop-in">
+            <div className="px-6 pt-5 pb-4 border-b border-gray-100 flex justify-between items-start gap-3">
+              <h3 className="text-base font-semibold text-gray-900">
+                {editItem ? 'Изменить запись' : 'Новая запись'}
               </h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+              <IconButton icon={X} label="Закрыть (Esc)" onClick={() => setShowForm(false)} className="-mr-2 -mt-1" />
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
               {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
@@ -661,7 +635,7 @@ export default function InfoPage() {
                 <input type="number" value={form.sort_order}
                   onChange={e => setForm({ ...form, sort_order: parseInt(e.target.value) || 0 })}
                   placeholder="0" className={ic} />
-                <p className="text-[10px] text-gray-400 mt-1">Меньше число — выше в списке</p>
+                <p className="text-2xs text-gray-400 mt-1">Меньше число — выше в списке</p>
               </div>
 
               <div className="flex gap-3 pt-2">

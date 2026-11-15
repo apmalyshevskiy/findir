@@ -7,10 +7,21 @@ import {
 } from '../api/budget'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
-import { useEscClose } from '../components/ui'
+import { AlertTriangle, Plus, RotateCcw, Settings, X } from 'lucide-react'
+import {
+  apiError, confirm, toast, Badge, Button, ErrorState, Field, IconButton, Input, Modal, PageHeader, Segmented, Select,
+} from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
+import usePersistedState from '../hooks/usePersistedState'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
+/**
+ * Сумма в ячейке статьи: ноль — пусто. За месяц по дням это сотни нулей, и
+ * среди них не видно тех дней, где что-то запланировано. В итоговых строках
+ * ноль остаётся: остаток «0» — это значимая цифра, а не отсутствие данных.
+ */
+const fmtCell = (v) => (v ? fmt(v) : '')
 const todayISO = () => new Date().toISOString().slice(0, 10)
 const isToday = (ds) => ds === todayISO()
 const isPast = (ds) => ds < todayISO()
@@ -50,7 +61,6 @@ const buildDescendantAllMap = (articles) => {
 
 // ── Модалка создания PDC ────────────────────────────────────────────────────
 function CreatePdcModal({ projects, onClose, onCreate }) {
-  useEscClose(onClose)
   const [name, setName] = useState('')
   const [projectId, setProjectId] = useState(projects[0]?.id || '')
   const [periodFrom, setPeriodFrom] = useState(() => todayISO())
@@ -68,46 +78,39 @@ function CreatePdcModal({ projects, onClose, onCreate }) {
         period_from: periodFrom, period_to: periodTo, project_id: projectId,
       })
       onCreate(r.data.data)
+    } catch (err) {
+      // Раньше отказ сервера пропадал: кнопка переставала крутиться, окно
+      // оставалось открытым, и было непонятно, создан календарь или нет
+      toast.error(apiError(err, 'Не удалось создать календарь'))
     } finally { setSaving(false) }
   }
 
+  // Клик мимо окна не закрывает его: промахнуться мимо поля и потерять
+  // набранное хуже, чем лишний раз нажать Esc
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-        <div className="p-6 border-b border-gray-100"><h3 className="text-lg font-semibold text-gray-800">Новый платёжный календарь</h3></div>
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Название</label>
-            <input className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value={name} onChange={e => setName(e.target.value)} placeholder="Календарь на октябрь 2026" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Проект</label>
-            <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value={projectId} onChange={e => setProjectId(e.target.value)}>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Период с</label>
-              <input type="date" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value={periodFrom} onChange={e => setPeriodFrom(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Период по</label>
-              <input type="date" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value={periodTo} onChange={e => setPeriodTo(e.target.value)} />
-            </div>
-          </div>
-          <div className="text-[11px] text-gray-400">
-            Подсказка: для удобной работы выбирайте горизонт 2–8 недель. Длинный горизонт (несколько месяцев) лучше смотреть в режиме «Месяц».
-          </div>
+    <Modal onClose={onClose} title="Новый платёжный календарь" closeOnBackdrop={false}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Отмена</Button>
+        <Button variant="primary" loading={saving} disabled={!name.trim()} onClick={handleSubmit}>Создать</Button>
+      </>}>
+      <div className="space-y-4">
+        <Field label="Название">
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="Календарь на декабрь 2026" data-autofocus="" />
+        </Field>
+        <Field label="Проект">
+          <Select value={projectId} onChange={e => setProjectId(e.target.value)}>
+            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Период с"><Input type="date" value={periodFrom} onChange={e => setPeriodFrom(e.target.value)} /></Field>
+          <Field label="Период по"><Input type="date" value={periodTo} onChange={e => setPeriodTo(e.target.value)} /></Field>
         </div>
-        <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Отмена</button>
-          <button onClick={handleSubmit} disabled={saving || !name.trim()} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50">
-            {saving ? 'Создаю...' : 'Создать'}
-          </button>
-        </div>
+        <p className="text-xs text-gray-500">
+          Удобный горизонт — от двух до восьми недель. Несколько месяцев лучше смотреть в режиме «Месяц».
+        </p>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -115,14 +118,20 @@ function CreatePdcModal({ projects, onClose, onCreate }) {
 export default function PaymentCalendarPage() {
   const navigate = useNavigate()
   const [documents, setDocuments] = useState([])
-  const [selectedDocId, setSelectedDocId] = useState(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [projects, setProjects] = useState([])
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [byCash, setByCash] = useState(false)
-  const [granularity, setGranularity] = useState('day') // 'day' | 'month'
-  const [viewMode, setViewMode] = useState('plan_fact') // 'plan' | 'fact' | 'plan_fact'
+  // Отчёт не загрузился — отдельно от «пусто»: раньше ошибка тонула в
+  // try/finally, и на экране оставался прошлый календарь или пустота
+  const [loadError, setLoadError] = useState(false)
+
+  // Настройки экрана держатся между заходами — так же, как в бюджете:
+  // календарь открывают каждый день, и каждый раз выставлять вид заново незачем
+  const [selectedDocId, setSelectedDocId] = usePersistedState('pdc:docId', null)
+  const [byCash, setByCash] = usePersistedState('pdc:byCash', false)
+  const [granularity, setGranularity] = usePersistedState('pdc:granularity', 'day') // 'day' | 'month'
+  const [viewMode, setViewMode] = usePersistedState('pdc:viewMode', 'plan_fact') // 'plan' | 'fact' | 'plan_fact'
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
   const [editDoc, setEditDoc] = useState(null)
@@ -141,13 +150,16 @@ export default function PaymentCalendarPage() {
     const r = await getBudgetDocuments({ type: 'pdc' })
     const d = r.data.data || []
     setDocuments(d)
-    if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id)
+    // Запомненный календарь мог уйти в архив или быть удалён — тогда первый
+    // из списка, а не пустой экран
+    if (d.length > 0 && !d.some(x => x.id === selectedDocId)) setSelectedDocId(d[0].id)
   }
 
   useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash, granularity, displayFrom])
 
   const loadReport = async (keepState = false) => {
     if (!keepState) setLoading(true)
+    setLoadError(false)
     try {
       const params = { by_cash: byCash ? 1 : 0, granularity }
       if (displayFrom) params.display_from = displayFrom
@@ -159,6 +171,11 @@ export default function PaymentCalendarPage() {
         if (Array.isArray(arts)) arts.forEach(a => rootIds.add(a.id))
         setExpanded(rootIds)
       }
+    } catch (err) {
+      // Обновление после правки не удалось — календарь на экране остаётся,
+      // говорим уведомлением; не удалась сама загрузка — показываем это
+      if (keepState) toast.error(apiError(err, 'Не удалось обновить календарь'))
+      else { setReport(null); setLoadError(true) }
     } finally { if (!keepState) setLoading(false) }
   }
 
@@ -172,6 +189,11 @@ export default function PaymentCalendarPage() {
   }
 
   // ── Копирование / вставка плана между периодами (по ПКМ) ───────────────────
+  // Подпись периода в вопросах и уведомлениях: день — числом, месяц — словом
+  const periodName = (pd) => granularity === 'day'
+    ? new Date(pd + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+    : monthLabel(pd)
+
   const handleCopyCell = (articleId, articleName, periodDate) => {
     setClipboard({ articleId, articleName, periodDate })
   }
@@ -197,7 +219,23 @@ export default function PaymentCalendarPage() {
         article_ids: ids.join(','),
         period_date: targetPeriodDate,
       })
-      for (const row of (existing.data.data || [])) {
+      const stale = existing.data.data || []
+
+      // Вставка заменяет период целиком. Раньше это делалось молча по
+      // правому клику: промахнулся ячейкой — и запланированные платежи дня
+      // исчезли без возможности вернуть
+      if (stale.length > 0) {
+        const sum = stale.reduce((t, r) => t + Number(r.amount || 0), 0)
+        const ok = await confirm({
+          title: `Заменить план на ${periodName(targetPeriodDate)}?`,
+          text: `По статье «${clipboard.articleName}» там уже ${stale.length} ${stale.length === 1 ? 'строка' : 'строк(и)'} на ${fmt(sum)} ₽. ` +
+                `Они будут удалены и заменены планом на ${periodName(clipboard.periodDate)}.`,
+          confirmLabel: 'Заменить', danger: true,
+        })
+        if (!ok) return
+      }
+
+      for (const row of stale) {
         await deleteBudgetItem(row.id)
       }
       // 3. Создаём копии
@@ -211,8 +249,11 @@ export default function PaymentCalendarPage() {
         })
       }
       loadReport(true)
+      toast.success(`План вставлен на ${periodName(targetPeriodDate)}`)
     } catch (err) {
       console.error('Ошибка вставки:', err)
+      toast.error(apiError(err, 'Не удалось вставить план'))
+      loadReport(true)
     } finally {
       setPasting(false)
     }
@@ -378,7 +419,17 @@ export default function PaymentCalendarPage() {
 
   const changeStatus = async (newStatus) => {
     if (!selectedDocId) return
-    await updateBudgetDocument(selectedDocId, { status: newStatus })
+    if (newStatus === 'archived' && !await confirm({
+      title: 'Отправить календарь в архив?',
+      text: 'Он пропадёт из списка. Данные останутся — вернуть можно из архива.',
+      confirmLabel: 'В архив',
+    })) return
+    try {
+      await updateBudgetDocument(selectedDocId, { status: newStatus })
+    } catch (err) {
+      toast.error(apiError(err, 'Не удалось сменить статус'))
+      return
+    }
     if (newStatus === 'archived') {
       setDocuments(prev => {
         const filtered = prev.filter(d => d.id !== selectedDocId)
@@ -408,86 +459,84 @@ export default function PaymentCalendarPage() {
 
   return (
     <Layout>
-      {/* Шапка */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <h1 className="text-xl font-bold text-gray-800 mr-2">Платёжный календарь</h1>
+      <PageHeader title="Платёжный календарь"
+        subtitle={selectedDoc
+          ? `${new Date(selectedDoc.period_from).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })} — ${new Date(selectedDoc.period_to).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })} · ${periodDates.length} ${granularity === 'day' ? 'дн.' : 'мес.'}`
+          : 'Что придёт и что платить по дням — и хватит ли денег'}
+        actions={<Button variant="primary" icon={Plus} onClick={() => setShowCreateModal(true)}>Новый календарь</Button>} />
 
-        {/* Селектор документа */}
+      <div className="flex items-center gap-x-2 gap-y-2 mb-4 flex-wrap">
+        {/* Какой календарь открыт. Статус — меткой рядом, а не цветом самого
+            списка: так же, как в бюджете */}
         <select
-          className={`px-3 py-2 border rounded-lg text-sm bg-white min-w-[260px] ${
-            selectedDoc?.status === 'approved' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' :
-            selectedDoc?.status === 'archived' ? 'border-gray-300 bg-gray-100 text-gray-500' :
-            'border-gray-200 text-gray-700'
-          }`}
+          className="h-9 pl-3 pr-8 max-w-[24rem] border border-gray-200 rounded-lg text-sm font-medium text-gray-900 bg-white shadow-sm hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500"
           value={selectedDocId || ''}
           onChange={e => setSelectedDocId(parseInt(e.target.value) || null)}
         >
-          <option value="">— Выберите календарь —</option>
+          {documents.length === 0 && <option value="">Нет календарей</option>}
           {documents.map(d => (
             <option key={d.id} value={d.id}>
-              {d.name} ({new Date(d.period_from).toLocaleDateString('ru-RU')} – {new Date(d.period_to).toLocaleDateString('ru-RU')})
+              {d.name}{d.status === 'draft' ? ' · черновик' : ''}
             </option>
           ))}
         </select>
+        {selectedDoc && (
+          <Badge tone={selectedDoc.status === 'approved' ? 'green' : selectedDoc.status === 'archived' ? 'gray' : 'amber'}>
+            {selectedDoc.status === 'approved' ? 'Утверждён' : selectedDoc.status === 'archived' ? 'Архив' : 'Черновик'}
+          </Badge>
+        )}
 
-        {/* Шестерёнка настроек */}
+        {/* Настройки календаря */}
         {selectedDoc && (
           <div className="relative">
-            <button onClick={() => setShowSettingsPopup(s => !s)} className="px-2 py-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg" title="Настройки">⚙</button>
+            <IconButton icon={Settings} label="Настройки календаря" variant="solid" size="lg"
+              className={showSettingsPopup ? 'bg-gray-100' : ''}
+              onClick={() => setShowSettingsPopup(v => !v)} />
             {showSettingsPopup && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => { setShowSettingsPopup(false); setEditDoc(null) }} />
-                <div className="absolute top-full left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-40 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs uppercase text-gray-400 tracking-wide">Статус</span>
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-                      selectedDoc.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-                      selectedDoc.status === 'archived' ? 'bg-gray-200 text-gray-500' :
-                      'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {selectedDoc.status === 'approved' ? 'Утверждён' : selectedDoc.status === 'archived' ? 'Архив' : 'Черновик'}
-                    </span>
+                <div className="absolute top-full left-0 mt-1.5 w-80 bg-white border border-gray-200 rounded-xl shadow-pop z-40 p-4 space-y-4 animate-pop-in">
+                  <div>
+                    <div className="text-2xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Статус</div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedDoc.status === 'draft' && (
+                        <Button size="sm" variant="primary" onClick={() => { changeStatus('approved'); setShowSettingsPopup(false) }}>Утвердить</Button>
+                      )}
+                      {selectedDoc.status === 'approved' && (
+                        <Button size="sm" onClick={() => { changeStatus('draft'); setShowSettingsPopup(false) }}>Вернуть в черновик</Button>
+                      )}
+                      <Button size="sm" variant="ghost" onClick={() => { setShowSettingsPopup(false); changeStatus('archived') }}>В архив</Button>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    {selectedDoc.status === 'draft' && (
-                      <button onClick={() => changeStatus('approved')} className="flex-1 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700">Утвердить</button>
-                    )}
-                    {selectedDoc.status === 'approved' && (
-                      <button onClick={() => changeStatus('draft')} className="flex-1 px-3 py-1.5 text-xs bg-gray-200 text-gray-700 rounded hover:bg-gray-300">Вернуть в черновик</button>
-                    )}
-                    <button onClick={() => changeStatus('archived')} className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded">В архив</button>
-                  </div>
-                  <div className="border-t border-gray-100 pt-3 space-y-2">
-                    <div>
-                      <label className="block text-[11px] text-gray-500 mb-1">Название</label>
-                      <input className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs"
+                  <div className="border-t border-gray-100 pt-4 space-y-3">
+                    <div className="text-2xs font-semibold uppercase tracking-wider text-gray-500">Параметры</div>
+                    <Field label="Название">
+                      <Input size="sm"
                         value={editDoc?.name ?? selectedDoc.name}
                         onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), name: e.target.value }))}
                         onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
                       />
-                    </div>
+                    </Field>
                     <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[11px] text-gray-500 mb-1">с</label>
-                        <input type="date" className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs"
+                      <Field label="Период с">
+                        <Input size="sm" type="date"
                           value={editDoc?.period_from ?? selectedDoc.period_from?.slice(0,10)}
                           onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), period_from: e.target.value }))}
                           onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
                         />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] text-gray-500 mb-1">по</label>
-                        <input type="date" className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs"
+                      </Field>
+                      <Field label="по">
+                        <Input size="sm" type="date"
                           value={editDoc?.period_to ?? selectedDoc.period_to?.slice(0,10)}
                           onChange={e => setEditDoc(prev => ({ ...(prev || { name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }), period_to: e.target.value }))}
                           onFocus={() => { if (!editDoc) setEditDoc({ name: selectedDoc.name, period_from: selectedDoc.period_from?.slice(0,10), period_to: selectedDoc.period_to?.slice(0,10) }) }}
                         />
-                      </div>
+                      </Field>
                     </div>
                     {editDoc && (
                       <div className="flex gap-2 pt-1">
-                        <button onClick={saveDocSettings} className="flex-1 px-3 py-1.5 text-xs bg-blue-900 text-white rounded">Сохранить</button>
-                        <button onClick={() => setEditDoc(null)} className="px-3 py-1.5 text-xs text-gray-500">Отмена</button>
+                        <Button size="sm" variant="primary" onClick={saveDocSettings}>Сохранить</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditDoc(null)}>Отмена</Button>
                       </div>
                     )}
                   </div>
@@ -497,72 +546,59 @@ export default function PaymentCalendarPage() {
           </div>
         )}
 
-        {/* Гранулярность */}
-        {selectedDoc && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2">
-            <button className={`px-3 py-1.5 text-xs font-medium ${granularity === 'day' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setGranularity('day')}>День</button>
-            <button className={`px-3 py-1.5 text-xs font-medium ${granularity === 'month' ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setGranularity('month')}>Месяц</button>
-          </div>
-        )}
+        {selectedDoc && <>
+          <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
 
-        {/* По кассам */}
-        {selectedDoc && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
-            <button className={`px-3 py-1.5 text-xs font-medium ${!byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(false)}>Общая</button>
-            <button className={`px-3 py-1.5 text-xs font-medium ${byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(true)}>По кассам</button>
-          </div>
-        )}
+          <Segmented value={granularity} onChange={setGranularity} options={[
+            { value: 'day', label: 'По дням' },
+            { value: 'month', label: 'По месяцам' },
+          ]} className="h-8 items-center" />
 
-        {/* Режимы отображения */}
-        {selectedDoc && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
-            {[{k:'plan',l:'План'},{k:'fact',l:'Факт'},{k:'plan_fact',l:'П+Ф'}].map(m => (
-              <button key={m.k} className={`px-2.5 py-1.5 text-[11px] font-medium ${viewMode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setViewMode(m.k)}>{m.l}</button>
-            ))}
-          </div>
-        )}
+          <Segmented value={viewMode} onChange={setViewMode} options={[
+            { value: 'plan', label: 'План' },
+            { value: 'fact', label: 'Факт' },
+            { value: 'plan_fact', label: 'План + факт' },
+          ]} className="h-8 items-center" />
 
-        {/* Показать с — расширение влево для показа факта прошлых периодов */}
-        {selectedDoc && (
-          <div className="flex items-center gap-1.5 ml-2">
-            <span className="text-[11px] text-gray-400">Показать с:</span>
-            <input type="date" className="px-1.5 py-1 border border-gray-200 rounded text-[11px] bg-white"
+          <Segmented value={byCash} onChange={setByCash} options={[
+            { value: false, label: 'Общая сумма' },
+            { value: true, label: 'По кассам' },
+          ]} className="h-8 items-center" />
+
+          {/* Показать с — расширение влево: факт прошлых дней перед календарём */}
+          <div className="flex items-center gap-1.5 ml-auto">
+            <span className="text-xs text-gray-500" title="Показать факт прошлых дней перед началом календаря">Показать с</span>
+            <input type="date"
+              className="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
               value={displayFrom}
               onChange={e => setDisplayFrom(e.target.value)}
               max={selectedDoc?.period_from?.slice(0, 10)} />
-            {displayFrom && <button className="text-[10px] text-gray-400 hover:text-gray-600 ml-0.5" onClick={() => setDisplayFrom('')} title="Сбросить">✕</button>}
+            {displayFrom && <IconButton icon={X} size="sm" label="Вернуть начало календаря" onClick={() => setDisplayFrom('')} />}
           </div>
-        )}
-
-        <div className="ml-auto">
-          <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый календарь</button>
-        </div>
+        </>}
       </div>
 
-      {/* Период документа */}
-      {selectedDoc && (
-        <div className="text-[11px] text-gray-400 mb-3 -mt-2">
-          {new Date(selectedDoc.period_from).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })} —
-          {' '}{new Date(selectedDoc.period_to).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}
-          {' · '}<span>{periodDates.length} {granularity === 'day' ? 'дн.' : 'мес.'}</span>
+      {loading ? (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-4"><SkeletonRows rows={10} height="h-8" /></div>
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
+          <ErrorState title="Не удалось загрузить календарь" onRetry={() => loadReport()} />
         </div>
-      )}
-
-      {loading ? <div className="text-center py-20 text-gray-400">Загрузка отчёта...</div>
-      : !report ? <div className="text-center py-20 text-gray-400">{documents.length === 0 ? 'Создайте первый платёжный календарь' : 'Выберите документ'}</div>
-      : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      ) : !report ? (
+        <div className="text-center py-20 text-gray-500">{documents.length === 0 ? 'Создайте первый платёжный календарь' : 'Выберите календарь'}</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
           {/* Индикатор буфера обмена */}
           {(clipboard || pasting) && (
             <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
-              <span className="text-[11px] text-blue-600">
+              <span className="text-xs text-blue-700">
                 {pasting
                   ? 'Вставка...'
                   : <>Скопировано: <span className="font-medium">{clipboard.articleName}</span> / {granularity === 'day' ? new Date(clipboard.periodDate + 'T00:00:00').toLocaleDateString('ru-RU') : monthLabel(clipboard.periodDate)} — ПКМ на ячейку плана для вставки</>
                 }
               </span>
               {!pasting && (
-                <button onClick={() => setClipboard(null)} className="text-[10px] text-blue-400 hover:text-blue-600">✕ Очистить</button>
+                <button onClick={() => setClipboard(null)} className="text-2xs text-blue-600 hover:text-blue-800">Очистить</button>
               )}
             </div>
           )}
@@ -576,18 +612,18 @@ export default function PaymentCalendarPage() {
                     const weekend = granularity === 'day' && isWeekend(pd)
                     return (
                       <th key={pd} className={`text-center px-1 py-1.5 font-medium border-b border-l border-gray-200 ${
-                        today ? 'bg-blue-100 text-blue-900' :
-                        weekend ? 'bg-gray-100 text-gray-400' :
-                        'text-gray-600'
+                        today ? 'bg-gold-50 text-gold-800' :
+                        weekend ? 'bg-gray-100 text-gray-500' :
+                        'text-gray-700'
                       }`} style={{ width: colWidth, minWidth: colWidth }}>
                         {granularity === 'day' ? (
                           <div className="flex flex-col items-center leading-tight">
-                            <span className="text-[10px] uppercase">{dowShort(pd)}</span>
+                            <span className="text-2xs uppercase">{dowShort(pd)}</span>
                             <span className="text-sm font-semibold">{dayShort(pd)}</span>
-                            <span className="text-[9px] text-gray-400">{monthShort(pd)}</span>
+                            <span className={`text-2xs ${today ? 'text-gold-700 font-medium' : 'text-gray-400'}`}>{today ? 'сегодня' : monthShort(pd)}</span>
                           </div>
                         ) : (
-                          <div className="text-[11px] capitalize">{monthLabel(pd)}</div>
+                          <div className="text-xs capitalize">{monthLabel(pd)}</div>
                         )}
                       </th>
                     )
@@ -608,7 +644,7 @@ export default function PaymentCalendarPage() {
                     const isFirst = i === 0
                     return (
                       <td key={pd} className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${
-                        today ? 'bg-blue-50' : weekend ? 'bg-gray-50' : ''
+                        today ? 'bg-gold-50/60' : weekend ? 'bg-gray-50' : ''
                       } ${b.opening < 0 ? 'text-red-600 font-semibold' : 'text-gray-700'}`}>
                         {isFirst ? (
                           <OpeningBalanceCell value={b.opening} isManual={manualOpening !== null} onSave={saveOpeningBalance} onReset={resetOpeningBalance} />
@@ -641,10 +677,10 @@ export default function PaymentCalendarPage() {
                         const today = isToday(pd) && granularity === 'day'
                         const weekend = granularity === 'day' && isWeekend(pd)
                         const future = isBlankFuture(pd)
-                        const cellBg = today ? 'bg-blue-50' : weekend ? 'bg-gray-50' : ''
+                        const cellBg = today ? 'bg-gold-50/60' : weekend ? 'bg-gray-50' : ''
                         const isCopied = clipboard && clipboard.articleId === article.id && clipboard.periodDate === pd
                         const canPaste = !!clipboard && clipboard.articleId === article.id && clipboard.periodDate !== pd
-                        const copiedCls = isCopied ? 'outline outline-2 outline-dashed outline-blue-400 outline-offset-[-2px]' : ''
+                        const copiedCls = isCopied ? 'outline outline-2 outline-dashed outline-brand-400 outline-offset-[-2px]' : ''
 
                         // Хендлеры для ячейки плана: ЛКМ — drawer, ПКМ — копирование/вставка
                         const planClick = () => { if (clipboard) setClipboard(null); openDrawer(article.id, article.name, pd) }
@@ -657,11 +693,11 @@ export default function PaymentCalendarPage() {
                         if (viewMode === 'plan') {
                           return (
                             <td key={pd}
-                              className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 cursor-pointer hover:bg-blue-50 ${cellBg} ${copiedCls} ${planVal ? 'text-blue-700' : 'text-gray-300'}`}
+                              className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 cursor-pointer hover:bg-brand-50 ${cellBg} ${copiedCls} ${planVal ? 'text-brand-700' : 'text-gray-300'}`}
                               onClick={planClick}
                               onContextMenu={planContext}
                               title={canPaste ? 'ПКМ — вставить' : isCopied ? 'Скопировано — ПКМ на другой ячейке для вставки' : 'ЛКМ — редактировать, ПКМ — скопировать'}>
-                              {fmt(planVal)}
+                              {fmtCell(planVal)}
                             </td>
                           )
                         }
@@ -669,7 +705,7 @@ export default function PaymentCalendarPage() {
                           return (
                             <td key={pd} className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${cellBg} ${future ? 'text-gray-300' : factVal < 0 ? 'text-red-600' : factVal > 0 ? 'text-gray-700' : 'text-gray-300'} ${factVal && !future ? 'cursor-pointer hover:bg-gray-100' : ''}`}
                               onClick={() => factVal && !future && openDrawer(article.id, article.name, pd)}>
-                              {future ? '—' : fmt(factVal)}
+                              {future ? '—' : fmtCell(factVal)}
                             </td>
                           )
                         }
@@ -682,8 +718,8 @@ export default function PaymentCalendarPage() {
                                 onClick={planClick}
                                 onContextMenu={planContext}
                                 title={canPaste ? 'ПКМ — вставить план' : isCopied ? 'Скопировано — ПКМ на другой ячейке' : 'ЛКМ — план, ПКМ — копировать'}
-                                className={`text-[11px] tabular-nums text-right px-2 pt-1 pb-0.5 hover:bg-blue-50 ${planVal ? 'text-blue-700 font-medium' : 'text-gray-300'}`}>
-                                {fmt(planVal) || '\u00A0'}
+                                className={`text-xs tabular-nums text-right px-2 pt-1 pb-0.5 hover:bg-brand-50 ${planVal ? 'text-brand-700 font-medium' : 'text-gray-300'}`}>
+                                {fmtCell(planVal) || '\u00A0'}
                               </button>
                               {/* \u0424\u0430\u043A\u0442 \u0442\u0435\u043C \u0436\u0435 \u043A\u0435\u0433\u043B\u0435\u043C, \u0447\u0442\u043E \u0438 \u043F\u043B\u0430\u043D: \u0440\u0430\u0437\u043D\u044B\u043C\u0438 \u0438\u0445 \u0434\u0435\u0440\u0436\u0430\u0442 \u0446\u0432\u0435\u0442 \u0438
                                   \u043D\u0430\u0441\u044B\u0449\u0435\u043D\u043D\u043E\u0441\u0442\u044C, \u0430 \u043D\u0435 \u0440\u0430\u0437\u043C\u0435\u0440. \u041C\u0435\u043B\u043A\u0438\u0439 \u0432\u0442\u043E\u0440\u043E\u0439 \u0440\u044F\u0434 \u0446\u0438\u0444\u0440 \u0433\u043B\u0430\u0437
@@ -691,13 +727,13 @@ export default function PaymentCalendarPage() {
                               <button
                                 onClick={() => factClickable && openDrawer(article.id, article.name, pd)}
                                 disabled={!factClickable}
-                                className={`text-[11px] tabular-nums text-right px-2 pt-0.5 pb-1 ${
+                                className={`text-xs tabular-nums text-right px-2 pt-0.5 pb-1 ${
                                   future ? 'text-gray-300' :
                                   factVal < 0 ? 'text-red-600' :
                                   factVal > 0 ? 'text-gray-600' :
                                   'text-gray-300'
                                 } ${factClickable ? 'hover:bg-gray-100 cursor-pointer' : 'cursor-default'}`}>
-                                {future ? '—' : (fmt(factVal) || '\u00A0')}
+                                {future ? '—' : (fmtCell(factVal) || '\u00A0')}
                               </button>
                             </div>
                           </td>
@@ -716,7 +752,7 @@ export default function PaymentCalendarPage() {
                     const weekend = granularity === 'day' && isWeekend(pd)
                     return (
                       <td key={pd} className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${
-                        today ? 'bg-blue-50' : weekend ? 'bg-gray-50' : ''
+                        today ? 'bg-gold-50/60' : weekend ? 'bg-gray-50' : ''
                       } ${b.move < 0 ? 'text-red-600' : b.move > 0 ? 'text-gray-700' : 'text-gray-400'} ${b.usePlan ? 'italic' : ''}`}
                         title={b.usePlan ? 'План' : 'Факт'}>
                         {fmt(b.move)}
@@ -736,12 +772,15 @@ export default function PaymentCalendarPage() {
                     return (
                       <td key={pd} className={`text-right px-2 py-1.5 tabular-nums border-l border-gray-100 ${
                         gap ? 'bg-red-100 text-red-700 font-bold' :
-                        today ? 'bg-blue-100 text-blue-900' :
-                        weekend ? 'bg-gray-100 text-gray-600' :
+                        today ? 'bg-gold-50 text-gold-900' :
+                        weekend ? 'bg-gray-100 text-gray-700' :
                         'text-gray-800'
                       }`}
-                        title={gap ? '⚠ Кассовый разрыв!' : ''}>
-                        {gap && '⚠ '}{fmt(b.closing)}
+                        title={gap ? 'Кассовый разрыв: денег на конец дня не хватает' : ''}>
+                        <span className="inline-flex items-center justify-end gap-1 w-full">
+                          {gap && <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />}
+                          {fmt(b.closing)}
+                        </span>
                       </td>
                     )
                   })}
@@ -750,12 +789,12 @@ export default function PaymentCalendarPage() {
                 {/* По кассам */}
                 {byCash && cashItems.map(ci => (
                   <tr key={`cc_${ci.id}`} className="border-b border-gray-50">
-                    <td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-500 text-[11px]" style={{ paddingLeft: 28 }}>└ {ci.name}</td>
+                    <td className="sticky left-0 z-10 bg-white px-3 py-1 text-gray-600 text-xs" style={{ paddingLeft: 28 }}>{ci.name}</td>
                     {periodDates.map((pd, i) => {
                       const cb = cashBalances[ci.id]?.[i]
                       const gap = cb && cb.closing < 0
                       return (
-                        <td key={pd} className={`text-right px-2 py-1 tabular-nums text-[11px] border-l border-gray-100 ${gap ? 'bg-red-50 text-red-600 font-medium' : 'text-gray-500'}`}>
+                        <td key={pd} className={`text-right px-2 py-1 tabular-nums text-xs border-l border-gray-100 ${gap ? 'bg-red-50 text-red-600 font-medium' : 'text-gray-500'}`}>
                           {fmt(cb?.closing)}
                         </td>
                       )
@@ -767,15 +806,15 @@ export default function PaymentCalendarPage() {
           </div>
 
           {/* Легенда */}
-          <div className="px-4 py-3 border-t border-gray-100 flex gap-5 text-[11px] text-gray-400 flex-wrap">
-            {showPlan && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" /> План (ЛКМ — править · ПКМ — копировать/вставить)</span>}
-            {showFact && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> Факт (клик для расшифровки)</span>}
+          <div className="px-4 py-3 border-t border-gray-100 flex gap-x-5 gap-y-1.5 text-xs text-gray-500 flex-wrap">
+            {showPlan && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-brand-600" /> План: клик — править, правый клик — копировать и вставить</span>}
+            {showFact && <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-500" /> Факт: клик — расшифровка</span>}
             <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-100 border border-red-300" /> Кассовый разрыв</span>
             {granularity === 'day' && <>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-100 border border-blue-300" /> Сегодня</span>
+              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gold-50 border border-gold-300" /> Сегодня</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-gray-100 border border-gray-300" /> Выходной</span>
             </>}
-            <span className="flex items-center gap-1.5"><em>курсив = прогноз (план)</em></span>
+            <span className="italic">Курсивом — прогноз по плану</span>
           </div>
         </div>
       )}
@@ -826,19 +865,24 @@ function OpeningBalanceCell({ value, isManual, onSave, onReset }) {
 
   if (editing) {
     return (
-      <input ref={ref} type="text" className="w-full text-right text-xs px-1 py-0.5 border border-blue-300 rounded bg-white text-blue-700"
+      <input ref={ref} type="text" className="w-full text-right text-xs px-1 py-0.5 border border-brand-300 rounded bg-white text-brand-700"
         value={text} onChange={e => setText(e.target.value)}
         onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }} />
     )
   }
   return (
     <span className="inline-flex items-center gap-1">
-      <span className={`cursor-pointer hover:underline ${isManual ? 'text-blue-700' : ''}`}
+      <span className={`cursor-pointer hover:underline ${isManual ? 'text-brand-700' : ''}`}
         onDoubleClick={() => { setText(String(Math.round(value || 0))); setEditing(true) }}
         title="Двойной клик для редактирования">
         {fmt(value)}
       </span>
-      {isManual && <button onClick={onReset} className="text-[10px] text-gray-400 hover:text-gray-700" title="Сбросить к авто">↺</button>}
+      {isManual && (
+        <button onClick={onReset} title="Вернуть остаток, посчитанный по оборотам" aria-label="Вернуть остаток, посчитанный по оборотам"
+          className="p-0.5 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100">
+          <RotateCcw className="w-3 h-3" aria-hidden="true" />
+        </button>
+      )}
     </span>
   )
 }

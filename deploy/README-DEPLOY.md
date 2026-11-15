@@ -87,3 +87,37 @@ docker exec fp_site-db-1 mariadb -uroot -p<pw> -e "SELECT id,name,plan FROM find
 
 - **2 ГБ RAM без swap** — сборка фронта проходит (`NODE_OPTIONS=--max-old-space-size=768`), но при добавлении сервисов держите запас. Можно позже добавить swap.
 - Сайт доставки — отдельный проект `/opt/fp_site`, разворачивается независимо.
+
+## Резервные копии базы
+
+Каждый день в 03:00 по времени сервера (UTC) `deploy/dump-all.sh` снимает все базы `findir*` — central и каждую компанию — в `/opt/findir/backups`, по файлу на базу. Хранится 14 дней. Расписание — `/etc/cron.d/findir-dump`, журнал — `/var/log/findir-dump.log`.
+
+**Жив ли бэкап** — одной командой, не читая журнал:
+
+```bash
+ssh findir-server "cat /opt/findir/backups/LAST_OK; tail -3 /var/log/findir-dump.log"
+```
+
+`LAST_OK` — время последнего удачного прохода. Старше суток — бэкап не делается, причина в журнале. Старые копии при сбое не вычищаются: чистка идёт только после удачного дампа.
+
+**Подняться из копии** (пример — компания `mw`). Сначала во временную базу, чтобы посмотреть, что внутри, и не затереть рабочую:
+
+```bash
+cd /opt/findir && set -a && . ./back/.env && set +a
+mysql -h 127.0.0.1 -u"$DB_USERNAME" -p"$DB_PASSWORD" -e 'CREATE DATABASE findir_zz_check'
+zcat backups/findir_mw-ГГГГ-ММ-ДД-ЧЧММ.sql.gz | mysql -h 127.0.0.1 -u"$DB_USERNAME" -p"$DB_PASSWORD" findir_zz_check
+```
+
+Убедившись, что это нужная копия, — тем же `zcat … | mysql …` в саму `findir_mw` (дамп пересоздаёт таблицы) и `DROP DATABASE findir_zz_check`. Временную базу не оставлять: имя на `findir` попадёт в следующий дамп.
+
+**Чего этот бэкап не закрывает:** копии лежат на том же диске, что и база. От ошибки в данных и снесённой таблицы они спасают, от потери сервера — нет. Для этого их нужно дублировать за пределы сервера.
+
+## Права на файлы
+
+С 15.11.2026 в `/opt/findir` никто, кроме владельца, не пишет. Код принадлежит root, а PHP-контейнеры (`php`, `horizon`, `scheduler` — пользователь `www`, uid 1000) пишут только в своё: `back/storage`, `back/bootstrap/cache` и `back/vendor`. Остальное для приложения доступно только на чтение — взломанный PHP не перепишет код. `back/.env` — режим 600, владелец uid 1000 (его читает контейнер), `.env.bak.*` — 600, root.
+
+- **Залитый через scp файл** получает владельца root и права 644 — контейнер его читает, этого достаточно.
+- **Архив распаковывать с `--no-same-owner`:** `tar -xf x.tar --no-same-owner`. Иначе tar под root переносит владельца с машины, где архив собран. Так в `/opt/findir` однажды оказались файлы пользователя с uid 197610 — это учётка Windows из Git Bash.
+- **Если приложение пишет `Permission denied`** — проверить, что каталог внутри `back/storage` принадлежит uid 1000. Создавать такие каталоги от имени контейнера: `docker exec findir_php mkdir -p storage/…`.
+- **Права до этой правки** сохранены в `/root/findir-rollback/perms-20261115.tsv` (режим, uid, gid, путь). Вернуть их:
+  `cd /opt/findir && while IFS=$'\t' read m u g p; do chmod "$m" "$p"; chown "$u:$g" "$p"; done < /root/findir-rollback/perms-20261115.tsv`

@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
 import { getAcquiringFeeRules, updateAcquiringFeeRules } from '../api/settings'
 import Layout from '../components/Layout'
+import { Plus, X } from 'lucide-react'
+import { Button } from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
 
-const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
+const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 // Банки, которые умеет скоупить парсер (detectBank по «Отправитель»).
 // Новый банк → сначала добавить ветку в detectBank на бэке, потом сюда.
@@ -75,9 +78,9 @@ export default function AcquiringFeeRulesPage() {
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto py-6 space-y-8">
+      <div className="max-w-6xl mx-auto space-y-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Эквайринг — выделение комиссии</h1>
+          <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Эквайринг — выделение комиссии</h1>
           <p className="text-sm text-gray-500 mt-1">
             Правила «свода»: когда банк зачисляет выручку за вычетом комиссии, а сумму комиссии
             пишет только в назначении. При загрузке выписки такая строка автоматически разворачивается
@@ -88,21 +91,21 @@ export default function AcquiringFeeRulesPage() {
         {error &&  <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>}
         {notice && <div className="bg-green-50 text-green-700 text-sm rounded-lg px-4 py-3">{notice}</div>}
 
-        <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Правила по банкам</h2>
             <div className="flex gap-2">
               <button onClick={resetToDefaults} className="px-4 py-2 text-gray-600 text-sm hover:text-gray-900">
                 Сбросить к умолчаниям
               </button>
-              <button onClick={addRow} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-                + Правило
-              </button>
+              <Button variant="primary" icon={Plus} onClick={addRow}>
+                Правило
+              </Button>
             </div>
           </div>
 
           {loading ? (
-            <div className="text-sm text-gray-500 py-8 text-center">Загрузка…</div>
+            <SkeletonRows rows={4} height="h-9" />
           ) : rules.length === 0 ? (
             <div className="text-sm text-gray-500 py-8 text-center">
               Правил нет. Нажмите «Сбросить к умолчаниям», чтобы добавить базовый набор.
@@ -150,7 +153,7 @@ export default function AcquiringFeeRulesPage() {
                       />
                     </td>
                     <td className="py-2 text-right">
-                      <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-600 text-sm" title="Удалить">✕</button>
+                      <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-600 text-sm" title="Удалить"><X className="w-4 h-4" aria-hidden="true" /></button>
                     </td>
                   </tr>
                 ))}
@@ -160,13 +163,12 @@ export default function AcquiringFeeRulesPage() {
 
           <div className="flex justify-end gap-2 pt-6">
             <button onClick={load} className="px-4 py-2 text-gray-600 text-sm">Отмена</button>
-            <button
+            <Button variant="primary"
               onClick={save}
-              disabled={saving || !canSave}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-40"
-            >
+              disabled={saving || !canSave}>
+
               {saving ? 'Сохранение…' : 'Сохранить'}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

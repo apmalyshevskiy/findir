@@ -9,6 +9,8 @@ import {
   getIntegrationObject,
 } from '../api/integrations'
 import { parseUtc } from '../utils/datetime'
+import { ChevronRight } from 'lucide-react'
+import { Button } from '../components/ui'
 
 /**
  * Загрузка данных из учётных систем — в два шага.
@@ -43,7 +45,7 @@ const money = (v) => Number(v ?? 0).toLocaleString('ru-RU', { minimumFractionDig
  * сначала то, что требует действия, потом спокойное.
  */
 const ROW_STATUS = {
-  new:     { label: 'новая',          chip: 'bg-blue-50 text-blue-800 ring-blue-200',    row: '',                 pick: true,  auto: true },
+  new:     { label: 'новая',          chip: 'bg-brand-50 text-brand-800 ring-brand-200',    row: '',                 pick: true,  auto: true },
   changed: { label: 'изменилась',     chip: 'bg-amber-50 text-amber-900 ring-amber-200', row: '',                 pick: true,  auto: true },
   deleted: { label: 'удалена в POS',  chip: 'bg-red-50 text-red-700 ring-red-200',       row: '',                 pick: true,  auto: true },
   // Отметить можно и уже загруженную — перезальётся заново. Просто не сама:
@@ -78,7 +80,7 @@ const RUN_STATUS = {
 
 const Badge = ({ status }) => {
   const s = RUN_STATUS[status] || RUN_STATUS.running
-  return <span className={`px-2 py-0.5 rounded text-[11px] font-medium ring-1 ${s.cls}`}>{s.label}</span>
+  return <span className={`px-2 py-0.5 rounded text-2xs font-medium ring-1 ${s.cls}`}>{s.label}</span>
 }
 
 export default function DataImportPage() {
@@ -94,9 +96,9 @@ export default function DataImportPage() {
 
   return (
     <Layout>
-      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
-        <h2 className="text-xl font-semibold text-gray-800">Загрузка из учётных систем</h2>
-        <Link to="/integrations" className="text-sm text-blue-700 hover:underline">
+      <div className="flex items-center justify-between mb-5 gap-3 flex-wrap">
+        <h1 className="text-[1.375rem] leading-7 font-semibold tracking-tight text-gray-900">Загрузка из учётных систем</h1>
+        <Link to="/integrations" className="text-sm text-brand-700 hover:underline">
           Настройка интеграций →
         </Link>
       </div>
@@ -104,14 +106,14 @@ export default function DataImportPage() {
       {items === null && <div className="text-sm text-gray-400">Загружаю...</div>}
 
       {items !== null && active.length === 0 && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-8">
           <div className="text-sm text-gray-700 font-medium mb-1">Нет включённых интеграций</div>
           <p className="text-sm text-gray-500">
             Интеграция сама забирает данные из учётной системы и раскладывает их по счетам.
             Настроить нужно один раз — дальше сюда заходят только за загрузкой.
           </p>
           <Link to="/integrations"
-            className="inline-block mt-4 px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800">
+            className="inline-block mt-4 px-4 py-2 bg-brand-800 text-white rounded-lg text-sm font-medium hover:bg-brand-700">
             Настроить интеграцию
           </Link>
         </div>
@@ -165,7 +167,7 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
 
       {/* ── Что в источнике ─────────────────────────────────────── */}
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">{data.title || 'В источнике'}</div>
+        <div className="text-2xs uppercase tracking-wide text-gray-400 mb-2">{data.title || 'В источнике'}</div>
 
         <Facts rows={data.facts} className="mb-3" />
 
@@ -202,17 +204,17 @@ function ObjectDetail({ integrationId, entity, externalId, onPeek }) {
 
       {/* ── Что получится у нас ─────────────────────────────────── */}
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">
+        <div className="text-2xs uppercase tracking-wide text-gray-400 mb-2">
           {data.document_id ? 'Загружено как' : 'Ляжет в учёт как'}
         </div>
 
         <Facts rows={data.posting?.rows} />
 
-        {data.note && <p className="text-[11px] text-gray-400 mt-2 max-w-md">{data.note}</p>}
+        {data.note && <p className="text-2xs text-gray-400 mt-2 max-w-md">{data.note}</p>}
 
         {data.document_id && (
           <button onClick={() => onPeek(data.document_id)}
-            className="mt-3 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-blue-700 hover:bg-white">
+            className="mt-3 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-brand-700 hover:bg-white">
             Посмотреть документ
           </button>
         )}
@@ -348,12 +350,12 @@ function ImportCard({ integration, onDone, onPeek }) {
   const last = fmtDateTime(integration.last_run_at)
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+    <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-5">
 
       <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
         <div>
           <div className="font-semibold text-gray-800">{integration.name}</div>
-          <div className="text-[11px] text-gray-400 mt-0.5">
+          <div className="text-2xs text-gray-400 mt-0.5">
             {last
               ? <>последняя загрузка {last}{integration.last_run_message ? ` · ${integration.last_run_message}` : ''}</>
               : 'ещё ни разу не загружали'}
@@ -367,14 +369,14 @@ function ImportCard({ integration, onDone, onPeek }) {
       {integration.kind === 'file' ? (
         <div className="text-sm text-gray-600">
           Загружается файлом выгрузки.{' '}
-          <Link to="/onec-postings" className="text-blue-700 hover:underline font-medium">
+          <Link to="/onec-postings" className="text-brand-700 hover:underline font-medium">
             Открыть загрузку проводок
           </Link>
         </div>
       ) : !integration.is_ready ? (
         <div className="border border-amber-200 bg-amber-50/60 rounded-lg px-4 py-3 text-sm text-amber-900">
           Не заполнено: {integration.missing.join(', ')}.{' '}
-          <Link to="/integrations" className="text-blue-700 hover:underline font-medium">Открыть настройки</Link>
+          <Link to="/integrations" className="text-brand-700 hover:underline font-medium">Открыть настройки</Link>
         </div>
       ) : (
         <>
@@ -398,7 +400,7 @@ function ImportCard({ integration, onDone, onPeek }) {
           </div>
 
           {busy === 'preview' && (
-            <p className="text-[11px] text-gray-400 mt-2">
+            <p className="text-2xs text-gray-400 mt-2">
               Идёт обращение к учётной системе — на большом периоде это может занять минуту.
             </p>
           )}
@@ -420,7 +422,7 @@ function ImportCard({ integration, onDone, onPeek }) {
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-2">
                 {ORDER.filter(s => counts[s]).map(s => (
                   <span key={s} className="text-xs text-gray-600 flex items-center gap-1.5">
-                    <span className={`px-1.5 py-0.5 rounded text-[11px] ring-1 ${ROW_STATUS[s].chip}`}>
+                    <span className={`px-1.5 py-0.5 rounded text-2xs ring-1 ${ROW_STATUS[s].chip}`}>
                       {ROW_STATUS[s].label}
                     </span>
                     {counts[s]}
@@ -433,7 +435,7 @@ function ImportCard({ integration, onDone, onPeek }) {
                   <thead className="bg-gray-50 text-gray-500">
                     <tr className="text-left">
                       <th className="py-2 px-3 w-8">
-                        <input type="checkbox" className="w-4 h-4 accent-blue-900"
+                        <input type="checkbox" className="w-4 h-4 accent-brand-900"
                           checked={allPicked} onChange={toggleAll}
                           disabled={selectable.length === 0} />
                       </th>
@@ -452,9 +454,9 @@ function ImportCard({ integration, onDone, onPeek }) {
                       return (
                         <Fragment key={r.id}>
                           <tr onClick={() => can && toggle(r.id)}
-                              className={`border-t border-gray-50 ${st.row} ${can ? 'cursor-pointer hover:bg-blue-50/40' : ''}`}>
+                              className={`border-t border-gray-50 ${st.row} ${can ? 'cursor-pointer hover:bg-brand-50/40' : ''}`}>
                             <td className="py-2 px-3">
-                              <input type="checkbox" className="w-4 h-4 accent-blue-900"
+                              <input type="checkbox" className="w-4 h-4 accent-brand-900"
                                 checked={picked.has(r.id)} disabled={!can}
                                 onChange={() => toggle(r.id)}
                                 onClick={e => e.stopPropagation()} />
@@ -467,19 +469,19 @@ function ImportCard({ integration, onDone, onPeek }) {
                                   <button onClick={e => { e.stopPropagation(); toggleDetail(r.id) }}
                                     title="Показать состав"
                                     className="text-gray-400 hover:text-gray-700 mr-1.5 w-3 inline-block">
-                                    {opened === r.id ? '▾' : '▸'}
+                                    <ChevronRight className={`w-3.5 h-3.5 inline-block align-[-2px] transition-transform ${opened === r.id ? 'rotate-90' : ''}`} aria-hidden="true" />
                                   </button>
                                 )}
                                 <Cell row={r} col={c} />
                               </td>
                             ))}
                             <td className="py-2 px-3 whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded text-[11px] font-medium ring-1 ${st.chip}`}>
+                              <span className={`px-2 py-0.5 rounded text-2xs font-medium ring-1 ${st.chip}`}>
                                 {st.label}
                               </span>
                               {r.document_id && (
                                 <button onClick={e => { e.stopPropagation(); onPeek(r.document_id) }}
-                                  className="text-blue-700 hover:underline text-xs ml-2">
+                                  className="text-brand-700 hover:underline text-xs ml-2">
                                   документ
                                 </button>
                               )}
@@ -507,11 +509,10 @@ function ImportCard({ integration, onDone, onPeek }) {
               </div>
 
               <div className="flex flex-wrap items-center gap-3 mt-3">
-                <button onClick={run} disabled={busy === 'sync' || picked.size === 0}
-                  className="px-4 py-2 bg-blue-900 text-white rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50">
-                  {busy === 'sync' ? 'Загружаю...' : `↓ Загрузить отмеченные (${picked.size})`}
-                </button>
-                <span className="text-[11px] text-gray-400">
+                <Button variant="primary" onClick={run} disabled={busy === 'sync' || picked.size === 0}>
+                  {busy === 'sync' ? 'Загружаю...' : `Загрузить отмеченные · ${picked.size}`}
+                </Button>
+                <span className="text-2xs text-gray-400">
                   Уже загруженные не отмечены — они не менялись. Отметьте, если
                   нужно перезалить: документ перепроведётся заново, дубля не будет.
                 </span>
@@ -525,7 +526,7 @@ function ImportCard({ integration, onDone, onPeek }) {
         <div className="mt-4 pt-3 border-t border-gray-100">
           <button onClick={() => setShowLog(!showLog)}
             className="text-xs text-gray-500 hover:text-gray-700">
-            {showLog ? '▾' : '▸'} Прошлые загрузки ({runs.length})
+            <ChevronRight className={`w-3.5 h-3.5 inline-block align-[-2px] transition-transform ${showLog ? 'rotate-90' : ''}`} aria-hidden="true" /> Прошлые загрузки ({runs.length})
           </button>
 
           {showLog && (
