@@ -125,19 +125,23 @@ class BudgetController extends TenantController
             'project_id' => 'sometimes|integer',
             // Разрез БДР: раздел → список видов справочника по уровням.
             // Пустой список у раздела означает «взять из слотов счёта»
-            // Уровень — это вид справочника и способ показа: `tree` разворачивает
+            // Уровень — это вид справочника, способ показа и глубина, с которой
+            // справочник разворачивается: `tree` разворачивает
             // иерархию целиком, иначе выводится плоский список тех элементов,
             // по которым что-то есть
             'structure'                  => 'sometimes|nullable|array',
             'structure.revenue'          => 'sometimes|array|max:3',
             'structure.revenue.*.type'   => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
             'structure.revenue.*.tree'   => 'sometimes|boolean',
+            'structure.revenue.*.from_level' => 'sometimes|integer|min:1|max:5',
             'structure.cost'             => 'sometimes|array|max:3',
             'structure.cost.*.type'      => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
             'structure.cost.*.tree'      => 'sometimes|boolean',
+            'structure.cost.*.from_level'    => 'sometimes|integer|min:1|max:5',
             'structure.expenses'         => 'sometimes|array|max:3',
             'structure.expenses.*.type'  => 'required|string|in:' . implode(',', AnalyticSlots::TYPES),
             'structure.expenses.*.tree'  => 'sometimes|boolean',
+            'structure.expenses.*.from_level' => 'sometimes|integer|min:1|max:5',
         ]);
 
         $doc = $this->docModel()->newQuery()->findOrFail($id);
@@ -395,7 +399,9 @@ class BudgetController extends TenantController
      *
      * Параметры:
      *   - by_cash=1       — детализация по кассам (только для ДДС/PDC)
-     *   - display_from    — расширение диапазона влево (показать факт до начала бюджета)
+     *   - period_from, period_to — период просмотра; по умолчанию период бюджета.
+     *                       За его рамками плана нет, там только факт
+     *   - display_from    — прежнее имя period_from, умеет только расширять влево
      *   - granularity     — 'day' | 'month'. По умолчанию: 'day' для PDC, 'month' для остальных.
      *   - split_expenses=1 — БДР: показать расходы двумя группами, переменные и постоянные
      *
@@ -424,25 +430,42 @@ class BudgetController extends TenantController
             $granularity = 'month';
         }
 
-        // display_from — расширение диапазона влево.
-        // Для подневной гранулярности оперируем днями, для месячной — началом месяца.
-        if ($granularity === 'day') {
-            $displayFrom = $request->display_from
-                ? Carbon::parse($request->display_from)->startOfDay()->format('Y-m-d')
-                : null;
-            $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfDay()->format('Y-m-d');
-        } else {
-            $displayFrom = $request->display_from
-                ? Carbon::parse($request->display_from)->startOfMonth()->format('Y-m-d')
-                : null;
-            $budgetPeriodFrom = Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
+        // Период просмотра. По умолчанию — период самого бюджета, но смотреть
+        // можно любой отрезок: месяцы за рамками бюджета плана не имеют (его
+        // туда и не завести), поэтому план там нулевой, а факт показывается
+        // как везде. Для подневной гранулярности считаем днями, для месячной —
+        // началом месяца.
+        $day = $granularity === 'day';
+        $norm = fn($d) => $day
+            ? Carbon::parse($d)->startOfDay()->format('Y-m-d')
+            : Carbon::parse($d)->startOfMonth()->format('Y-m-d');
+
+        $budgetPeriodFrom = $norm($doc->period_from);
+        $budgetPeriodTo   = $norm($doc->period_to);
+
+        $windowFrom = $request->period_from ? $norm($request->period_from) : null;
+        $windowTo   = $request->period_to   ? $norm($request->period_to)   : null;
+
+        // display_from — прежнее имя параметра, им ещё ходит платёжный
+        // календарь. Оно умело только расширять диапазон влево
+        if (!$windowFrom && $request->display_from) {
+            $windowFrom = min($norm($request->display_from), $budgetPeriodFrom);
         }
 
-        $effectiveFrom = ($displayFrom && $displayFrom < $budgetPeriodFrom)
-            ? $displayFrom
-            : $budgetPeriodFrom;
+        $effectiveFrom = $windowFrom ?: $budgetPeriodFrom;
+        $effectiveTo   = $windowTo   ?: $budgetPeriodTo;
+        if ($effectiveTo < $effectiveFrom) $effectiveTo = $effectiveFrom;
 
-        $periodDates = $this->periodDatesBetween($effectiveFrom, $doc->period_to, $granularity);
+        $periodDates = $this->periodDatesBetween($effectiveFrom, $effectiveTo, $granularity);
+
+        // Потолок на число колонок: период приходит с экрана, и опечатка в годе
+        // дала бы отчёт на тысячу месяцев — считался бы он долго, а прочесть
+        // его всё равно нельзя
+        $maxPeriods = $day ? 400 : 120;
+        if (count($periodDates) > $maxPeriods) {
+            $periodDates   = array_slice($periodDates, 0, $maxPeriods);
+            $effectiveTo   = end($periodDates);
+        }
 
         // ── Плановые данные ──────────────────────────────────────────────
         $planRows = $this->itemModel()->newQuery()
@@ -474,7 +497,7 @@ class BudgetController extends TenantController
         // PDC использует те же статьи и факт-источник, что и ДДС.
         if ($doc->type === 'dds' || $doc->type === 'pdc') {
             $articles = $this->getDdsArticles();
-            $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom, $granularity);
+            $fact = $this->getDdsFact($doc, $periodDates, $byCash, $effectiveFrom, $granularity, $effectiveTo);
             $openingBalances = $this->getOpeningBalances($doc, $byCash, $effectiveFrom, $granularity);
             // Обороты без заполненной статьи получают свою строку
             $articles = $this->withUnassigned($articles, $fact);
@@ -482,7 +505,7 @@ class BudgetController extends TenantController
             // Порядок важен: разрез задаёт группировку факта, а факт решает,
             // на каких уровнях нужна строка «Без статьи»
             $bdrSections = $this->bdrSections($doc);
-            $fact        = $this->getBdrFact($doc, $bdrSections, $effectiveFrom);
+            $fact        = $this->getBdrFact($doc, $bdrSections, $effectiveFrom, $effectiveTo);
 
             // Строки строим по факту вместе с планом: на линейном уровне
             // статья без оборотов, но с планом, всё равно должна быть видна —
@@ -538,7 +561,9 @@ class BudgetController extends TenantController
             'document'           => $doc,
             'period_dates'       => $periodDates,
             'budget_period_from' => $budgetPeriodFrom,
+            'budget_period_to'   => $budgetPeriodTo,
             'display_from'       => $effectiveFrom,
+            'display_to'         => $effectiveTo,
             'granularity'        => $granularity,
             'articles'           => $articles,
             'plan'               => $plan,
@@ -585,7 +610,7 @@ class BudgetController extends TenantController
      * granularity = 'month' — группировка по началу месяца.
      * granularity = 'day'   — группировка по конкретному дню.
      */
-    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash, ?string $effectiveFrom = null, string $granularity = 'month'): array
+    private function getDdsFact(BudgetDocument $doc, array $periodDates, bool $byCash, ?string $effectiveFrom = null, string $granularity = 'month', ?string $effectiveTo = null): array
     {
         $a100 = (new BalanceItem)->setConnection($this->dbName)
             ->newQuery()
@@ -604,13 +629,13 @@ class BudgetController extends TenantController
             $dateFrom = $effectiveFrom
                 ? Carbon::parse($effectiveFrom)->startOfDay()->format('Y-m-d')
                 : Carbon::parse($doc->period_from)->startOfDay()->format('Y-m-d');
-            $dateTo   = Carbon::parse($doc->period_to)->endOfDay()->format('Y-m-d 23:59:59');
+            $dateTo   = Carbon::parse($effectiveTo ?: $doc->period_to)->endOfDay()->format('Y-m-d 23:59:59');
             $dateFormat = '%Y-%m-%d';
         } else {
             $dateFrom = $effectiveFrom
                 ? Carbon::parse($effectiveFrom)->startOfMonth()->format('Y-m-d')
                 : Carbon::parse($doc->period_from)->startOfMonth()->format('Y-m-d');
-            $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
+            $dateTo   = Carbon::parse($effectiveTo ?: $doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
             $dateFormat = '%Y-%m-01';
         }
 
@@ -776,14 +801,21 @@ class BudgetController extends TenantController
                 continue;
             }
 
-            // Уровень записывается объектом {type, tree}. Строку тоже понимаем:
-            // так настройка выглядела до появления выбора «дерево или список»
+            // Уровень записывается объектом {type, tree, from_level}. Строку тоже
+            // понимаем: так настройка выглядела до появления выбора «дерево или
+            // список». from_level — с какой глубины справочника начинать: у
+            // иных справочников верхний уровень один на всех и в отчёте только
+            // добавляет строку, а разрез начинается со второго
             $wanted = [];
             foreach ((array) ($structure[$section] ?? []) as $entry) {
                 $type = is_array($entry) ? ($entry['type'] ?? null) : $entry;
                 if (!$type) continue;
 
-                $wanted[] = ['type' => $type, 'tree' => is_array($entry) ? (bool) ($entry['tree'] ?? true) : true];
+                $wanted[] = [
+                    'type'       => $type,
+                    'tree'       => is_array($entry) ? (bool) ($entry['tree'] ?? true) : true,
+                    'from_level' => is_array($entry) ? max(1, (int) ($entry['from_level'] ?? 1)) : 1,
+                ];
             }
 
             // Без настройки — один уровень по первому слоту счёта, то есть
@@ -793,7 +825,7 @@ class BudgetController extends TenantController
             if (!$wanted) {
                 foreach (AnalyticSlots::SLOTS as $n) {
                     $types = AnalyticSlots::types($account, $n);
-                    if ($types) { $wanted[] = ['type' => $types[0], 'tree' => true]; break; }
+                    if ($types) { $wanted[] = ['type' => $types[0], 'tree' => true, 'from_level' => 1]; break; }
                 }
             }
 
@@ -823,7 +855,11 @@ class BudgetController extends TenantController
     /** Уровни наружу: вид справочника и способ показа, без внутреннего слота */
     private function levelsOut(array $levels): array
     {
-        return array_map(fn($l) => ['type' => $l['type'], 'tree' => (bool) ($l['tree'] ?? true)], $levels);
+        return array_map(fn($l) => [
+            'type'       => $l['type'],
+            'tree'       => (bool) ($l['tree'] ?? true),
+            'from_level' => max(1, (int) ($l['from_level'] ?? 1)),
+        ], $levels);
     }
 
     /** Виды справочника, которые счёт раздела принимает хоть в каком слоте */
@@ -855,10 +891,10 @@ class BudgetController extends TenantController
      * В balance_changes пассивные счета (П) хранят кредитовые обороты
      * отрицательными. Для БДР знак инвертируем: доходы вверх, расходы вниз.
      */
-    private function getBdrFact(BudgetDocument $doc, array $sections, ?string $effectiveFrom = null): array
+    private function getBdrFact(BudgetDocument $doc, array $sections, ?string $effectiveFrom = null, ?string $effectiveTo = null): array
     {
         $dateFrom = Carbon::parse($effectiveFrom ?: $doc->period_from)->startOfMonth()->format('Y-m-d');
-        $dateTo   = Carbon::parse($doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
+        $dateTo   = Carbon::parse($effectiveTo ?: $doc->period_to)->endOfMonth()->format('Y-m-d 23:59:59');
 
         $fact = [];
 
@@ -980,7 +1016,7 @@ class BudgetController extends TenantController
         // читается хуже, чем десяток встреченных
         $nodes = empty($levels[$depth]['tree'])
             ? $this->levelUsed($levels[$depth]['type'], $section, $fact, $prefix)
-            : $this->infoTree($levels[$depth]['type']);
+            : $this->infoTree($levels[$depth]['type'], (int) ($levels[$depth]['from_level'] ?? 1));
 
         $walk = function (array $items, string $parentPrefix) use (&$walk, $levels, $section, $fact, $depth) {
             $out = [];
@@ -1227,7 +1263,7 @@ class BudgetController extends TenantController
     }
 
     /** Дерево справочника одного вида. Читаем по разу: уровней бывает три */
-    private function infoTree(string $type): array
+    private function infoTree(string $type, int $fromLevel = 1): array
     {
         if (!isset($this->infoTrees[$type])) {
             $rows = DB::connection($this->dbName)
@@ -1241,7 +1277,21 @@ class BudgetController extends TenantController
             $this->infoTrees[$type] = $this->buildTree($rows);
         }
 
-        return $this->infoTrees[$type];
+        $tree = $this->infoTrees[$type];
+
+        // Начать не с корня: верхние уровни пропускаем, их дети становятся
+        // верхними строками. Ветка, которая до нужной глубины не доросла, из
+        // разреза уходит — сумма по ней не теряется, её подберёт страховка
+        // levelTree, которая возвращает элементы с оборотами отдельной строкой
+        for ($i = 1; $i < $fromLevel && $tree; $i++) {
+            $next = [];
+            foreach ($tree as $node) {
+                foreach ($node['children'] ?? [] as $child) $next[] = $child;
+            }
+            $tree = $next;
+        }
+
+        return $tree;
     }
 
     /** @var array<string, array> */

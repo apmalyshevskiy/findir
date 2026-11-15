@@ -8,6 +8,7 @@ import {
 import { createInfo, updateInfo } from '../api/info'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
+import RangeInputs from '../components/RangeInputs'
 import usePersistedState from '../hooks/usePersistedState'
 import { localDate } from '../utils/period'
 import { INFO_LABELS as INFO_TYPE_LABEL, EXPENSE_KINDS, EXPENSE_KIND_GROUP } from '../utils/infoLabels'
@@ -31,6 +32,11 @@ const kindOfGroup = (groupKey) =>
 
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
 const fmtDate = (d) => { if (!d) return ''; const dt = new Date(d); return dt.toLocaleDateString('ru-RU') }
+/** Последний день месяца 'YYYY-MM' в виде 'YYYY-MM-DD' */
+const lastDayOfMonth = (ym) => {
+  const [y, m] = ym.split('-').map(Number)
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+}
 const monthLabel = (ds) => new Date(ds + 'T00:00:00').toLocaleString('ru-RU', { month: 'long', year: 'numeric' })
 const isCurrentMonth = (ds) => { const n = new Date(), d = new Date(ds + 'T00:00:00'); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() }
 const isFutureMonth = (ds) => new Date(ds + 'T00:00:00') > new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -58,10 +64,12 @@ function StructureEditor({ doc, resolved, available, onSaved }) {
   const [draft, setDraft] = useState(null)
   const [saving, setSaving] = useState(false)
 
-  // Уровень хранится объектом {type, tree}. Строку тоже понимаем: так
-  // настройка выглядела до появления выбора «деревом или списком»
+  // Уровень хранится объектом {type, tree, from_level}. Строку тоже понимаем:
+  // так настройка выглядела до появления выбора «деревом или списком»
   const norm = (levels) => (levels || []).map(l =>
-    typeof l === 'string' ? { type: l, tree: true } : { type: l.type, tree: l.tree !== false })
+    typeof l === 'string'
+      ? { type: l, tree: true, from_level: 1 }
+      : { type: l.type, tree: l.tree !== false, from_level: Math.max(1, Number(l.from_level) || 1) })
 
   const current = (s) => norm(draft?.[s] ?? doc.structure?.[s])
   const dirty = draft !== null
@@ -124,6 +132,20 @@ function StructureEditor({ doc, resolved, available, onSaved }) {
                     }`}>
                     {l.tree ? 'деревом' : 'списком'}
                   </button>
+                  {/* С какого уровня справочника разворачивать. Верхний
+                      уровень бывает один на всех — общая папка, которая в
+                      отчёте только добавляет строку, а разрез начинается под
+                      ней. Для списка выбора нет: там показывается ровно то,
+                      что встретилось в оборотах */}
+                  {l.tree && (
+                    <select
+                      title="С какого уровня справочника начинать. «со 2-го» — верхнюю группировку пропустить, строками станут её потомки"
+                      value={l.from_level || 1}
+                      onChange={e => edit(section, levels.map((x, k) => k === i ? { ...x, from_level: Number(e.target.value) } : x))}
+                      className="text-[10px] px-1 py-0.5 rounded border border-gray-200 text-gray-500 bg-white">
+                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n === 1 ? 'с 1-го' : `с ${n}-го`}</option>)}
+                    </select>
+                  )}
                   <button type="button" title="Убрать уровень"
                     onClick={() => edit(section, levels.filter((_, k) => k !== i))}
                     className="text-gray-300 hover:text-red-600 px-1">×</button>
@@ -134,7 +156,7 @@ function StructureEditor({ doc, resolved, available, onSaved }) {
             {levels.length < 3 && free.length > 0 && (
               <select className="mt-1 w-full px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white text-gray-600"
                 value=""
-                onChange={e => e.target.value && edit(section, [...levels, { type: e.target.value, tree: true }])}>
+                onChange={e => e.target.value && edit(section, [...levels, { type: e.target.value, tree: true, from_level: 1 }])}>
                 <option value="">+ уровень</option>
                 {free.map(t => <option key={t} value={t}>{INFO_TYPE_LABEL[t] || t}</option>)}
               </select>
@@ -291,15 +313,35 @@ function CreateDocModal({ projects, onClose, onCreate }) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function BudgetPage() {
   const navigate = useNavigate()
-  const [documents, setDocuments] = useState([]); const [selectedDocId, setSelectedDocId] = useState(null)
+  const [documents, setDocuments] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false); const [projects, setProjects] = useState([])
   const [report, setReport] = useState(null); const [loading, setLoading] = useState(false)
-  const [byCash, setByCash] = useState(false)
-  const [viewMode, setViewMode] = useState('plan_fact') // 'plan' | 'fact' | 'plan_fact' | 'plan_fact_delta'
-  const [showEmpty, setShowEmpty] = useState(false)     // показывать статьи, где по всей строке нули
+
+  /**
+   * Настройки отчёта держатся между заходами.
+   *
+   * Бюджет открывают не раз в месяц, а изо дня в день, и каждый раз заново
+   * щёлкать «Факт», «по виду расходов» и выбирать тот же документ — работа,
+   * которой быть не должно. Поэтому всё, чем человек настроил экран под себя,
+   * лежит в localStorage и применяется при следующем открытии.
+   *
+   * Значения по умолчанию — то, с чего смотрят чаще всего: расходы по виду,
+   * фактические цифры, пустые статьи скрыты.
+   */
+  const [selectedDocId, setSelectedDocId] = usePersistedState('budget:docId', null)
+  const [byCash, setByCash] = usePersistedState('budget:byCash', false)
+  const [viewMode, setViewMode] = usePersistedState('budget:viewMode', 'fact') // 'plan' | 'fact' | 'plan_fact' | 'plan_fact_delta'
+  const [showEmpty, setShowEmpty] = usePersistedState('budget:showEmpty', false) // показывать статьи, где по всей строке нули
   // БДР: расходы двумя группами — переменные и постоянные, со своими прибылями
-  const [splitExpenses, setSplitExpenses] = useState(false)
-  const [factCutoffDate, setFactCutoffDate] = useState('') // '' = нет подстановки факта; '2026-03-01' = факт до этого месяца
+  const [splitExpenses, setSplitExpenses] = usePersistedState('budget:splitExpenses', true)
+
+  /**
+   * Период просмотра — свой у каждого бюджета, по id документа.
+   *
+   * Один период на все бюджеты не годится: у них разные годы, и отчёт
+   * открывался бы мимо своих цифр. Пусто — значит период самого бюджета.
+   */
+  const [periods, setPeriods] = usePersistedState('budget:periods', {})
   const [expanded, setExpanded] = useState(new Set())
   const [drawer, setDrawer] = useState(null)
 
@@ -337,7 +379,7 @@ export default function BudgetPage() {
   const [showSettingsPopup, setShowSettingsPopup] = useState(false) // попап настроек бюджета
   const [clipboard, setClipboard] = useState(null) // { articleId, section, periodDate, articleName }
   const [pasting, setPasting] = useState(false)
-  const [showArchived, setShowArchived] = useState(false)
+  const [showArchived, setShowArchived] = usePersistedState('budget:showArchived', false)
   // Inline-редактирование/создание статей справочника
   const [editArticle, setEditArticle] = useState(null)   // { id, name, parent_id, sort_order, type }
   const [addArticle, setAddArticle] = useState(null)      // { type, parent_id, groupKey }
@@ -348,16 +390,41 @@ export default function BudgetPage() {
     const params = (withArchived ?? showArchived) ? { show_archived: 1 } : {}
     const r = await getBudgetDocuments(params)
     const d = r.data.data; setDocuments(d)
-    if (d.length > 0 && !selectedDocId) setSelectedDocId(d[0].id)
+    // Запомненный документ мог уйти в архив или быть удалён — тогда открываем
+    // первый из списка, а не пустой экран
+    if (d.length > 0 && !d.some(x => x.id === selectedDocId)) setSelectedDocId(d[0].id)
   }
   useEffect(() => { loadDocuments() }, [showArchived])
-  useEffect(() => { if (selectedDocId) loadReport() }, [selectedDocId, byCash, factCutoffDate, splitExpenses])
+
+  const selectedDoc = documents.find(d => d.id === selectedDocId)
+
+  /**
+   * Период, за который показывают цифры: запомненный для этого бюджета, а
+   * если его не трогали — период самого бюджета.
+   *
+   * Период шире бюджета — обычное дело: за месяцы, в которые бюджет не попал,
+   * плана нет и быть не может, там только факт. Поэтому период отчёта и период
+   * бюджета — разные вещи; период самого документа правится в его настройках.
+   */
+  const viewPeriod = {
+    from: periods[selectedDocId]?.from || selectedDoc?.period_from?.slice(0, 10) || '',
+    to:   periods[selectedDocId]?.to   || selectedDoc?.period_to?.slice(0, 10)   || '',
+  }
+
+  const setViewPeriod = (range) => setPeriods(prev => ({ ...prev, [selectedDocId]: range }))
+
+  // Документ ещё не загружен — ждём: иначе первый запрос уйдёт без периода, и
+  // отчёт пришлось бы тут же перезапрашивать
+  const docReady = !!selectedDoc
+  useEffect(() => { if (docReady) loadReport() },
+    [selectedDocId, byCash, splitExpenses, viewPeriod.from, viewPeriod.to, docReady])
 
   const loadReport = async (keepState = false) => {
     if (!keepState) setLoading(true)
     try {
       const params = { by_cash: byCash ? 1 : 0 }
-      if (factCutoffDate) params.display_from = factCutoffDate
+      if (viewPeriod.from) params.period_from = viewPeriod.from
+      if (viewPeriod.to)   params.period_to   = viewPeriod.to
       if (splitExpenses) params.split_expenses = 1
       const r = await getBudgetReport(selectedDocId, params)
       setReport(r.data)
@@ -448,6 +515,9 @@ export default function BudgetPage() {
     await updateBudgetDocument(selectedDocId, editDoc)
     setDocuments(prev => prev.map(d => d.id === selectedDocId ? { ...d, ...editDoc } : d))
     setEditDoc(null)
+    // Период бюджета сдвинули — запомненный период просмотра относился к
+    // прежнему, и держаться за него значит показывать не тот отрезок
+    setPeriods(prev => { const n = { ...prev }; delete n[selectedDocId]; return n })
     loadReport()
   }
 
@@ -596,17 +666,10 @@ export default function BudgetPage() {
     if (Array.isArray(arts)) walk(arts); return flat
   }, [report])
 
-  const selectedDoc = documents.find(d => d.id === selectedDocId)
-
-  /**
-   * В черновике пустые статьи нужны: план как раз и вписывают в пустые ячейки,
-   * а прятать строки, ради которых открыли документ, — значит показать пустой
-   * экран. В утверждённом бюджете планировать уже нечего, и нули только мешают.
-   *
-   * Это исходное состояние переключателя, а не запрет: выбор человека держится,
-   * пока он не сменит документ.
-   */
-  useEffect(() => { setShowEmpty(selectedDoc?.status === 'draft') }, [selectedDocId, selectedDoc?.status])
+  // Пустые статьи больше не навязываются сменой документа: переключатель —
+  // запомненная настройка, и переставлять его за человека значит забывать её
+  // ровно там, где она и нужна. Вписать план в пустую ячейку по-прежнему
+  // можно, для этого есть «Все статьи»
 
   const periodDates = report?.period_dates || []; const plan = report?.plan || {}; const fact = report?.fact || {}
   const planDetails = report?.plan_details || {}; const openBal = report?.opening_balances || {}; const cashItems = report?.cash_items || []
@@ -619,10 +682,18 @@ export default function BudgetPage() {
   const isFactOnly = viewMode === 'fact'
   const colsPerMonth = (isPlanOnly || isFactOnly) ? 1 : showDelta ? 3 : 2
 
-  // Месяцы ДО начала бюджета (расширение влево через «Показать с:») = фактические.
-  // Работает во всех режимах. budget_period_from приходит с бэка.
+  /**
+   * Месяц вне периода бюджета — только фактический.
+   *
+   * Период просмотра бывает шире бюджета с любой стороны, и в месяцах за его
+   * рамками плана нет: завести его туда нельзя, сервер такую строку не примет.
+   * Поэтому там показывается факт, а ячейка плана не редактируется.
+   * Границы приходят с бэка, уже приведённые к началу месяца.
+   */
   const budgetPeriodFrom = report?.budget_period_from || selectedDoc?.period_from?.slice(0, 10) || ''
-  const isFactMonth = (pd) => budgetPeriodFrom && pd < budgetPeriodFrom
+  const budgetPeriodTo   = report?.budget_period_to   || selectedDoc?.period_to?.slice(0, 10)   || ''
+  const isFactMonth = (pd) =>
+    (!!budgetPeriodFrom && pd < budgetPeriodFrom) || (!!budgetPeriodTo && pd > budgetPeriodTo)
 
   /**
    * Месяцы, по которым факт в отчёте вообще есть.
@@ -1015,14 +1086,30 @@ export default function BudgetPage() {
           </button>
         )}
 
+        {/* Период просмотра. Набранное с клавиатуры применяется по Enter или
+            по уходу из полей: отчёт тяжёлый, и пересобирать его на каждой
+            цифре года незачем */}
         {selectedDoc && (
           <div className="flex items-center gap-1.5 ml-2">
-            <span className="text-[11px] text-gray-400">Показать с:</span>
-            <input type="month" className="px-1.5 py-1 border border-gray-200 rounded text-[11px] bg-white w-[130px]"
-              value={factCutoffDate ? factCutoffDate.slice(0, 7) : ''}
-              placeholder={selectedDoc?.period_from?.slice(0, 7) || ''}
-              onChange={e => { const v = e.target.value; setFactCutoffDate(v ? v + '-01' : '') }} />
-            {factCutoffDate && <button className="text-[10px] text-gray-400 hover:text-gray-600 ml-0.5" onClick={() => setFactCutoffDate('')} title="Сбросить к началу бюджета">✕</button>}
+            <RangeInputs
+              type="month"
+              fromLabel="Период" toLabel="—"
+              labelClass="text-[11px] text-gray-400"
+              inputClass="px-1.5 py-1 border border-gray-200 rounded text-[11px] bg-white w-[120px]"
+              value={{ from: viewPeriod.from.slice(0, 7), to: viewPeriod.to.slice(0, 7) }}
+              onApply={r => setViewPeriod({
+                // Пустую границу понимаем как «как у бюджета». Правый край —
+                // последний день месяца, а не первый: у платёжного календаря
+                // колонка это день, и по первому числу месяц оборвался бы
+                from: r.from ? r.from + '-01' : selectedDoc.period_from?.slice(0, 10),
+                to:   r.to   ? lastDayOfMonth(r.to) : selectedDoc.period_to?.slice(0, 10),
+              })}
+            />
+            {periods[selectedDocId] && (
+              <button className="text-[10px] text-gray-400 hover:text-gray-600"
+                onClick={() => setPeriods(prev => { const n = { ...prev }; delete n[selectedDocId]; return n })}
+                title="Вернуть период бюджета">&#10005;</button>
+            )}
           </div>
         )}
         <div className="ml-auto">
@@ -1307,8 +1394,10 @@ export default function BudgetPage() {
                         const planVal = getArticleValue(article.rowKey, pd, plan, sec, article.id)
                         const future = isBlankFuture(pd)
                         // По «Без статьи» план не ставят: это не план, а долг
-                        // по разноске. Появится статья — появится и план
-                        const editable = selectedDoc?.status === 'draft' && !unassigned
+                        // по разноске. Появится статья — появится и план.
+                        // Вне периода бюджета плана нет вовсе: сервер такую
+                        // строку не примет, и ячейка там только для чтения
+                        const editable = selectedDoc?.status === 'draft' && !unassigned && !isFactMonth(pd)
                         const key = sec ? `${sec}:${article.id}:0:${pd}` : `${article.id}:0:${pd}`
                         const count = planDetails[key]?.length || 0
                         const isCopied = clipboard && clipboard.rowKey === article.rowKey && clipboard.periodDate === pd

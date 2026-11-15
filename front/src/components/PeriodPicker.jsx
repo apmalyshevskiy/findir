@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import RangeInputs from './RangeInputs'
 import {
   PRESETS, MONTHS, MONTHS_SHORT, QUARTERS,
   presetRange, monthRange, quarterRange, yearRange,
   matchesMonth, matchesQuarter, matchesYear,
   periodLabel, periodYear, localDate,
 } from '../utils/period'
+
 
 /**
  * Выбор периода: типовой и произвольный — рядом, а не один внутри другого.
@@ -37,18 +39,6 @@ export default function PeriodPicker({ value, onChange, allowAll = false, align 
   const pick = (range, preset = 'custom') => {
     onChange({ ...range, preset })
     setOpen(false)
-  }
-
-  // Правка одной границы. Если диапазон вывернулся (начало позже конца) —
-  // подтягиваем вторую границу, а не блокируем ввод: иначе сдвинуть период
-  // вперёд было бы нельзя, «с» упиралось бы в старое «по».
-  const setEdge = (edge, val) => {
-    const next = { ...value, [edge]: val, preset: 'custom' }
-    if (next.from && next.to && next.from > next.to) {
-      if (edge === 'from') next.to = val
-      else next.from = val
-    }
-    onChange(next)
   }
 
   // Шаг назад/вперёд по текущему периоду
@@ -202,16 +192,8 @@ export default function PeriodPicker({ value, onChange, allowAll = false, align 
       </div>
 
       {/* ── Произвольный период: всегда под рукой, без открытия выпадашки ── */}
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs text-gray-400">с</span>
-        <input type="date" value={value.from || ''}
-          onChange={e => setEdge('from', e.target.value)}
-          className={dateInput} />
-        <span className="text-xs text-gray-400">по</span>
-        <input type="date" value={value.to || ''}
-          onChange={e => setEdge('to', e.target.value)}
-          className={dateInput} />
-      </div>
+      <RangeInputs value={value} inputClass={dateInput}
+        onApply={range => onChange({ ...value, ...range, preset: 'custom' })} />
     </div>
   )
 }

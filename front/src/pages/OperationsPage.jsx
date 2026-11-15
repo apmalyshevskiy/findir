@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { getOperations, deleteOperation, getBalanceItems, createOperation, setOperationPosting } from '../api/operations'
@@ -125,6 +125,11 @@ const OP_GRID = 'grid grid-cols-[2rem_2.5rem_10rem_minmax(170px,1.3fr)_minmax(17
 // порция, а не молчаливый обрыв периода
 const PER_PAGE = 200
 
+// Потолок одного запроса, тот же, что стоит на сервере. Когда они расходились,
+// сервер молча отдавал меньше запрошенного, а следующая страница отсчитывалась
+// от запрошенного — и строки между ними в список не попадали вовсе
+const MAX_PER_PAGE = 1000
+
 /**
  * Кусок текста вокруг найденного.
  *
@@ -213,6 +218,178 @@ function SearchBadge({ q, found, onClear }) {
   )
 }
 
+// Форматирование ячеек строки журнала. На модульном уровне, а не внутри
+// страницы: ими пользуется вынесенная строка, и пересоздавать их на каждый
+// рендер незачем
+const formatAmount = (amount) =>
+  new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(amount)
+
+const formatDate = (date) =>
+  new Date(date).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  })
+
+// Подсветка ячейки, по которой операция попала в поиск
+const hitCell = 'bg-amber-100 rounded px-1 -mx-1'
+
+/**
+ * Браузер не тратит время на строки за пределами экрана.
+ *
+ * Догрузив тысячу операций, человек видит от силы десяток: остальные лежат
+ * ниже, но раскладка и отрисовка считались для всех — именно это и делало
+ * длинный список вязким при прокрутке и при любой перерисовке.
+ *
+ * Высота-заглушка нужна, чтобы полоса прокрутки не прыгала, пока строки не
+ * отрисованы; auto означает «запомни настоящую высоту, когда отрисуешь» —
+ * карточки разной высоты из-за аналитики и примечания.
+ */
+const ROW_OFFSCREEN = { contentVisibility: 'auto', containIntrinsicSize: 'auto 88px' }
+
+/**
+ * Строка журнала.
+ *
+ * Вынесена из страницы и обёрнута в memo не ради порядка, а ради скорости:
+ * карточка — это полсотни узлов разметки, и пока она жила внутри страницы,
+ * любое изменение её состояния перерисовывало все показанные строки целиком.
+ * Отметил операцию галочкой — React заново собирал двести карточек; догрузил
+ * следующую порцию — пересобирал и те, что уже на экране.
+ *
+ * Чтобы memo работал, странице приходится отдавать стабильные обработчики
+ * (useCallback) и готовый признак выделения, а не весь набор выделенных: на
+ * Set memo сравнивал бы ссылку и срабатывал бы вхолостую.
+ */
+const OperationRow = memo(function OperationRow({
+  op, isSelected, q, qId, qAmount, showAuthors, showNotes,
+  onToggle, onEdit, onOpenDocument, onTogglePosting, onCopy, onTemplate, onDelete,
+}) {
+  return (
+    <div
+      onClick={() => onToggle(op.id)}
+      // Двойной клик открывает саму операцию — в том числе
+      // созданную документом: в ней смотрят движения по счетам.
+      // В документ ведёт своя иконка, и он открывается тут же,
+      // не уводя со списка
+      onDoubleClick={() => onEdit(op)}
+      title="Двойной клик — открыть операцию"
+      style={ROW_OFFSCREEN}
+      // Непроведённая — пунктиром и приглушённая: она в списке
+      // есть, а в оборотах её нет, и это должно быть видно сразу
+      className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
+        isSelected
+          ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
+          : op.is_posted === false
+            ? 'border-dashed border-gray-300 bg-gray-50 hover:border-blue-300'
+            : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
+      }`}
+    >
+      <div className={`${OP_GRID} items-start`}>
+      <div onClick={e => e.stopPropagation()}>
+        <input type="checkbox" checked={isSelected}
+          onChange={() => onToggle(op.id)} className="rounded" />
+      </div>
+      <div className="text-xs text-gray-400 font-mono pt-0.5">
+        <span className={qId === op.id ? hitCell : ''}>{op.id}</span>
+        {/* Автор — второй строкой под номером, а не отдельной
+            колонкой: сетка и так из восьми колонок, а имя нужно
+            лишь там, где в компании правда несколько человек */}
+        {showAuthors && op.created_by_name && (
+          <div className="text-[10px] text-gray-400 font-sans leading-tight mt-0.5 truncate"
+            title={`Внёс: ${op.created_by_name}`}>
+            {op.created_by_name.split(' ')[0]}
+          </div>
+        )}
+      </div>
+      <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
+      <div>
+        <div className="flex items-center gap-1.5">
+          <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" q={q} />
+        </div>
+        {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
+        {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
+        {op.in_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_3_id}</span></div>}
+      </div>
+      <div>
+        <div className="flex items-center gap-1.5">
+          <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" q={q} />
+        </div>
+        {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
+        {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
+        {op.out_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_3_id}</span></div>}
+      </div>
+      <div className="text-right whitespace-nowrap pt-0.5">
+        <div className={`font-semibold ${op.is_posted === false ? 'text-gray-400' : 'text-gray-800'}`}>
+          <span className={qAmount !== null && Math.abs(Number(op.amount) - qAmount) < 0.005 ? hitCell : ''}>
+            {formatAmount(op.amount)}
+          </span>
+        </div>
+        {op.is_posted === false && (
+          <div className="text-[10px] text-gray-500 bg-gray-200 rounded px-1 mt-0.5 inline-block">
+            не проведена
+          </div>
+        )}
+      </div>
+      <div className="min-w-0">
+        {op.content
+          ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>
+              <Highlight text={snippet(op.content, q)} q={q} />
+            </div>
+          : (!showNotes || !op.note) && <span className="text-gray-300">—</span>}
+
+        {/* Примечание — сразу под содержанием. Не обрезаем в одну
+            строку: в нём реквизиты контрагента из выписки */}
+        {showNotes && op.note && (
+          <div
+            // ИНН и р/с нужно уметь скопировать; выделил текст —
+            // карточка не переключается
+            onClick={e => { if (!window.getSelection()?.isCollapsed) e.stopPropagation() }}
+            title={op.note}
+            className={`flex items-start gap-1 text-[11px] text-gray-400 leading-snug
+                        select-text cursor-auto ${op.content ? 'mt-1' : ''}`}>
+            <span className="text-gray-300 flex-shrink-0 select-none">💬</span>
+            <span className="break-words line-clamp-3"><Highlight text={snippet(op.note, q)} q={q} /></span>
+          </div>
+        )}
+      </div>
+      <div className="text-right" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {op.table_name === 'documents' && op.table_id ? (
+            <>
+              <button onClick={() => onOpenDocument(op.table_id)} title="Открыть документ-источник"
+                className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
+              <button onClick={() => onEdit(op)} title="Открыть операцию"
+                className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => onTogglePosting(op)}
+                title={op.is_posted === false ? 'Провести — попадёт в обороты' : 'Снять проведение — уйдёт из оборотов'}
+                className={op.is_posted === false
+                  ? 'text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50'
+                  : 'text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100'}>
+                {op.is_posted === false ? '✓' : '⊘'}
+              </button>
+              <button onClick={() => onCopy(op)}
+                title="Скопировать операцию"
+                className="text-gray-300 hover:text-blue-600 p-1 rounded hover:bg-blue-50">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button onClick={() => onTemplate(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>
+              </button>
+              <button onClick={() => onEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
+              <button onClick={() => onDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
+            </>
+          )}
+        </div>
+      </div>
+      </div>
+    </div>
+  )
+})
+
 export default function OperationsPage() {
   const navigate = useNavigate()
   const [operations, setOperations] = useState([])
@@ -242,12 +419,24 @@ export default function OperationsPage() {
   const [docError, setDocError]         = useState('')
   // Примечание — отдельной строкой под карточкой. Кому мешает, тот выключит
   const [showNotes, setShowNotes] = usePersistedState('ops:show-notes', true)
-  const tenant = JSON.parse(localStorage.getItem('tenant') || '{}')
 
     // --- НОВЫЕ СОСТОЯНИЯ ---
   const [infoType, setInfoType] = useState('')       // Тип (partner, product и т.д.)
   const [infoOptions, setInfoOptions] = useState([]) // Список элементов из БД
   const [selectedInfoId, setSelectedInfoId] = useState('') // Конкретный ID элемента
+
+  // Актуальное состояние для обработчиков, которые обязаны быть стабильными.
+  // Строка журнала обёрнута в memo, и новый обработчик на каждый рендер сводил
+  // бы мемоизацию на нет: читать состояние из ref дешевле, чем пересобирать
+  // вместе с колбэками весь список
+  const latest = useRef({})
+  latest.current = { period, filter, selectedInfoId, q, page }
+
+  // Запрос списка, который ещё в полёте, — чтобы отменить его при смене отбора
+  const inFlight = useRef(null)
+
+  // Ушли со страницы, не дождавшись ответа
+  useEffect(() => () => inFlight.current?.abort(), [])
 
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
@@ -267,10 +456,6 @@ export default function OperationsPage() {
   }, [infoType])
 
 
-  useEffect(() => {
-    loadOperations(1)
-  }, [filter, period, selectedInfoId, q])
-
   /**
    * Список операций страницами.
    *
@@ -280,17 +465,25 @@ export default function OperationsPage() {
    * когда правда нужнее всего. Теперь количество и суммы считает сервер по
    * всему отбору, а список догружается по кнопке.
    */
-  const loadOperations = (nextPage = 1, span = 1) => {
+  const loadOperations = useCallback((nextPage = 1, span = 1) => {
+    const { period, filter, selectedInfoId, q } = latest.current
     const first = nextPage === 1
     first ? setLoading(true) : setLoadingMore(true)
     // Выделение живёт в пределах показанного списка: после смены отбора
     // сохранять его не в чем
     if (first) setSelected(new Set())
 
+    // Пока ждали ответ, отбор успел смениться — старый запрос больше не нужен.
+    // Без отмены его ответ мог прийти последним и показать список, которого
+    // человек уже не спрашивал: при вводе дат запросы уходят один за другим
+    inFlight.current?.abort()
+    const ctrl = new AbortController()
+    inFlight.current = ctrl
+
     // span — сколько страниц перечитать одним запросом. Нужен при обновлении
     // после правки: иначе список схлопнулся бы к первой странице, и человек,
     // догрузивший шестьсот строк, потерял бы место, на котором работал
-    const params = { page: nextPage, per_page: Math.min(PER_PAGE * span, 1000) }
+    const params = { page: nextPage, per_page: Math.min(PER_PAGE * span, MAX_PER_PAGE) }
 
     if (period.from)      params.date_from  = period.from
     if (period.to)        params.date_to    = period.to
@@ -301,35 +494,57 @@ export default function OperationsPage() {
     if (filter.is_posted !== '') params.is_posted = filter.is_posted
     if (selectedInfoId)   params.info_id    = selectedInfoId
     if (q)                params.q          = q
+    // Итоги за период от догрузки не меняются, а сервер считает их тремя
+    // отдельными проходами по всему отбору — на «показать ещё» это лишняя
+    // работа, и тем более заметная, чем шире период
+    if (!first) params.summary = 0
 
-    getOperations(params)
+    getOperations(params, { signal: ctrl.signal })
       .then(res => {
         const rows = res.data.data || []
         setOperations(prev => first ? rows : [...prev, ...rows])
-        setSummary(res.data.summary || null)
+        // Сводка приходит только с первой страницей — догрузка её не трогает
+        if (res.data.summary) setSummary(res.data.summary)
         setPage(first ? span : nextPage)
       })
-      .finally(() => { setLoading(false); setLoadingMore(false) })
-  }
+      .catch(err => {
+        // Отменили сами — список покажет уже следующий запрос
+        if (ctrl.signal.aborted) return
+        console.error('Не удалось загрузить операции:', err)
+      })
+      .finally(() => {
+        if (ctrl.signal.aborted) return
+        setLoading(false)
+        setLoadingMore(false)
+      })
+  }, [])
 
   // Показать следующую порцию
-  const loadMore = () => loadOperations(page + 1)
+  const loadMore = useCallback(() => loadOperations(latest.current.page + 1), [loadOperations])
 
   // Перечитать ровно то, что уже показано — после правки, удаления, проведения
-  const reload = () => loadOperations(1, page)
+  const reload = useCallback(() => loadOperations(1, latest.current.page), [loadOperations])
+
+  // Отбор сменился — перечитываем с первой страницы. Эффект стоит ниже
+  // loadOperations намеренно: он держит её в зависимостях, а они вычисляются
+  // прямо при рендере — упоминание const выше его объявления обрушило бы
+  // страницу целиком, ещё до первого запроса
+  useEffect(() => {
+    loadOperations(1)
+  }, [filter, period, selectedInfoId, q, loadOperations])
 
   // Проведение — не правка реквизитов, а включение операции в обороты,
   // поэтому отдельным запросом и без формы
-  const togglePosting = async (op) => {
+  const togglePosting = useCallback(async (op) => {
     try {
       await setOperationPosting(op.id, !op.is_posted)
       reload()
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось изменить проведение')
     }
-  }
+  }, [reload])
 
-  const handleDelete = async (id) => {
+  const handleDelete = useCallback(async (id) => {
     if (!confirm('Удалить операцию?')) return
     try {
       await deleteOperation(id)
@@ -337,11 +552,11 @@ export default function OperationsPage() {
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось удалить операцию')
     }
-  }
+  }, [reload])
 
   // ── Документ-источник ─────────────────────────────────────────────────────
 
-  const openDocument = async (tableId) => {
+  const openDocument = useCallback(async (tableId) => {
     setDocError('')
     try {
       const r = await getDocument(tableId)
@@ -350,7 +565,7 @@ export default function OperationsPage() {
       setDocError('Документ не найден — возможно, его удалили')
       setTimeout(() => setDocError(''), 4000)
     }
-  }
+  }, [])
 
   const loadDocInfo = (type) => {
     getInfo({ type }).then(r => setDocInfoCache(c => ({ ...c, [type]: r.data.data })))
@@ -377,12 +592,12 @@ export default function OperationsPage() {
       .finally(() => window.history.replaceState({}, '', '/operations'))
   }, [])
 
-  const handleEdit = (op) => { setDraftOperation(null); setEditOperation(op); setShowForm(true) }
-  const handleUseDraft = (payload) => { setEditOperation(null); setDraftOperation(payload); setShowForm(true) }
+  const handleEdit = useCallback((op) => { setDraftOperation(null); setEditOperation(op); setShowForm(true) }, [])
+  const handleUseDraft = useCallback((payload) => { setEditOperation(null); setDraftOperation(payload); setShowForm(true) }, [])
   const handleFormClose = () => { setShowForm(false); setEditOperation(null); setDraftOperation(null) }
 
   // Сохранить операцию как шаблон для повторения в следующем периоде
-  const saveTemplate = async (payload, defaultName) => {
+  const saveTemplate = useCallback(async (payload, defaultName) => {
     const name = prompt('Название шаблона (короткая фраза для кнопки):', defaultName || '')
     if (!name || !name.trim()) return
     try {
@@ -391,16 +606,16 @@ export default function OperationsPage() {
     } catch (err) {
       alert(err.response?.data?.message || 'Не удалось сохранить шаблон')
     }
-  }
+  }, [])
 
-  const templateFromOp = (op) => saveTemplate({
+  const templateFromOp = useCallback((op) => saveTemplate({
     project_id: op.project_id, amount: op.amount,
     in_quantity: op.in_quantity, out_quantity: op.out_quantity,
     in_bi_id: op.in_bi_id, out_bi_id: op.out_bi_id,
     in_info_1_id: op.in_info_1_id, in_info_2_id: op.in_info_2_id, in_info_3_id: op.in_info_3_id,
     out_info_1_id: op.out_info_1_id, out_info_2_id: op.out_info_2_id, out_info_3_id: op.out_info_3_id,
     content: op.content, note: op.note,
-  }, op.content || '')
+  }, op.content || ''), [saveTemplate])
 
   /**
    * Копия операции: те же реквизиты, новая запись.
@@ -411,7 +626,7 @@ export default function OperationsPage() {
    *
    * Счета местами меняются кнопкой в самой форме, если копия нужна обратная.
    */
-  const copyOp = (op) => {
+  const copyOp = useCallback((op) => {
     handleUseDraft({
       project_id:    op.project_id,
       amount:        op.amount,
@@ -429,15 +644,15 @@ export default function OperationsPage() {
       note:          op.note,
       is_posted:     op.is_posted,
     })
-  }
+  }, [handleUseDraft])
 
-  const toggleSelect = (id) => {
+  const toggleSelect = useCallback((id) => {
     setSelected(prev => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
-  }
+  }, [])
 
   const toggleAll = () => {
     setSelected(selected.size === operations.length ? new Set() : new Set(operations.map(op => op.id)))
@@ -488,7 +703,6 @@ export default function OperationsPage() {
     return m ? Number(m[1]) : null
   }, [q])
 
-  const hitCell = 'bg-amber-100 rounded px-1 -mx-1'
 
   // Обороты по счетам тоже считает сервер: сложенные по показанным строкам,
   // они противоречили бы карточке «сумма за период» над тем же списком
@@ -497,15 +711,6 @@ export default function OperationsPage() {
     // Код счёта в начале названия уже стоит отдельной колонкой
     name: a.hidden ? a.name : (a.name || '').replace(/^[А-ЯA-Z]\d+\s/, ''),
   })), [summary])
-
-  const formatAmount = (amount) =>
-    new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB' }).format(amount)
-
-  const formatDate = (date) =>
-    new Date(date).toLocaleString('ru-RU', {
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    })
 
   /**
    * Дата и время «как на стене» — без перевода в UTC.
@@ -808,128 +1013,20 @@ export default function OperationsPage() {
               {/* Карточки операций */}
               <div className="space-y-2">
                 {operations.map(op => (
-                  <div key={op.id}
-                    onClick={() => toggleSelect(op.id)}
-                    // Двойной клик открывает саму операцию — в том числе
-                    // созданную документом: в ней смотрят движения по счетам.
-                    // В документ ведёт своя иконка, и он открывается тут же,
-                    // не уводя со списка
-                    onDoubleClick={() => handleEdit(op)}
-                    title="Двойной клик — открыть операцию"
-                    // Непроведённая — пунктиром и приглушённая: она в списке
-                    // есть, а в оборотах её нет, и это должно быть видно сразу
-                    className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
-                      selected.has(op.id)
-                        ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
-                        : op.is_posted === false
-                          ? 'border-dashed border-gray-300 bg-gray-50 hover:border-blue-300'
-                          : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
-                    }`}
-                  >
-                    <div className={`${OP_GRID} items-start`}>
-                    <div onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" checked={selected.has(op.id)}
-                        onChange={() => toggleSelect(op.id)} className="rounded" />
-                    </div>
-                    <div className="text-xs text-gray-400 font-mono pt-0.5">
-                      <span className={qId === op.id ? hitCell : ''}>{op.id}</span>
-                      {/* Автор — второй строкой под номером, а не отдельной
-                          колонкой: сетка и так из восьми колонок, а имя нужно
-                          лишь там, где в компании правда несколько человек */}
-                      {showAuthors && op.created_by_name && (
-                        <div className="text-[10px] text-gray-400 font-sans leading-tight mt-0.5 truncate"
-                          title={`Внёс: ${op.created_by_name}`}>
-                          {op.created_by_name.split(' ')[0]}
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-sm text-gray-600 whitespace-nowrap pt-0.5">{formatDate(op.date)}</div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <AccountChip code={op.in_bi_code} name={op.in_bi_name} hidden={op.in_hidden} side="debit" q={q} />
-                      </div>
-                      {op.in_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_1_id}</span></div>}
-                      {op.in_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_2_id}</span></div>}
-                      {op.in_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.in_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.in_info_3_id}</span></div>}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <AccountChip code={op.out_bi_code} name={op.out_bi_name} hidden={op.out_hidden} side="credit" q={q} />
-                      </div>
-                      {op.out_info_1_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_1_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_1_id}</span></div>}
-                      {op.out_info_2_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_2_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_2_id}</span></div>}
-                      {op.out_info_3_name && <div className="text-xs text-gray-400 mt-0.5">↳ <span className="text-gray-500"><Highlight text={op.out_info_3_name} q={q} /></span> <span className="text-gray-300">#{op.out_info_3_id}</span></div>}
-                    </div>
-                    <div className="text-right whitespace-nowrap pt-0.5">
-                      <div className={`font-semibold ${op.is_posted === false ? 'text-gray-400' : 'text-gray-800'}`}>
-                        <span className={qAmount !== null && Math.abs(Number(op.amount) - qAmount) < 0.005 ? hitCell : ''}>
-                          {formatAmount(op.amount)}
-                        </span>
-                      </div>
-                      {op.is_posted === false && (
-                        <div className="text-[10px] text-gray-500 bg-gray-200 rounded px-1 mt-0.5 inline-block">
-                          не проведена
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      {op.content
-                        ? <div className="text-xs text-gray-700 line-clamp-2 break-words" title={op.content}>
-                            <Highlight text={snippet(op.content, q)} q={q} />
-                          </div>
-                        : (!showNotes || !op.note) && <span className="text-gray-300">—</span>}
-
-                      {/* Примечание — сразу под содержанием. Не обрезаем в одну
-                          строку: в нём реквизиты контрагента из выписки */}
-                      {showNotes && op.note && (
-                        <div
-                          // ИНН и р/с нужно уметь скопировать; выделил текст —
-                          // карточка не переключается
-                          onClick={e => { if (!window.getSelection()?.isCollapsed) e.stopPropagation() }}
-                          title={op.note}
-                          className={`flex items-start gap-1 text-[11px] text-gray-400 leading-snug
-                                      select-text cursor-auto ${op.content ? 'mt-1' : ''}`}>
-                          <span className="text-gray-300 flex-shrink-0 select-none">💬</span>
-                          <span className="break-words line-clamp-3"><Highlight text={snippet(op.note, q)} q={q} /></span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="text-right" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {op.table_name === 'documents' && op.table_id ? (
-                          <>
-                            <button onClick={() => openDocument(op.table_id)} title="Открыть документ-источник"
-                              className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
-                            <button onClick={() => handleEdit(op)} title="Открыть операцию"
-                              className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50">
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button onClick={() => togglePosting(op)}
-                              title={op.is_posted === false ? 'Провести — попадёт в обороты' : 'Снять проведение — уйдёт из оборотов'}
-                              className={op.is_posted === false
-                                ? 'text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50'
-                                : 'text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100'}>
-                              {op.is_posted === false ? '✓' : '⊘'}
-                            </button>
-                            <button onClick={() => copyOp(op)}
-                              title="Скопировать операцию"
-                              className="text-gray-300 hover:text-blue-600 p-1 rounded hover:bg-blue-50">
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            </button>
-                            <button onClick={() => templateFromOp(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>
-                            </button>
-                            <button onClick={() => handleEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
-                            <button onClick={() => handleDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    </div>
-                  </div>
+                  <OperationRow
+                    key={op.id}
+                    op={op}
+                    isSelected={selected.has(op.id)}
+                    q={q} qId={qId} qAmount={qAmount}
+                    showAuthors={showAuthors} showNotes={showNotes}
+                    onToggle={toggleSelect}
+                    onEdit={handleEdit}
+                    onOpenDocument={openDocument}
+                    onTogglePosting={togglePosting}
+                    onCopy={copyOp}
+                    onTemplate={templateFromOp}
+                    onDelete={handleDelete}
+                  />
                 ))}
               </div>
 

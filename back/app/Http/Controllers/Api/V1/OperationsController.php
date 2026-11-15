@@ -78,16 +78,23 @@ class OperationsController extends TenantController
         // Итоги считаем по всему отбору, а не по показанной странице.
         // Раньше «операций за период» и «сумма за период» складывались в
         // браузере из того, что приехало, — и на 201-й операции обе цифры
-        // начинали тихо врать, показывая неполный период как полный
-        $summary = $this->summary($query);
+        // начинали тихо врать, показывая неполный период как полный.
+        //
+        // Но пересчитывать их на каждой странице незачем: от догрузки отбор не
+        // меняется, а сводка — это три отдельных прохода по всему периоду.
+        // Поэтому страница, которая уже их получила, просит summary=0
+        $summary = $request->boolean('summary', true) ? $this->summary($query) : null;
 
-        $perPage = min((int) ($request->per_page ?? 50), 500);
+        // Потолок тот же, что у журнала на фронте: пока здесь стояло 500, а
+        // оттуда приходило 600, сервер молча отдавал 500 строк, а следующая
+        // страница отсчитывалась от 600 — сотня операций не показывалась вовсе
+        $perPage = min((int) ($request->per_page ?? 50), 1000);
         $page    = max((int) ($request->page ?? 1), 1);
         $items   = $query->offset(($page - 1) * $perPage)->limit($perPage)->get();
 
         return response()->json([
             'data'     => $items->map(fn($op) => $this->formatOperation($op)),
-            'total'    => $summary['count'],
+            'total'    => $summary['count'] ?? null,
             'page'     => $page,
             'per_page' => $perPage,
             'summary'  => $summary,
