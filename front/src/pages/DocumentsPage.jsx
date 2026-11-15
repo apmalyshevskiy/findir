@@ -19,6 +19,8 @@ import usePersistedState from '../hooks/usePersistedState'
 import { INFO_LABELS } from '../utils/infoLabels'
 import { slotTypes, slotLabel, slotItems, slotAccepts, slotAllTypes } from '../utils/analyticSlots'
 import { ACCOUNT_CODE } from '../utils/accountCode'
+import { Check, Eye, FileText, Loader2, Pencil, Plus, Trash2, Undo2, X } from 'lucide-react'
+import { Button, EmptyState, ErrorState, IconButton, PageHeader, Tabs, apiError, confirm, toast, useEscClose } from '../components/ui'
 
 // Расчёт себестоимости
 const calculateCostApi = (data) => api.post('/documents/calculate-cost', data)
@@ -268,6 +270,8 @@ const emptyItem = (type) => ({
  * только код вида (`docType`), — тогда она подтягивает вид сама.
  */
 export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceItems, infoCache, loadInfo, onSave, onCancel, onChanged }) {
+  // Форма закрывалась только крестиком
+  useEscClose(onCancel)
   // Сохранение и проведение бывают «остаться в форме»: тогда форма живёт
   // дальше с документом, который вернул сервер, а проп остаётся позади.
   // Родителю о каждом таком шаге сообщает onChanged — он перечитывает свои
@@ -1245,6 +1249,8 @@ export function DocumentForm({ docType, type: typeProp, doc: docProp, balanceIte
 
 // ─── Основная страница ────────────────────────────────────────────────────────
 
+const DOCS_PER_PAGE = 100
+
 export default function DocumentsPage() {
   const navigate  = useNavigate()
   const location  = useLocation()
@@ -1256,6 +1262,10 @@ export default function DocumentsPage() {
   const [tab, setTab]               = usePersistedState('documents:tab', '')
   const [docs, setDocs]             = useState([])
   const [loading, setLoading]       = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [loadError, setLoadError] = useState(false)
+  const [page, setPage] = useState(1)      // сколько страниц уже показано
+  const [total, setTotal] = useState(0)    // сколько документов подходит под отбор
   const [balanceItems, setBalanceItems] = useState([])
   const [infoCache, setInfoCache]   = useState({})
 
@@ -1268,7 +1278,9 @@ export default function DocumentsPage() {
   const [showForm, setShowForm]     = useState(false)
   const [editDoc, setEditDoc]       = useState(null)
   const [actionLoading, setActionLoading] = useState(null)
-  const [actionError, setActionError]     = useState('')
+  // Ошибки действий — уведомлением: плашка над таблицей оставалась за краем
+  // экрана, когда документ проводили из середины длинного списка
+  const setActionError = (msg) => { if (msg) toast.error(msg) }
 
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
@@ -1292,7 +1304,8 @@ export default function DocumentsPage() {
   }, [search])
 
   useEffect(() => {
-    if (tab) loadDocs()
+    // Сменили вид или отбор — это новый список, а не продолжение старого
+    if (tab) { setPage(1); loadDocs('fresh') }
   }, [tab, period.from, period.to, biFilter, infoFilter, searchQuery])
 
   const activeType = types?.find(t => t.code === tab) || null
@@ -1314,9 +1327,25 @@ export default function DocumentsPage() {
     }).catch(() => {})
   }, [location.search])
 
-  const loadDocs = () => {
-    setLoading(true)
-    const params = { type: tab, per_page: 100 }
+  /**
+   * Список грузится страницами.
+   *
+   * Раньше запрашивалась одна страница в сто строк, и сто первая накладная
+   * просто не показывалась: ни счётчика, ни «ещё». За месяц у оптовой компании
+   * документов больше сотни, и хвост списка молча пропадал.
+   *
+   * `more` — догрузить следующую страницу к уже показанным; без него список
+   * перечитывается с начала тем же числом строк, чтобы после правки документа
+   * не потерять место.
+   */
+  const loadDocs = (more = false) => {
+    const fresh = more === 'fresh'
+    more = more === true   // обработчик могут позвать с событием — это не «догрузить»
+    const nextPage = more ? page + 1 : 1
+    if (more) setLoadingMore(true); else setLoading(true)
+    setLoadError(false)
+    const shown = fresh ? 1 : page
+    const params = { type: tab, per_page: more ? DOCS_PER_PAGE : Math.min(DOCS_PER_PAGE * shown, 500), page: more ? nextPage : 1 }
     // «Всё время» — пресет без границ: параметры просто не уходят
     if (period.from) params.date_from = period.from
     if (period.to)   params.date_to   = period.to
@@ -1325,9 +1354,18 @@ export default function DocumentsPage() {
     if (searchQuery) params.search    = searchQuery
 
     getDocuments(params)
-      .then(r => setDocs(r.data.data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+      .then(r => {
+        setDocs(prev => more ? [...prev, ...r.data.data] : r.data.data)
+        setTotal(r.data.total ?? r.data.data.length)
+        if (more) setPage(nextPage)
+      })
+      .catch(err => {
+        // Ошибка — не «документов нет»: пустой список после оборванного
+        // запроса читался бы как факт
+        if (more) toast.error(apiError(err, 'Не удалось догрузить документы'))
+        else { setDocs([]); setTotal(0); setLoadError(true) }
+      })
+      .finally(() => { setLoading(false); setLoadingMore(false) })
   }
 
   const filtersOn = !!(biFilter || infoFilter || searchQuery)
@@ -1375,7 +1413,6 @@ export default function DocumentsPage() {
       }
     } catch (err) {
       setActionError(err.response?.data?.message || 'Ошибка проведения')
-      setTimeout(() => setActionError(''), 4000)
     } finally {
       setActionLoading(null)
     }
@@ -1394,14 +1431,13 @@ export default function DocumentsPage() {
       }
     } catch (err) {
       setActionError(err.response?.data?.message || 'Ошибка отмены проведения')
-      setTimeout(() => setActionError(''), 4000)
     } finally {
       setActionLoading(null)
     }
   }
 
   const handleDelete = async (doc) => {
-    if (!window.confirm(`Удалить документ?`)) return
+    if (!await confirm({ title: `Удалить документ?`, danger: true })) return
     setActionLoading(doc.id)
     setActionError('')
     try {
@@ -1410,7 +1446,6 @@ export default function DocumentsPage() {
       loadDocs()
     } catch (err) {
       setActionError(err.response?.data?.message || 'Ошибка удаления')
-      setTimeout(() => setActionError(''), 4000)
     } finally {
       setActionLoading(null)
     }
@@ -1418,33 +1453,23 @@ export default function DocumentsPage() {
 
   return (
     <Layout>
-      {/* Заголовок */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Документы</h1>
-        <button onClick={openCreate} disabled={!activeType}
-          className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors disabled:opacity-50">
-          + Создать {activeType ? activeType.name.toLowerCase() : ''}
-        </button>
-      </div>
+      <PageHeader title="Документы"
+        subtitle="Первичка по видам: документ проводится и создаёт операции"
+        actions={
+          <Button variant="primary" icon={Plus} onClick={openCreate} disabled={!activeType}>
+            Создать документ
+          </Button>
+        } />
 
       {/* Вкладки — виды документов из справочника */}
-      <div className="flex gap-1 mb-6 border-b border-gray-200 flex-wrap">
-        {(types || []).map(t => (
-          <button key={t.code} onClick={() => setTab(t.code)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              tab === t.code
-                ? 'border-blue-900 text-blue-900'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}>
-            {t.name}
-          </button>
-        ))}
-        {types !== null && types.length === 0 && (
-          <div className="px-1 py-2.5 text-sm text-gray-400">
-            Ни одного вида документа не заведено — они настраиваются в разделе «Настройки → Виды документов»
-          </div>
-        )}
-      </div>
+      {types !== null && types.length === 0 ? (
+        <div className="mb-5 px-1 text-sm text-gray-500">
+          Ни одного вида документа не заведено — они настраиваются в разделе «Настройки → Виды документов»
+        </div>
+      ) : (
+        <Tabs className="mb-5" value={tab} onChange={setTab}
+          tabs={(types || []).map(t => ({ value: t.code, label: t.name }))} />
+      )}
 
       {/* Отбор. Период отдельно слева — он есть всегда; счёт, аналитика и поиск
           задаются по надобности. Совпадение ищется и в шапке, и в строках:
@@ -1465,51 +1490,43 @@ export default function DocumentsPage() {
         <div className="relative flex-1 min-w-[220px]">
           <input type="text" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Номер, примечание, комментарий, сумма"
-            className="w-full px-3 py-1.5 pr-7 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            className="w-full h-9 px-3 pr-8 border border-gray-200 rounded-lg text-sm bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500" />
           {search && (
-            <button onClick={() => setSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 text-xs">✕</button>
+            <button onClick={() => setSearch('')} title="Очистить поиск" aria-label="Очистить поиск"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+              <X className="w-4 h-4" aria-hidden="true" />
+            </button>
           )}
         </div>
 
         {filtersOn && (
-          <button onClick={resetFilters}
-            className="px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">
-            Сбросить
-          </button>
+          <Button onClick={resetFilters}>Сбросить</Button>
         )}
       </div>
-
-      {/* Тост ошибки */}
-      {actionError && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg flex items-center justify-between">
-          <span>{actionError}</span>
-          <button onClick={() => setActionError('')} className="ml-4 text-red-400 hover:text-red-600">✕</button>
-        </div>
-      )}
 
       {/* Список документов */}
       {loading || types === null ? (
         <SkeletonRows rows={5} height="h-12" />
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
+          <ErrorState title="Не удалось загрузить документы" onRetry={() => loadDocs()} />
+        </div>
       ) : docs.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <div className="text-5xl mb-4">📄</div>
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
           {/* Пустой список из-за отбора и пустой список вообще — разные вещи:
               совет «создайте первый» на отфильтрованном экране сбивает с толку */}
           {filtersOn || period.from ? (
-            <>
-              <div className="text-lg font-medium text-gray-500 mb-1">Ничего не найдено</div>
-              <div className="text-sm">Попробуйте расширить период или снять отбор</div>
-            </>
+            <EmptyState icon={FileText} title="Ничего не найдено"
+              text="Попробуйте расширить период или снять отбор"
+              action={filtersOn && <Button onClick={resetFilters}>Сбросить отбор</Button>} />
           ) : (
-            <>
-              <div className="text-lg font-medium text-gray-500 mb-1">Нет документов</div>
-              <div className="text-sm">Нажмите «+ Создать» чтобы добавить первый</div>
-            </>
+            <EmptyState icon={FileText} title="Документов пока нет"
+              text="Создайте первый — после проведения он появится в операциях и отчётах"
+              action={<Button variant="primary" icon={Plus} onClick={openCreate} disabled={!activeType}>Создать документ</Button>} />
           )}
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        <div className="bg-white rounded-xl border border-gray-200/80 overflow-x-auto shadow-card">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
@@ -1558,52 +1575,29 @@ export default function DocumentsPage() {
                       {doc.content || doc.note || '—'}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-
-                        {/* Редактировать — для draft */}
+                      {/* Значки из одной библиотеки: шрифтовые символы и эмодзи
+                          система рисует по-своему, и на Windows «провести»
+                          выглядело иначе, чем на Mac. Видны и при переходе Tab */}
+                      <div className="flex items-center gap-0.5 justify-end opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {doc.status === 'draft' && (
-                          <button onClick={() => openEdit(doc)}
-                            className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100" title="Редактировать">
-                            {/* svg, а не знак ✎: шрифтовой символ система
-                                подменяет цветным глифом из эмодзи-шрифта */}
-                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                              <path d="m15 5 4 4" />
-                            </svg>
-                          </button>
+                          <IconButton icon={Pencil} size="sm" label="Редактировать" onClick={() => openEdit(doc)} />
                         )}
-                        {/* Просмотр — для posted и cancelled */}
                         {(doc.status === 'posted' || doc.status === 'cancelled') && (
-                          <button onClick={() => openEdit(doc)}
-                            className="text-gray-400 hover:text-gray-600 p-1.5 rounded hover:bg-gray-100 text-sm" title="Просмотр">
-                            👁
-                          </button>
+                          <IconButton icon={Eye} size="sm" label="Просмотр" onClick={() => openEdit(doc)} />
                         )}
-
-                        {/* Провести — для draft */}
                         {doc.status === 'draft' && (
-                          <button onClick={() => handlePost(doc)} disabled={busy}
-                            className="text-gray-400 hover:text-green-600 p-1.5 rounded hover:bg-green-50 text-sm disabled:opacity-40"
-                            title="Провести">
-                            {busy ? '⏳' : '✓'}
-                          </button>
+                          <IconButton icon={busy ? Loader2 : Check} size="sm" label="Провести" disabled={busy}
+                            className={busy ? '[&_svg]:animate-spin' : 'hover:text-emerald-600 hover:bg-emerald-50'}
+                            onClick={() => handlePost(doc)} />
                         )}
-
-                        {/* Отменить проведение — только posted → draft */}
                         {doc.status === 'posted' && (
-                          <button onClick={() => handleCancel(doc)} disabled={busy}
-                            className="text-gray-400 hover:text-orange-500 p-1.5 rounded hover:bg-orange-50 text-sm disabled:opacity-40" title="Отменить проведение">
-                            {busy ? '⏳' : '↩'}
-                          </button>
+                          <IconButton icon={busy ? Loader2 : Undo2} size="sm" label="Отменить проведение" disabled={busy}
+                            className={busy ? '[&_svg]:animate-spin' : 'hover:text-amber-600 hover:bg-amber-50'}
+                            onClick={() => handleCancel(doc)} />
                         )}
-
-                        {/* Удалить — для draft и cancelled */}
                         {(doc.status === 'draft' || doc.status === 'cancelled') && (
-                          <button onClick={() => handleDelete(doc)} disabled={busy}
-                            className="text-gray-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50 text-sm disabled:opacity-40" title="Удалить">
-                            ✕
-                          </button>
+                          <IconButton icon={Trash2} size="sm" variant="danger" label="Удалить" disabled={busy}
+                            onClick={() => handleDelete(doc)} />
                         )}
                       </div>
                     </td>
@@ -1612,6 +1606,14 @@ export default function DocumentsPage() {
               })}
             </tbody>
           </table>
+          <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-gray-100 text-xs text-gray-500">
+            <span>Показано {docs.length} из {total}</span>
+            {docs.length < total && (
+              <Button size="sm" loading={loadingMore} onClick={() => loadDocs(true)}>
+                Показать ещё {Math.min(DOCS_PER_PAGE, total - docs.length)}
+              </Button>
+            )}
+          </div>
         </div>
       )}
 

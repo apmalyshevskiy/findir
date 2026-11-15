@@ -7,6 +7,7 @@ import {
 } from '../api/budget'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
+import { useEscClose } from '../components/ui'
 
 // ── Утилиты ────────────────────────────────────────────────────────────────
 const fmt = (v) => { if (v == null || v === '' || isNaN(v)) return ''; return Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) }
@@ -49,6 +50,7 @@ const buildDescendantAllMap = (articles) => {
 
 // ── Модалка создания PDC ────────────────────────────────────────────────────
 function CreatePdcModal({ projects, onClose, onCreate }) {
+  useEscClose(onClose)
   const [name, setName] = useState('')
   const [projectId, setProjectId] = useState(projects[0]?.id || '')
   const [periodFrom, setPeriodFrom] = useState(() => todayISO())

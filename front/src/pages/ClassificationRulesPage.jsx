@@ -9,6 +9,7 @@ import { getInfo } from '../api/info'
 import { getBalanceItems } from '../api/operations'
 import { ACCOUNT_CODE } from '../utils/accountCode'
 import Layout from '../components/Layout'
+import { confirm } from '../components/ui'
 
 const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -104,7 +105,7 @@ export default function ClassificationRulesPage() {
     }
   }
   const removePosting = async (id) => {
-    if (!confirm('Удалить разноску?')) return
+    if (!await confirm({ title: 'Удалить разноску?', danger: true })) return
     try { await deleteCategoryPosting(id); load() } catch { setError('Ошибка удаления') }
   }
 
@@ -147,7 +148,7 @@ export default function ClassificationRulesPage() {
     }
   }
   const removeRule = async (id) => {
-    if (!confirm('Удалить правило?')) return
+    if (!await confirm({ title: 'Удалить правило?', danger: true })) return
     try { await deleteClassificationRule(id); load() } catch { setError('Ошибка удаления') }
   }
 

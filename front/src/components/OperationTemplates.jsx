@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getTemplates, useTemplate, deleteTemplate } from '../api/operationTemplates'
+import { confirm } from './ui'
 
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(v || 0)
 const todayIso = () => {
@@ -28,7 +29,7 @@ export default function OperationTemplates({ onUse, refreshKey = 0 }) {
 
   const remove = async (t, e) => {
     e.stopPropagation()
-    if (!confirm(`Удалить шаблон «${t.name}»?`)) return
+    if (!await confirm({ title: `Удалить шаблон «${t.name}»?`, danger: true })) return
     await deleteTemplate(t.id)
     load()
   }

@@ -1,5 +1,6 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import Layout from '../components/Layout'
+import { promptText } from '../components/ui'
 import { getBackupSummary, downloadBackup, inspectBackup, importBackup } from '../api/backup'
 
 const TABLE_LABELS = {
@@ -102,12 +103,14 @@ export default function BackupPage() {
 
   const handleImport = async () => {
     const phrase = 'ЗАМЕНИТЬ'
-    const typed = prompt(
-      `Данные компании будут заменены содержимым файла. Текущие операции, документы и справочники будут удалены безвозвратно.\n\n` +
-      `Вместе с ними заменятся пользователи и должности: пароли станут теми, что были на момент копии. ` +
-      `Ваша учётная запись не потеряется — если в копии её нет, она останется.\n\n` +
-      `Для подтверждения введите ${phrase}:`
-    )
+    const typed = await promptText({
+      title: 'Заменить данные компании?',
+      text: 'Данные компании будут заменены содержимым файла. Текущие операции, документы и справочники будут удалены безвозвратно.\n\n' +
+        'Вместе с ними заменятся пользователи и должности: пароли станут теми, что были на момент копии. ' +
+        'Ваша учётная запись не потеряется — если в копии её нет, она останется.',
+      hint: `Для подтверждения введите ${phrase}`,
+      placeholder: phrase, danger: true, confirmLabel: 'Заменить данные',
+    })
     if (typed !== phrase) return
 
     setBusy('import'); setError('')

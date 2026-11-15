@@ -30,6 +30,7 @@ import FundPlanningPage from './pages/FundPlanningPage'
 import FundSchemesPage from './pages/FundSchemesPage'
 import HelpPage from './pages/HelpPage'
 import ChangeLogPage from './pages/ChangeLogPage'
+import { FeedbackHost } from './components/ui'
 
 function PrivateRoute({ children }) {
   const token = localStorage.getItem('token')
@@ -39,6 +40,8 @@ function PrivateRoute({ children }) {
 export default function App() {
   return (
     <BrowserRouter>
+      {/* Уведомления и вопросы «точно удалить?» — одни на всё приложение */}
+      <FeedbackHost />
       <Routes>
         <Route path="/login"                element={<LoginPage />} />
         <Route path="/register"             element={<RegisterPage />} />

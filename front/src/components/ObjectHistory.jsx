@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../api/client'
 import { SkeletonRows } from './Busy'
 import { whenUtc } from '../utils/datetime'
+import { confirm } from './ui'
 
 /**
  * История правок объекта: кто, когда, откуда и что изменил.
@@ -104,8 +105,8 @@ export default function ObjectHistory({ entity, id, onRestored }) {
    * показываем списком причин — «нельзя» без объяснения не подсказывает, что
    * чинить.
    */
-  const restore = (version) => {
-    if (!window.confirm(confirmText(version))) return
+  const restore = async (version) => {
+    if (!await confirm({ title: confirmText(version) })) return
 
     setBusy(version); setRefused(null)
 

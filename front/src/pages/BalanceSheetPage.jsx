@@ -17,6 +17,7 @@ import AccountChip from '../components/AccountChip'
 import LockIcon from '../components/LockIcon'
 import { calcNet, flattenServerTree, flattenAccountTree, osvSheet } from '../utils/osv'
 import { ACCOUNT_CODE } from '../utils/accountCode'
+import { ErrorState, useEscClose } from '../components/ui'
 
 // Хранение Set в localStorage — через массив
 const SET_CODEC = { serialize: (s) => [...s], deserialize: (a) => new Set(a) }
@@ -139,6 +140,7 @@ export default function BalanceSheetPage() {
   const [expanded, setExpanded]       = useState(new Set())
   const [expandedInfo, setExpandedInfo] = useState(new Set())
   const [drillModal, setDrillModal]   = useState(null)
+  const [loadError, setLoadError]     = useState(false)
   const [drillLoading, setDrillLoading] = useState(false)
   const [editOp, setEditOp]           = useState(null)
   const dragIdx = useRef(null) // для drag-and-drop порядка аналитик
@@ -146,6 +148,8 @@ export default function BalanceSheetPage() {
   // Смещение окна расшифровки от центра. Окно перетаскивают, когда нужно
   // заглянуть в строку оборотки под ним, — а не потому, что оно стоит не там
   const [drillPos, setDrillPos] = useState({ x: 0, y: 0 })
+  // Расшифровка закрывалась только крестиком в углу
+  useEscClose(() => setDrillModal(null), !!drillModal && !editOp)
   const drillDrag = useRef(null)
 
   // Состояние для инлайн-просмотра документа из drill-down
@@ -205,9 +209,12 @@ export default function BalanceSheetPage() {
     if (biFilter)            params.bi_id               = biFilter
     if (projectFilter)       params.project_id          = projectFilter
     if (hierarchyAccounts)   params.hierarchy_accounts  = 1
+    setLoadError(false)
     getBalanceSheet(params)
       .then(res => { setData(res.data.data); setAccountsHidden(!!res.data.accounts_hidden) })
-      .catch(() => setData([]))
+      // Ошибка — не «нет данных»: пустая оборотка после оборванного запроса
+      // читалась как «за период ничего не было»
+      .catch(() => { setData([]); setLoadError(true) })
       .finally(() => setLoading(false))
   }
 
@@ -972,8 +979,10 @@ export default function BalanceSheetPage() {
               <tr><td colSpan={7} className="p-4">
                 <SkeletonRows rows={8} height="h-9" />
               </td></tr>
+            ) : loadError ? (
+              <tr><td colSpan={7}><ErrorState title="Не удалось построить оборотку" onRetry={load} /></td></tr>
             ) : data.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-12 text-gray-400">Нет данных за выбранный период</td></tr>
+              <tr><td colSpan={7} className="text-center py-12 text-gray-500">Нет данных за выбранный период</td></tr>
             ) : (hierarchyAccounts ? flattenAccountTree(data, expandedAccounts) : data).map(row => {
               const depth       = row._depth ?? 0
               const hasAccChildren = row.account_children?.length > 0

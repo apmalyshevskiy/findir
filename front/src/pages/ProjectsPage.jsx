@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import Layout from '../components/Layout'
+import { confirm } from '../components/ui'
 
 const ic = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 
@@ -97,7 +98,7 @@ export default function ProjectsPage() {
   }
 
   const remove = async (p) => {
-    if (!confirm(`Удалить проект «${p.name}»?`)) return
+    if (!await confirm({ title: `Удалить проект «${p.name}»?`, danger: true })) return
     setError('')
     setNotice('')
     try {

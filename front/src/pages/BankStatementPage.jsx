@@ -8,6 +8,7 @@ import { getBalanceItems } from '../api/operations'
 import { classifyStatement, applyRules } from '../api/ai'
 import Layout from '../components/Layout'
 import InfoSelect from '../components/InfoSelect'
+import { apiError, confirm, toast } from '../components/ui'
 import { slotLabel, slotAccepts, slotSelect } from '../utils/analyticSlots'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -655,7 +656,7 @@ const StatementRow = ({ row, projectId, cashInfoId, balanceItems, infoCache, for
                     setPostedIds(newIds)
                     setExpanded(false)
                   } catch(e) {
-                    alert('Ошибка: ' + (e.response?.data?.message || e.message))
+                    toast.error(apiError(e, e.message))
                   } finally {
                     setReloading(false)
                   }
@@ -770,7 +771,7 @@ export default function BankStatementPage() {
       const r = await applyRules(aiRules)
       setAiRules([])
       setAiDone(d => d)   // счётчик строк не трогаем
-      alert(`Создано правил: ${r.data.created}. Дальше такие платежи распознаются автоматически.`)
+      toast.success(`Создано правил: ${r.data.created}. Дальше такие платежи распознаются автоматически.`)
     } catch (e) {
       setAiError(e.response?.data?.message || 'Не удалось создать правила')
     } finally { setAiBusy(false) }
@@ -879,11 +880,12 @@ export default function BankStatementPage() {
     if (!cashInfoId) { setError('Выберите расчётный счёт'); return }
     if (!readyRows.length) { setError('Нет строк готовых к созданию'); return }
 
-    const confirm = window.confirm(
-      `Будет создано операций: ${readyRows.length}.\n` +
-      `Строк без разметки: ${rows.length - readyRows.length - rows.filter(r => r.existing_operation_ids?.length).length}.\n\nПродолжить?`
-    )
-    if (!confirm) return
+    const go = await confirm({
+      title: `Создать операции: ${readyRows.length}?`,
+      text: `Строк без разметки: ${rows.length - readyRows.length - rows.filter(r => r.existing_operation_ids?.length).length} — они останутся в выписке.`,
+      confirmLabel: 'Создать',
+    })
+    if (!go) return
 
     setSaving(true)
     setError('')
@@ -939,7 +941,7 @@ export default function BankStatementPage() {
         }
       }
 
-      alert('Операции успешно созданы!')
+      toast.success('Операции созданы')
       navigate('/operations')
     } catch (e) {
       setError(e.response?.data?.message || 'Ошибка при создании операций')

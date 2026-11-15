@@ -3,6 +3,7 @@ import { getFundSchemes, getFundScheme, createFundScheme, updateFundScheme, dele
 import { getInfo } from '../api/info'
 import Layout from '../components/Layout'
 import FlowMultiSelect from '../components/FlowMultiSelect'
+import { confirm } from '../components/ui'
 
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const DOW = [
@@ -98,7 +99,7 @@ export default function FundSchemesPage() {
   }
 
   const remove = async () => {
-    if (!scheme?.id || !confirm(`Удалить модель «${scheme.name}»?`)) return
+    if (!scheme?.id || !await confirm({ title: `Удалить модель «${scheme.name}»?`, danger: true })) return
     await deleteFundScheme(scheme.id)
     const list = await loadList()
     setScheme(null)

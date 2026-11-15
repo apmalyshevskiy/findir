@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use App\Services\Access;
 
 /**
  * Сводный дашборд с ключевыми показателями по периодам.
@@ -28,6 +29,8 @@ class DashboardController extends TenantController
 {
     private const REVENUE_CODE = 'П587';
     private const COGS_CODE    = 'П588';
+    private const EXPENSES_CODE = 'П589';
+    private const CASH_CODE    = 'А100';
 
     public function summary(Request $request)
     {
@@ -90,10 +93,293 @@ class DashboardController extends TenantController
         $projectNames = DB::connection($this->dbName)
             ->table('projects')->whereNull('deleted_at')->pluck('name', 'id');
 
+        $acc = $this->metricAccounts();
+
+        // Прошлый период — чтобы цифра на плитке читалась не сама по себе, а
+        // рядом с «было»: «28 млн» ничего не говорит, пока неизвестно, много
+        // это или мало. Разбивка по проектам для него не нужна — только итог
+        [$prevFrom, $prevTo] = $this->previousRange($from, $to);
+        $previous = $this->buildMetrics($acc, $prevFrom, $prevTo, $projectFilter, $projectNames);
+
         return response()->json(array_merge(
             ['date_from' => $from->toDateString(), 'date_to' => $to->toDateString()],
-            $this->buildMetrics($this->metricAccounts(), $from, $to, $projectFilter, $projectNames)
+            $this->buildMetrics($acc, $from, $to, $projectFilter, $projectNames),
+            ['previous' => [
+                'date_from' => $prevFrom->toDateString(),
+                'date_to'   => $prevTo->toDateString(),
+                'total'     => $previous['total'],
+            ]],
         ));
+    }
+
+    /**
+     * Период, с которым сравнивать.
+     *
+     * Календарный месяц сравниваем с прошлым календарным месяцем, год — с
+     * прошлым годом: «ноябрь против октября» понятнее, чем «30 дней против
+     * предыдущих 30», и не съезжает из-за разной длины месяцев. Произвольный
+     * отрезок сравнивается с таким же по длине, стоящим вплотную перед ним.
+     *
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function previousRange(Carbon $from, Carbon $to): array
+    {
+        $wholeMonth = $from->day === 1 && $to->isSameDay($from->copy()->endOfMonth());
+        $wholeYear  = $from->isSameDay($from->copy()->startOfYear()) && $to->isSameDay($from->copy()->endOfYear());
+
+        if ($wholeYear) {
+            return [$from->copy()->subYear()->startOfYear()->startOfDay(), $from->copy()->subYear()->endOfYear()->startOfDay()];
+        }
+        if ($wholeMonth) {
+            $prev = $from->copy()->subMonthNoOverflow();
+            return [$prev->copy()->startOfMonth()->startOfDay(), $prev->copy()->endOfMonth()->startOfDay()];
+        }
+
+        $days = $from->diffInDays($to) + 1;
+        $prevTo = $from->copy()->subDay();
+
+        return [$prevTo->copy()->subDays((int) $days - 1), $prevTo];
+    }
+
+    /**
+     * GET /dashboard/cash
+     *   date — на какую дату остаток (по умолчанию сегодня), project_id.
+     *
+     * Деньги по кассам и счетам: остаток на дату и то, как он изменился с
+     * начала месяца. Первый вопрос, с которым открывают программу, — «сколько
+     * у нас денег», и до сих пор ответ на него был только в оборотке.
+     */
+    public function cash(Request $request)
+    {
+        $this->initTenant($request);
+
+        $date = $request->date ? Carbon::parse($request->date)->startOfDay() : Carbon::today();
+        $projectFilter = $request->project_id ? (int) $request->project_id : null;
+
+        $biId = DB::connection($this->dbName)->table('balance_items')->where('code', self::CASH_CODE)->value('id');
+
+        // Счёт денег закрыт должностью — не ноль, а «не показываем»
+        if ($biId && $this->scope->hides((int) $biId)) {
+            return response()->json(['date' => $date->toDateString(), 'hidden' => true, 'total' => null, 'items' => []]);
+        }
+        if (!$biId) {
+            return response()->json(['date' => $date->toDateString(), 'hidden' => false, 'total' => 0, 'month_change' => 0, 'items' => []]);
+        }
+
+        $until      = $date->toDateString() . ' 23:59:59';
+        $monthStart = $date->copy()->startOfMonth()->toDateString() . ' 00:00:00';
+
+        $rows = DB::connection($this->dbName)
+            ->table('balance_changes')
+            ->where('bi_id', $biId)
+            ->where('date', '<=', $until)
+            ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
+            ->groupBy('info_1_id')
+            ->select(
+                'info_1_id',
+                DB::raw('SUM(amount) as balance'),
+                DB::raw("SUM(CASE WHEN `date` >= '{$monthStart}' THEN amount ELSE 0 END) as month_change"),
+            )
+            ->get();
+
+        $names = DB::connection($this->dbName)->table('info')
+            ->whereIn('id', $rows->pluck('info_1_id')->filter()->all())
+            ->pluck('name', 'id');
+
+        $items = [];
+        $total = 0.0;
+        $monthChange = 0.0;
+
+        foreach ($rows as $r) {
+            $balance = round((float) $r->balance, 2);
+            $total       += $balance;
+            $monthChange += (float) $r->month_change;
+
+            // Кассу с нулевым остатком не показываем: закрытый счёт в банке
+            // остаётся в справочнике годами и только удлиняет список
+            if (abs($balance) < 0.005) continue;
+
+            $items[] = [
+                'id'      => $r->info_1_id ? (int) $r->info_1_id : null,
+                'name'    => $r->info_1_id ? ($names[$r->info_1_id] ?? ('#' . $r->info_1_id)) : 'Без кассы',
+                'balance' => $balance,
+                'month_change' => round((float) $r->month_change, 2),
+            ];
+        }
+
+        usort($items, fn($a, $b) => $b['balance'] <=> $a['balance']);
+
+        return response()->json([
+            'date'         => $date->toDateString(),
+            'hidden'       => false,
+            'total'        => round($total, 2),
+            'month_change' => round($monthChange, 2),
+            'items'        => $items,
+        ]);
+    }
+
+    /** Виден ли человеку раздел бюджета: плитки с планом лежат на дашборде, а права у них — бюджетные */
+    private function budgetVisible(Request $request): bool
+    {
+        $userId = $this->currentUserId($request);
+        if (!$userId) return false;
+
+        $permissions = Access::permissionsFor($this->dbName, $userId);
+
+        return Access::allows($permissions['budget'] ?? Access::NONE, Access::VIEW);
+    }
+
+    /**
+     * GET /dashboard/budget-progress
+     *   date — месяц, за который смотреть (по умолчанию текущий).
+     *
+     * План и факт месяца по бюджету доходов и расходов: выручка,
+     * себестоимость, расходы и прибыль. Берётся утверждённый бюджет, в период
+     * которого попадает месяц; нет утверждённого — черновик.
+     */
+    public function budgetProgress(Request $request)
+    {
+        $this->initTenant($request);
+
+        $month = ($request->date ? Carbon::parse($request->date) : Carbon::today())->startOfMonth();
+
+        if (!$this->budgetVisible($request)) {
+            return response()->json(['available' => false, 'reason' => 'forbidden']);
+        }
+
+        $doc = DB::connection($this->dbName)->table('budget_documents')
+            ->whereNull('deleted_at')
+            ->where('type', 'bdr')
+            ->where('status', '!=', 'archived')
+            ->where('period_from', '<=', $month->copy()->endOfMonth()->toDateString())
+            ->where('period_to', '>=', $month->toDateString())
+            ->orderByRaw("status = 'approved' DESC")
+            ->orderByDesc('id')
+            ->first(['id', 'name', 'status']);
+
+        if (!$doc) {
+            return response()->json(['available' => false, 'reason' => 'no_budget', 'month' => $month->toDateString()]);
+        }
+
+        // План хранится положительными величинами по разделам
+        $plan = DB::connection($this->dbName)->table('budget_items')
+            ->where('budget_document_id', $doc->id)
+            ->where('period_date', $month->toDateString())
+            ->groupBy('section')
+            ->selectRaw('section, SUM(amount) as total')
+            ->pluck('total', 'section');
+
+        $codes = ['revenue' => self::REVENUE_CODE, 'cost' => self::COGS_CODE, 'expenses' => self::EXPENSES_CODE];
+        $biIds = DB::connection($this->dbName)->table('balance_items')
+            ->whereIn('code', array_values($codes))->pluck('id', 'code');
+
+        $from = $month->toDateString() . ' 00:00:00';
+        $to   = $month->copy()->endOfMonth()->toDateString() . ' 23:59:59';
+
+        $turn = DB::connection($this->dbName)->table('balance_changes')
+            ->whereIn('bi_id', $biIds->values()->all())
+            ->where('date', '>=', $from)->where('date', '<=', $to)
+            ->groupBy('bi_id')
+            ->selectRaw('bi_id, SUM(amount) as total')
+            ->pluck('total', 'bi_id');
+
+        $labels = ['revenue' => 'Выручка', 'cost' => 'Себестоимость', 'expenses' => 'Расходы'];
+        $sections = [];
+        $hiddenAny = false;
+
+        foreach ($codes as $section => $code) {
+            $biId   = isset($biIds[$code]) ? (int) $biIds[$code] : null;
+            $hidden = $this->scope->hides($biId);
+            $hiddenAny = $hiddenAny || $hidden;
+
+            // Доходы лежат по кредиту — отрицательными; расходы по дебету —
+            // положительными. Наружу отдаём величины, а не знаки проводок
+            $raw  = (float) ($turn[$biId] ?? 0);
+            $fact = $section === 'revenue' ? -$raw : $raw;
+
+            $sections[] = [
+                'key'   => $section,
+                'label' => $labels[$section],
+                'plan'  => round(abs((float) ($plan[$section] ?? 0)), 2),
+                'fact'  => $hidden ? null : round($fact, 2),
+            ];
+        }
+
+        $by = array_column($sections, null, 'key');
+
+        return response()->json([
+            'available' => true,
+            'month'     => $month->toDateString(),
+            'document'  => ['id' => (int) $doc->id, 'name' => $doc->name, 'status' => $doc->status],
+            'sections'  => $sections,
+            'profit'    => [
+                'plan' => round($by['revenue']['plan'] - $by['cost']['plan'] - $by['expenses']['plan'], 2),
+                'fact' => $hiddenAny ? null : round($by['revenue']['fact'] - $by['cost']['fact'] - $by['expenses']['fact'], 2),
+            ],
+        ]);
+    }
+
+    /**
+     * GET /dashboard/upcoming-payments
+     *   date — от какого дня (по умолчанию сегодня), days — на сколько вперёд (14).
+     *
+     * Ближайшие строки платёжного календаря: что придёт и что платить.
+     */
+    public function upcomingPayments(Request $request)
+    {
+        $this->initTenant($request);
+
+        $from = $request->date ? Carbon::parse($request->date)->startOfDay() : Carbon::today();
+        $days = max(1, min((int) ($request->days ?: 14), 60));
+        $to   = $from->copy()->addDays($days - 1);
+
+        if (!$this->budgetVisible($request)) {
+            return response()->json(['available' => false, 'reason' => 'forbidden']);
+        }
+
+        $docIds = DB::connection($this->dbName)->table('budget_documents')
+            ->whereNull('deleted_at')
+            ->where('type', 'pdc')
+            ->where('status', '!=', 'archived')
+            ->where('period_to', '>=', $from->toDateString())
+            ->where('period_from', '<=', $to->toDateString())
+            ->pluck('id');
+
+        if ($docIds->isEmpty()) {
+            return response()->json(['available' => false, 'reason' => 'no_calendar']);
+        }
+
+        $base = fn() => DB::connection($this->dbName)->table('budget_items as bi')
+            ->whereIn('bi.budget_document_id', $docIds->all())
+            ->where('bi.period_date', '>=', $from->toDateString())
+            ->where('bi.period_date', '<=', $to->toDateString());
+
+        $rows = $base()
+            ->leftJoin('info as i', 'i.id', '=', 'bi.article_id')
+            ->orderBy('bi.period_date')->orderByDesc(DB::raw('ABS(bi.amount)'))
+            ->limit(8)
+            ->get(['bi.id', 'bi.period_date', 'bi.amount', 'bi.content', 'i.name as article']);
+
+        $sum = $base()->selectRaw(
+            'SUM(CASE WHEN bi.amount > 0 THEN bi.amount ELSE 0 END) as inflow, ' .
+            'SUM(CASE WHEN bi.amount < 0 THEN -bi.amount ELSE 0 END) as outflow, COUNT(*) as cnt'
+        )->first();
+
+        return response()->json([
+            'available' => true,
+            'date_from' => $from->toDateString(),
+            'date_to'   => $to->toDateString(),
+            'inflow'    => round((float) ($sum->inflow ?? 0), 2),
+            'outflow'   => round((float) ($sum->outflow ?? 0), 2),
+            'count'     => (int) ($sum->cnt ?? 0),
+            'items'     => $rows->map(fn($r) => [
+                'id'      => (int) $r->id,
+                'date'    => Carbon::parse($r->period_date)->toDateString(),
+                'amount'  => round((float) $r->amount, 2),
+                'title'   => $r->content ?: ($r->article ?: 'Платёж'),
+                'article' => $r->article,
+            ])->all(),
+        ]);
     }
 
     /**
@@ -107,20 +393,24 @@ class DashboardController extends TenantController
     {
         $biIds = DB::connection($this->dbName)
             ->table('balance_items')
-            ->whereIn('code', [self::REVENUE_CODE, self::COGS_CODE])
+            ->whereIn('code', [self::REVENUE_CODE, self::COGS_CODE, self::EXPENSES_CODE])
             ->pluck('id', 'code');
 
-        $rev  = isset($biIds[self::REVENUE_CODE]) ? (int) $biIds[self::REVENUE_CODE] : null;
-        $cogs = isset($biIds[self::COGS_CODE])    ? (int) $biIds[self::COGS_CODE]    : null;
+        $rev  = isset($biIds[self::REVENUE_CODE])  ? (int) $biIds[self::REVENUE_CODE]  : null;
+        $cogs = isset($biIds[self::COGS_CODE])     ? (int) $biIds[self::COGS_CODE]     : null;
+        $exp  = isset($biIds[self::EXPENSES_CODE]) ? (int) $biIds[self::EXPENSES_CODE] : null;
 
         $revHidden  = $this->scope->hides($rev);
         $cogsHidden = $this->scope->hides($cogs);
+        $expHidden  = $this->scope->hides($exp);
 
         return [
             'rev'         => $revHidden  ? null : $rev,
             'cogs'        => $cogsHidden ? null : $cogs,
+            'exp'         => $expHidden  ? null : $exp,
             'rev_hidden'  => $revHidden,
             'cogs_hidden' => $cogsHidden,
+            'exp_hidden'  => $expHidden,
         ];
     }
 
@@ -130,28 +420,40 @@ class DashboardController extends TenantController
         [$revBi, $cogsBi] = [$acc['rev'], $acc['cogs']];
 
         $metrics = [];
-        foreach ($this->metricsByProject($revBi, $cogsBi, $from, $to, $projectFilter) as $r) {
-            $metrics[(int) $r->project_id] = ['revenue' => (float) $r->revenue, 'cogs' => (float) $r->cogs];
+        foreach ($this->metricsByProject($revBi, $cogsBi, $from, $to, $projectFilter, $acc['exp'] ?? null) as $r) {
+            $metrics[(int) $r->project_id] = [
+                'revenue' => (float) $r->revenue, 'cogs' => (float) $r->cogs, 'expenses' => (float) $r->expenses,
+            ];
         }
 
         $revHidden  = $acc['rev_hidden'];
         $cogsHidden = $acc['cogs_hidden'];
+        $expHidden  = $acc['exp_hidden'] ?? false;
+        // Прибыль складывается из трёх счетов: закрыт хоть один — её не
+        // показываем, иначе по ней вычислялся бы закрытый показатель
+        $profitHidden = $revHidden || $cogsHidden || $expHidden;
 
         $byProject = [];
         $totRevenue = 0.0;
         $totCogs    = 0.0;
+        $totExp     = 0.0;
         foreach ($metrics as $pid => $vals) {
             $revenue = round($vals['revenue'], 2);
             $cogs    = round($vals['cogs'], 2);
+            $exp     = round($vals['expenses'], 2);
             $byProject[] = [
                 'project_id' => $pid,
                 'name'       => $projectNames[$pid] ?? ('#' . $pid),
                 'revenue'    => $revHidden  ? null : $revenue,
                 'cogs'       => $cogsHidden ? null : $cogs,
                 'foodcost'   => ($revHidden || $cogsHidden) ? null : $this->foodcost($cogs, $revenue),
+                'expenses'   => $expHidden ? null : $exp,
+                'gross'      => ($revHidden || $cogsHidden) ? null : round($revenue - $cogs, 2),
+                'profit'     => $profitHidden ? null : round($revenue - $cogs - $exp, 2),
             ];
             $totRevenue += $revenue;
             $totCogs    += $cogs;
+            $totExp     += $exp;
         }
 
         usort($byProject, fn($a, $b) => ($b['revenue'] ?? 0) <=> ($a['revenue'] ?? 0));
@@ -161,6 +463,11 @@ class DashboardController extends TenantController
                 'revenue'  => $revHidden  ? null : round($totRevenue, 2),
                 'cogs'     => $cogsHidden ? null : round($totCogs, 2),
                 'foodcost' => ($revHidden || $cogsHidden) ? null : $this->foodcost($totCogs, $totRevenue),
+                'expenses' => $expHidden ? null : round($totExp, 2),
+                // Валовая — выручка за вычетом себестоимости; прибыль — ещё и
+                // за вычетом расходов периода
+                'gross'    => ($revHidden || $cogsHidden) ? null : round($totRevenue - $totCogs, 2),
+                'profit'   => $profitHidden ? null : round($totRevenue - $totCogs - $totExp, 2),
             ],
             'revenue_hidden' => $revHidden,
             'cogs_hidden'    => $cogsHidden,
@@ -307,15 +614,16 @@ class DashboardController extends TenantController
      *   revenue = нетто-оборот по кредиту доходов (П587), -SUM(amount)
      *   cogs    = нетто-оборот по дебету себестоимости (П588), +SUM(amount)
      */
-    private function metricsByProject(?int $revBi, ?int $cogsBi, Carbon $from, Carbon $to, ?int $projectFilter)
+    private function metricsByProject(?int $revBi, ?int $cogsBi, Carbon $from, Carbon $to, ?int $projectFilter, ?int $expBi = null)
     {
-        $biIds = array_values(array_filter([$revBi, $cogsBi]));
+        $biIds = array_values(array_filter([$revBi, $cogsBi, $expBi]));
         if (empty($biIds)) {
             return collect();
         }
 
         $revExpr  = $revBi  ? 'SUM(CASE WHEN bi_id = ' . (int) $revBi  . ' THEN -amount ELSE 0 END)' : '0';
         $cogsExpr = $cogsBi ? 'SUM(CASE WHEN bi_id = ' . (int) $cogsBi . ' THEN amount ELSE 0 END)'  : '0';
+        $expExpr  = $expBi  ? 'SUM(CASE WHEN bi_id = ' . (int) $expBi  . ' THEN amount ELSE 0 END)'  : '0';
 
         return DB::connection($this->dbName)
             ->table('balance_changes')
@@ -324,7 +632,7 @@ class DashboardController extends TenantController
             ->where('date', '<=', $to->toDateString() . ' 23:59:59')
             ->when($projectFilter, fn($q) => $q->where('project_id', $projectFilter))
             ->groupBy('project_id')
-            ->select('project_id', DB::raw("$revExpr as revenue"), DB::raw("$cogsExpr as cogs"))
+            ->select('project_id', DB::raw("$revExpr as revenue"), DB::raw("$cogsExpr as cogs"), DB::raw("$expExpr as expenses"))
             ->get();
     }
 

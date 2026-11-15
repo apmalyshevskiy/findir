@@ -8,8 +8,121 @@
    кириллица, около 70 КБ. */
 @import "@fontsource-variable/inter";
 
+/* Дизайн-токены. Всё, что отвечает за «как выглядит FINDIR», собрано здесь:
+   пока цвет бренда жил в двухстах местах классом blue-900, сменить его можно
+   было только поиском по проекту. Новые компоненты (components/ui) берут цвета
+   отсюда — brand, gold и семантические; старые страницы перекрашиваются сами,
+   потому что шкала gray переопределена ниже. */
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+
+  /* Синий логотипа (#1E3A8A — это brand-800) и шкала вокруг него. Тон чуть
+     глубже и спокойнее стандартного blue: тот на больших плоскостях кричит */
+  --color-brand-50:  #f1f5fd;
+  --color-brand-100: #e0e9fa;
+  --color-brand-200: #c5d5f5;
+  --color-brand-300: #9bb7ec;
+  --color-brand-400: #6b91e0;
+  --color-brand-500: #476dd2;
+  --color-brand-600: #3152bd;
+  --color-brand-700: #27419c;
+  --color-brand-800: #1e3a8a;
+  --color-brand-900: #182c66;
+  --color-brand-950: #0f1b40;
+
+  /* Золото логотипа (#E9A81E — gold-500). Акцент, а не второй основной цвет:
+     метка активного пункта, главная цифра, то, на что должен упасть взгляд */
+  --color-gold-50:  #fef9ec;
+  --color-gold-100: #fcefc9;
+  --color-gold-200: #f9de8f;
+  --color-gold-300: #f5c855;
+  --color-gold-400: #efb530;
+  --color-gold-500: #e9a81e;
+  --color-gold-600: #c98312;
+  --color-gold-700: #a16012;
+  --color-gold-800: #844c16;
+  --color-gold-900: #6d3f18;
+
+  /* Нейтральные — тёплые, в сторону бумаги: рядом с тёмно-синим и золотом
+     холодный серый даёт «больничный» экран, тёплый — спокойный. Шкала названа
+     gray, чтобы подхватились уже написанные страницы. Четырёхсотый темнее
+     стандартного: им набрано много значимого текста, и на белом он не
+     дотягивал до читаемого контраста */
+  --color-gray-50:  oklch(0.984 0.003 85);
+  --color-gray-100: oklch(0.965 0.004 85);
+  --color-gray-200: oklch(0.925 0.005 85);
+  --color-gray-300: oklch(0.868 0.006 85);
+  --color-gray-400: oklch(0.665 0.008 80);
+  --color-gray-500: oklch(0.545 0.009 75);
+  --color-gray-600: oklch(0.445 0.010 70);
+  --color-gray-700: oklch(0.372 0.010 70);
+  --color-gray-800: oklch(0.272 0.009 70);
+  --color-gray-900: oklch(0.205 0.008 70);
+  --color-gray-950: oklch(0.145 0.006 70);
+
+  /* Мелкий текст — одна ступень вместо россыпи text-[9px]/[10px]/[11px].
+     Мельче одиннадцати в рабочем интерфейсе не набираем */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  /* Тени: карточка лежит на странице, всплывающее — висит над ней. Оттенок
+     синий, а не чёрный: чёрная тень на тёплом фоне выглядит грязью */
+  --shadow-card: 0 1px 2px rgb(24 44 102 / 0.05), 0 1px 3px rgb(24 44 102 / 0.04);
+  --shadow-pop:  0 4px 6px -2px rgb(24 44 102 / 0.06), 0 12px 32px -6px rgb(24 44 102 / 0.18);
+
+  --animate-pop-in:   findir-pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-fade-in:  findir-fade-in 140ms ease-out;
+  --animate-slide-in: findir-slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-toast-in: findir-toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  /* В Tailwind v4 кнопка по умолчанию со стрелкой, а не с «рукой»: из трёхсот
+     кнопок проекта рука была у двух десятков, и по курсору нельзя было понять,
+     нажимается ли элемент */
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]), summary, label[for], select {
+    cursor: pointer;
+  }
+
+  /* Кольцо фокуса — только при работе с клавиатуры и одно на всё приложение.
+     Раньше у кнопок его не было вовсе, и Tab вёл вслепую */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-500);
+    outline-offset: 2px;
+  }
+  /* У полей своё кольцо (ring) — второй контур поверх него лишний */
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--color-brand-200);
+    color: var(--color-brand-950);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@keyframes findir-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes findir-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes findir-slide-in {
+  from { transform: translateX(100%); }
+  to   { transform: none; }
+}
+@keyframes findir-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* Во всех таблицах цифры табличные: в отчёте разряды обязаны вставать друг под
@@ -32,3 +145,7 @@ table {
   from { opacity: 0; transform: translateY(-4px) scale(0.96); }
   to   { opacity: 1; transform: none; }
 }
+
+/* Прокрутка в боковом меню: стандартная светлая полоса на тёмно-синем режет
+   глаз, поэтому она тонкая и в тон панели */
+.findir-nav-scroll { scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / 0.18) transparent; }

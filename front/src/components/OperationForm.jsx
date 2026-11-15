@@ -10,6 +10,7 @@ import SharedInfoSelect from './InfoSelect'
 import { BusyLabel } from './Busy'
 import LockIcon from './LockIcon'
 import { slotTypes, slotLabel, slotItems } from '../utils/analyticSlots'
+import { useEscClose } from './ui'
 
 // Выбор аналитики.
 //
@@ -34,6 +35,8 @@ const SearchableInfoSelect = ({ items, value, onChange, label, infoType, infoTyp
 
 // `operation` — редактирование существующей; `initial` — предзаполнение новой (черновик ИИ)
 export default function OperationForm({ operation, initial, onSuccess, onCancel, onOpenDocument }) {
+  // Форма закрывалась только кнопкой «Отмена»
+  useEscClose(onCancel)
   const [tab, setTab] = useState('fields')   // 'fields' | 'changes' | 'history'
 
   /**

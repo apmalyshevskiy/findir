@@ -5,6 +5,7 @@ import {
   getUsers, createUser, updateUser, setUserPassword, deleteUser, getRoles, changeMyPassword,
 } from '../api/users'
 import { whenUtc } from '../utils/datetime'
+import { confirm, promptText } from '../components/ui'
 
 /**
  * Пользователи компании — те, кто входит в систему.
@@ -75,7 +76,13 @@ export default function UsersPage() {
   }
 
   const resetPassword = async (u) => {
-    const password = prompt(`Новый пароль для «${u.name}» (не короче 8 символов):`)
+    // Своё окно, а не prompt() браузера: тот показывал пароль открытым текстом
+    // и не давал ни подсказки, ни проверки
+    const password = await promptText({
+      title: `Новый пароль для «${u.name}»`, type: 'password',
+      hint: 'Не короче 8 символов. Передайте его пользователю — в почту он не уходит',
+      confirmLabel: 'Сменить пароль',
+    })
     if (!password) return
     try {
       await setUserPassword(u.id, password)
@@ -84,7 +91,7 @@ export default function UsersPage() {
   }
 
   const remove = async (u) => {
-    if (!confirm(`Удалить пользователя «${u.name}»? Обычно достаточно выключить доступ.`)) return
+    if (!await confirm({ title: `Удалить пользователя «${u.name}»?`, text: `Обычно достаточно выключить доступ.`, danger: true })) return
     try {
       await deleteUser(u.id)
       await load()

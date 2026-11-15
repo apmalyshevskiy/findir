@@ -6,6 +6,7 @@ import {
   getIntegrationTypes, getIntegrations, createIntegration, updateIntegration,
   deleteIntegration, testIntegration,
 } from '../api/integrations'
+import { confirm } from '../components/ui'
 
 /**
  * Настройки интеграций: связь с учётной системой и правила переноса.
@@ -95,7 +96,7 @@ export default function IntegrationsPage() {
   }
 
   const remove = async (item) => {
-    if (!confirm(`Удалить интеграцию «${item.name}»? Загруженные документы останутся, но связь с источником потеряется — повторная загрузка создаст их заново.`)) return
+    if (!await confirm({ title: `Удалить интеграцию «${item.name}»?`, text: `Загруженные документы останутся, но связь с источником потеряется — повторная загрузка создаст их заново.`, danger: true })) return
     await deleteIntegration(item.id)
     setEditing(null); load()
   }

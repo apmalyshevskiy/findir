@@ -4,6 +4,7 @@ import {
   listAccounts, activeTenantId, activateAccount, rememberAccount, forgetAccount,
 } from '../utils/accounts'
 import { tenantColors, tenantColor, FALLBACK } from '../utils/tenantColor'
+import { confirm } from './ui'
 
 /**
  * Плашка с названием компании — она же переключатель баз.
@@ -46,7 +47,7 @@ export default function TenantSwitcher() {
 
   const disconnect = async (acc, e) => {
     e.stopPropagation()
-    if (!confirm(`Отключить «${acc.tenant.name}»? Данные останутся на месте, потребуется войти заново.`)) return
+    if (!await confirm({ title: `Отключить «${acc.tenant.name}»?`, text: 'Данные останутся на месте, потребуется войти заново.', danger: true, confirmLabel: 'Отключить' })) return
 
     // Гасим токен на сервере от имени этой компании, не переключая активную:
     // иначе он остался бы жить до истечения срока

@@ -6,6 +6,7 @@ import { INFO_LABELS } from '../utils/infoLabels'
 import {
   getDocumentTypes, createDocumentType, updateDocumentType, deleteDocumentType,
 } from '../api/documentTypes'
+import { apiError, confirm, toast } from '../components/ui'
 
 /**
  * Виды документов.
@@ -89,12 +90,12 @@ export default function DocumentTypesPage() {
   }
 
   const remove = async (t) => {
-    if (!confirm(`Удалить вид «${t.name}»?`)) return
+    if (!await confirm({ title: `Удалить вид «${t.name}»?`, danger: true })) return
     try {
       await deleteDocumentType(t.id)
       await load()
     } catch (e) {
-      alert(e.response?.data?.message || 'Не удалось удалить')
+      toast.error(apiError(e, 'Не удалось удалить'))
     }
   }
 

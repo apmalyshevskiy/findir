@@ -4,6 +4,7 @@ import { SkeletonRows } from '../components/Busy'
 import { getRoles, createRole, updateRole, deleteRole } from '../api/users'
 import { getBalanceItemsList } from '../api/balanceItems'
 import LockIcon from '../components/LockIcon'
+import { confirm } from '../components/ui'
 
 /**
  * Должности — наборы прав по разделам.
@@ -123,7 +124,7 @@ export default function RolesPage() {
   }
 
   const remove = async (r) => {
-    if (!confirm(`Удалить должность «${r.name}»?`)) return
+    if (!await confirm({ title: `Удалить должность «${r.name}»?`, danger: true })) return
     try {
       await deleteRole(r.id)
       await load()

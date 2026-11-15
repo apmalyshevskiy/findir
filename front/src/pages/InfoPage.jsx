@@ -10,6 +10,7 @@ import ObjectHistory from '../components/ObjectHistory'
 import { matchesSearch, Highlight } from '../utils/infoSearch'
 import { EXPENSE_KINDS, EXPENSE_KIND_HINT, FLOW_KINDS, FLOW_KIND_HINT } from '../utils/infoLabels'
 import { pushRecent } from '../utils/recent'
+import { apiError, confirm, toast, useEscClose } from '../components/ui'
 
 const INFO_TYPES = [
   { value: 'partner',    label: 'Контрагенты' },
@@ -84,6 +85,7 @@ export default function InfoPage() {
   const [search, setSearch] = useState('')
   const [expandedByType, setExpandedByType] = useState({})
   const [showForm, setShowForm] = useState(false)
+  useEscClose(() => setShowForm(false), showForm)
   const [editItem, setEditItem] = useState(null)
   const [form, setForm] = useState(emptyForm)
   const [loading, setLoading] = useState(false)
@@ -209,9 +211,16 @@ export default function InfoPage() {
   }
 
   const handleDelete = async (id) => {
-    if (!confirm('Удалить запись?')) return
-    await deleteInfo(id)
-    loadItems()
+    if (!await confirm({ title: 'Удалить запись?', danger: true })) return
+    // Сервер отказывает, если запись используется в операциях. Раньше отказ
+    // пропадал молча: нажал «Удалить», запись осталась, почему — неизвестно
+    try {
+      await deleteInfo(id)
+      toast.success('Запись удалена')
+      loadItems()
+    } catch (err) {
+      toast.error(apiError(err, 'Не удалось удалить запись'))
+    }
   }
 
   const toggleExpand = (type, id) => {

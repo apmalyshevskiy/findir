@@ -4,6 +4,7 @@ import ChartOfAccountsPicker from '../components/ChartOfAccountsPicker'
 import { getBalanceItemsList, createBalanceItem, updateBalanceItem, deleteBalanceItem } from '../api/balanceItems'
 import { isAnySlot, slotTypes } from '../utils/analyticSlots'
 import { ACCOUNT_CODE } from '../utils/accountCode'
+import { confirm } from '../components/ui'
 
 const ic = 'px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const lc = 'block text-[11px] text-gray-500 mb-0.5'
@@ -164,7 +165,7 @@ export default function BalanceItemsPage() {
   }
 
   const remove = async (i) => {
-    if (!confirm(`Удалить счёт «${i.code} ${i.name}»?`)) return
+    if (!await confirm({ title: `Удалить счёт «${i.code} ${i.name}»?`, danger: true })) return
     setError(''); setNotice('')
     try {
       const r = await deleteBalanceItem(i.id)

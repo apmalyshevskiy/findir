@@ -4,6 +4,7 @@ import Layout from '../components/Layout'
 import AiQuickEntry from '../components/AiQuickEntry'
 import OperationForm from '../components/OperationForm'
 import { createTemplate } from '../api/operationTemplates'
+import { apiError, promptText, toast } from '../components/ui'
 
 /**
  * AI-помощник.
@@ -22,12 +23,15 @@ export default function AiAssistantPage() {
   const [saved, setSaved] = useState(0)      // сколько операций создано за сеанс
 
   const saveTemplate = async (payload, defaultName) => {
-    const name = prompt('Название шаблона (короткая фраза для кнопки):', defaultName || '')
+    const name = await promptText({
+      title: 'Сохранить как шаблон', hint: 'Короткая фраза — она станет подписью кнопки',
+      defaultValue: defaultName || '', placeholder: 'Например: Аренда офиса',
+    })
     if (!name || !name.trim()) return
     try {
       await createTemplate(name.trim(), payload)
     } catch (err) {
-      alert(err.response?.data?.message || 'Не удалось сохранить шаблон')
+      toast.error(apiError(err, 'Не удалось сохранить шаблон'))
     }
   }
 

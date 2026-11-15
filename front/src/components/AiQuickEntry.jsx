@@ -6,6 +6,7 @@ import AiLinks from './AiLinks'
 import AiDialogHistory, { parseUtc } from './AiDialogHistory'
 import ReportChart from './ReportChart'
 import useElapsed from '../hooks/useElapsed'
+import { confirm } from './ui'
 
 const money = (v) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2 }).format(v || 0)
 
@@ -366,7 +367,10 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged }) 
 
   // Массовая правка существующих операций — применяется только по кнопке
   const runBulk = async (turnIdx, b) => {
-    if (!confirm(`Изменить ${b.count} ${b.count === 1 ? 'операцию' : 'операций'}? Действие затронет уже проведённые данные.`)) return
+    if (!await confirm({
+      title: `Изменить ${b.count} ${b.count === 1 ? 'операцию' : 'операций'}?`,
+      text: 'Действие затронет уже проведённые данные.', confirmLabel: 'Изменить',
+    })) return
     setBusy('save'); setError('')
     try {
       const r = await applyBulk(b.filter, b.set)
@@ -386,7 +390,7 @@ export default function AiQuickEntry({ onUseDraft, onSaveTemplate, onChanged }) 
 
   // Откат массовой правки по журналу
   const undoBulk = async (turnIdx, k, logId) => {
-    if (!confirm('Вернуть прежние значения по этой правке?')) return
+    if (!await confirm({ title: 'Вернуть прежние значения по этой правке?' })) return
     setBusy('save'); setError('')
     try {
       const r = await revertBulk(logId)

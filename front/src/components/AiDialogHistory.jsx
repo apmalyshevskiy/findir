@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { listDialogs, removeDialog } from '../api/aiDialogs'
 import { parseUtc } from '../utils/datetime'
+import { confirm } from './ui'
 
 /**
  * Прошлые диалоги с помощником.
@@ -56,7 +57,7 @@ export default function AiDialogHistory({ currentId, onPick, refreshKey = 0 }) {
 
   const drop = async (e, d) => {
     e.stopPropagation()
-    if (!confirm(`Удалить диалог «${d.title}»? Записанные операции останутся.`)) return
+    if (!await confirm({ title: `Удалить диалог «${d.title}»?`, text: `Записанные операции останутся.`, danger: true })) return
 
     try {
       await removeDialog(d.id)

@@ -19,6 +19,8 @@ import AccountChip from '../components/AccountChip'
 import LockIcon from '../components/LockIcon'
 import { Highlight } from '../utils/infoSearch'
 import { ACCOUNT_CODE } from '../utils/accountCode'
+import { Ban, Check, Copy, Eye, FileText, MessageSquare, Pencil, Plus, Star, Trash2 } from 'lucide-react'
+import { apiError, confirm, promptText, toast, Button, ErrorState, PageHeader, Toggle } from '../components/ui'
 
 /**
  * Плоский список справочника с отступами по вложенности.
@@ -259,6 +261,25 @@ const ROW_OFFSCREEN = { contentVisibility: 'auto', containIntrinsicSize: 'auto 8
  * (useCallback) и готовый признак выделения, а не весь набор выделенных: на
  * Set memo сравнивал бы ссылку и срабатывал бы вхолостую.
  */
+const ROW_TONE = {
+  gray:  'hover:text-gray-700 hover:bg-gray-100',
+  brand: 'hover:text-brand-700 hover:bg-brand-50',
+  green: 'hover:text-emerald-600 hover:bg-emerald-50',
+  gold:  'hover:text-gold-600 hover:bg-gold-50',
+  red:   'hover:text-red-600 hover:bg-red-50',
+}
+
+/** Кнопка-значок в строке журнала. Подпись обязательна: без неё значок — загадка */
+function RowAction({ icon, label, tone = 'gray', onClick }) {
+  const Icon = icon
+  return (
+    <button type="button" onClick={onClick} title={label} aria-label={label}
+      className={`w-7 h-7 inline-flex items-center justify-center rounded-md text-gray-400 transition-colors ${ROW_TONE[tone]}`}>
+      <Icon className="w-4 h-4" aria-hidden="true" />
+    </button>
+  )
+}
+
 const OperationRow = memo(function OperationRow({
   op, isSelected, q, qId, qAmount, showAuthors, showNotes,
   onToggle, onEdit, onOpenDocument, onTogglePosting, onCopy, onTemplate, onDelete,
@@ -275,12 +296,12 @@ const OperationRow = memo(function OperationRow({
       style={ROW_OFFSCREEN}
       // Непроведённая — пунктиром и приглушённая: она в списке
       // есть, а в оборотах её нет, и это должно быть видно сразу
-      className={`px-4 py-3 rounded-xl border cursor-pointer select-none transition-all group ${
+      className={`px-4 py-2.5 rounded-lg border cursor-pointer select-none transition-[border-color,box-shadow,background-color] group ${
         isSelected
           ? 'border-orange-200 bg-orange-50 ring-1 ring-orange-200'
           : op.is_posted === false
             ? 'border-dashed border-gray-300 bg-gray-50 hover:border-blue-300'
-            : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-md'
+            : 'border-gray-200 bg-white hover:border-brand-300 hover:shadow-card'
       }`}
     >
       <div className={`${OP_GRID} items-start`}>
@@ -346,41 +367,30 @@ const OperationRow = memo(function OperationRow({
             title={op.note}
             className={`flex items-start gap-1 text-[11px] text-gray-400 leading-snug
                         select-text cursor-auto ${op.content ? 'mt-1' : ''}`}>
-            <span className="text-gray-300 flex-shrink-0 select-none">💬</span>
+            <MessageSquare className="w-3 h-3 mt-0.5 text-gray-300 flex-shrink-0" aria-hidden="true" />
             <span className="break-words line-clamp-3"><Highlight text={snippet(op.note, q)} q={q} /></span>
           </div>
         )}
       </div>
       <div className="text-right" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Действия показываются при наведении и при переходе клавишей Tab:
+            пока они жили только под мышью, с клавиатуры до них было не
+            добраться вовсе */}
+        <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
           {op.table_name === 'documents' && op.table_id ? (
             <>
-              <button onClick={() => onOpenDocument(op.table_id)} title="Открыть документ-источник"
-                className="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50">📄</button>
-              <button onClick={() => onEdit(op)} title="Открыть операцию"
-                className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-              </button>
+              <RowAction icon={FileText} label="Открыть документ-источник" tone="brand" onClick={() => onOpenDocument(op.table_id)} />
+              <RowAction icon={Eye} label="Открыть операцию" onClick={() => onEdit(op)} />
             </>
           ) : (
             <>
-              <button onClick={() => onTogglePosting(op)}
-                title={op.is_posted === false ? 'Провести — попадёт в обороты' : 'Снять проведение — уйдёт из оборотов'}
-                className={op.is_posted === false
-                  ? 'text-gray-400 hover:text-green-600 p-1 rounded hover:bg-green-50'
-                  : 'text-gray-300 hover:text-gray-600 p-1 rounded hover:bg-gray-100'}>
-                {op.is_posted === false ? '✓' : '⊘'}
-              </button>
-              <button onClick={() => onCopy(op)}
-                title="Скопировать операцию"
-                className="text-gray-300 hover:text-blue-600 p-1 rounded hover:bg-blue-50">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              </button>
-              <button onClick={() => onTemplate(op)} className="text-gray-300 hover:text-amber-500 p-1 rounded hover:bg-amber-50" title="Сохранить как шаблон">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l3 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.9 21l1.2-6.8-5-4.9 6.9-1L12 2z"/></svg>
-              </button>
-              <button onClick={() => onEdit(op)} className="text-gray-300 hover:text-gray-500 p-1 rounded hover:bg-gray-50" title="Редактировать"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg></button>
-              <button onClick={() => onDelete(op.id)} className="text-gray-400 hover:text-red-500 text-base p-1 rounded hover:bg-red-50">×</button>
+              <RowAction icon={op.is_posted === false ? Check : Ban}
+                label={op.is_posted === false ? 'Провести — попадёт в обороты' : 'Снять проведение — уйдёт из оборотов'}
+                tone={op.is_posted === false ? 'green' : 'gray'} onClick={() => onTogglePosting(op)} />
+              <RowAction icon={Copy} label="Скопировать операцию" tone="brand" onClick={() => onCopy(op)} />
+              <RowAction icon={Star} label="Сохранить как шаблон" tone="gold" onClick={() => onTemplate(op)} />
+              <RowAction icon={Pencil} label="Редактировать" onClick={() => onEdit(op)} />
+              <RowAction icon={Trash2} label="Удалить операцию" tone="red" onClick={() => onDelete(op.id)} />
             </>
           )}
         </div>
@@ -401,6 +411,9 @@ export default function OperationsPage() {
   const [tplKey, setTplKey] = useState(0)                      // перезагрузка списка шаблонов
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  // Запрос оборвался. Отдельно от «пусто»: иначе оборванная загрузка
+  // показывала «Нет операций за период», и это читалось как факт
+  const [loadError, setLoadError] = useState(false)
   // Период запоминается между заходами и хранится отдельно от прочих фильтров
   const [period, setPeriod] = usePersistedPeriod('operations')
   const [filter, setFilter] = useState({ in_bi_id: '', out_bi_id: '', project_id: '', is_posted: '' })
@@ -499,6 +512,7 @@ export default function OperationsPage() {
     // работа, и тем более заметная, чем шире период
     if (!first) params.summary = 0
 
+    setLoadError(false)
     getOperations(params, { signal: ctrl.signal })
       .then(res => {
         const rows = res.data.data || []
@@ -511,6 +525,10 @@ export default function OperationsPage() {
         // Отменили сами — список покажет уже следующий запрос
         if (ctrl.signal.aborted) return
         console.error('Не удалось загрузить операции:', err)
+        // Догрузка не удалась — показанное остаётся, говорим уведомлением;
+        // не удалась первая страница — показывать нечего, и это видно на месте списка
+        if (first) { setOperations([]); setSummary(null); setLoadError(true) }
+        else toast.error(apiError(err, 'Не удалось догрузить операции'))
       })
       .finally(() => {
         if (ctrl.signal.aborted) return
@@ -540,17 +558,17 @@ export default function OperationsPage() {
       await setOperationPosting(op.id, !op.is_posted)
       reload()
     } catch (err) {
-      alert(err.response?.data?.message || 'Не удалось изменить проведение')
+      toast.error(apiError(err, 'Не удалось изменить проведение'))
     }
   }, [reload])
 
   const handleDelete = useCallback(async (id) => {
-    if (!confirm('Удалить операцию?')) return
+    if (!await confirm({ title: 'Удалить операцию?', danger: true })) return
     try {
       await deleteOperation(id)
       reload()
     } catch (err) {
-      alert(err.response?.data?.message || 'Не удалось удалить операцию')
+      toast.error(apiError(err, 'Не удалось удалить операцию'))
     }
   }, [reload])
 
@@ -598,13 +616,16 @@ export default function OperationsPage() {
 
   // Сохранить операцию как шаблон для повторения в следующем периоде
   const saveTemplate = useCallback(async (payload, defaultName) => {
-    const name = prompt('Название шаблона (короткая фраза для кнопки):', defaultName || '')
+    const name = await promptText({
+      title: 'Сохранить как шаблон', hint: 'Короткая фраза — она станет подписью кнопки',
+      defaultValue: defaultName || '', placeholder: 'Например: Аренда офиса',
+    })
     if (!name || !name.trim()) return
     try {
       await createTemplate(name.trim(), payload)
       setTplKey(k => k + 1)
     } catch (err) {
-      alert(err.response?.data?.message || 'Не удалось сохранить шаблон')
+      toast.error(apiError(err, 'Не удалось сохранить шаблон'))
     }
   }, [])
 
@@ -727,7 +748,7 @@ export default function OperationsPage() {
 
   const handleCopySelected = async () => {
     if (selected.size === 0) return
-    if (!confirm(`Скопировать выбранные операции (${selected.size} шт.) на текущую дату?`)) return
+    if (!await confirm({ title: `Скопировать выбранные операции (${selected.size} шт.) на текущую дату?` })) return
 
     setLoading(true)
     try {
@@ -766,7 +787,7 @@ export default function OperationsPage() {
       setSelected(new Set())
       reload()
     } catch (err) {
-      alert(err.response?.data?.message || 'Произошла ошибка при копировании')
+      toast.error(apiError(err, 'Произошла ошибка при копировании'))
       console.error(err)
     } finally {
       setLoading(false)
@@ -776,28 +797,41 @@ export default function OperationsPage() {
 
   return (
     <Layout>
-      {/* Карточки */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+      <PageHeader title="Операции"
+        subtitle="Журнал проводок: каждая строка — сумма, прошедшая с кредита одного счёта в дебет другого"
+        actions={<>
+          <Toggle pressed={showNotes} onChange={setShowNotes} icon={MessageSquare}
+            title={showNotes ? 'Скрыть примечания' : 'Показать примечания'}>
+            Примечания
+          </Toggle>
+          <Button variant="primary" icon={Plus} onClick={() => { setEditOperation(null); setShowForm(true) }}>
+            Добавить операцию
+          </Button>
+        </>} />
+
+      {/* Сводка за период. Одной полосой, а не тремя высокими карточками: те
+          занимали пятую часть экрана ради трёх чисел и сдвигали журнал вниз */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-px mb-4 bg-gray-200/80 rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
+        <div className="bg-white px-5 py-3.5">
+          <p className="text-2xs font-medium text-gray-500 uppercase tracking-wider">
             {q ? 'Найдено операций' : 'Операций за период'}
           </p>
-          <p className="text-3xl font-bold text-gray-800">{totalCount}</p>
-          {hasMore && (
-            <p className="text-[11px] text-gray-400 mt-1">показано {operations.length}</p>
-          )}
+          <p className="mt-1 text-xl font-semibold text-gray-900 tabular-nums">
+            {totalCount}
+            {hasMore && <span className="ml-2 text-xs font-normal text-gray-500">показано {operations.length}</span>}
+          </p>
         </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+        <div className="bg-white px-5 py-3.5">
+          <p className="text-2xs font-medium text-gray-500 uppercase tracking-wider">
             {q ? 'Сумма найденного' : 'Сумма за период'}
           </p>
-          <p className="text-2xl font-bold text-blue-600">{formatAmount(totalAll)}</p>
+          <p className="mt-1 text-xl font-semibold text-brand-800 tabular-nums">{formatAmount(totalAll)}</p>
         </div>
-        <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-          <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
-            Выбрано {selected.size > 0 ? `(${selected.size})` : ''}
+        <div className={`px-5 py-3.5 transition-colors ${selected.size > 0 ? 'bg-gold-50' : 'bg-white'}`}>
+          <p className="text-2xs font-medium text-gray-500 uppercase tracking-wider">
+            Выбрано {selected.size > 0 ? `· ${selected.size}` : ''}
           </p>
-          <p className={`text-2xl font-bold ${selected.size > 0 ? 'text-orange-500' : 'text-gray-300'}`}>
+          <p className={`mt-1 text-xl font-semibold tabular-nums ${selected.size > 0 ? 'text-gold-700' : 'text-gray-300'}`}>
             {formatAmount(totalSelected)}
           </p>
         </div>
@@ -809,57 +843,23 @@ export default function OperationsPage() {
       {/* Диалог с ИИ переехал в свой раздел — «AI-помощник» в меню:
           он длинный, и списку операций под ним было тесно */}
 
-      {/* Таблица операций */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm mb-4">
-        
-        {/* Замени блок заголовка таблицы */}
-<div className="flex justify-between items-center gap-4 px-6 py-4 border-b border-gray-100">
-  <div className="flex items-center gap-4 flex-1 min-w-0">
-    <h2 className="font-semibold text-gray-800 whitespace-nowrap">Операции</h2>
+      {/* Журнал */}
+      <div className="bg-white rounded-xl border border-gray-200/80 shadow-card mb-4">
+        <div className="flex items-center gap-3 px-5 py-3 border-b border-gray-100">
+          {/* Поиск — первым, до фильтров: с него чаще всего и начинают, когда
+              ищут конкретную операцию, а не разбирают период. Ищет сервер и
+              по всему периоду, а не по показанным строкам */}
+          <SearchBox applied={q} onSearch={setQ} className="flex-1 min-w-[200px] max-w-xl" />
 
-    {/* Поиск — сразу за заголовком, до фильтров: с него чаще всего и
-        начинают, когда ищут конкретную операцию, а не разбирают период.
-        Ищет сервер и по всему периоду, а не по показанным строкам */}
-    <SearchBox applied={q} onSearch={setQ} className="flex-1 min-w-[200px] max-w-xl" />
-    {selected.size > 0 && (
-      <>
-        <button
-          onClick={() => setShowBulkEdit(true)}
-          className="flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors border border-blue-100"
-        >
-          <span>✎ Изменить</span>
-          <span className="bg-blue-200 px-1.5 py-0.5 rounded text-[10px]">{selected.size}</span>
-        </button>
-        <button
-          onClick={handleCopySelected}
-          className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-orange-100 transition-colors border border-orange-100"
-        >
-          <span>📄 Копировать</span>
-          <span className="bg-orange-200 px-1.5 py-0.5 rounded text-[10px]">{selected.size}</span>
-        </button>
-      </>
-    )}
-  </div>
-  <div className="flex items-center gap-2">
-    <button
-      onClick={() => setShowNotes(v => !v)}
-      title={showNotes ? 'Скрыть примечания' : 'Показать примечания'}
-      className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
-        showNotes
-          ? 'bg-blue-50 border-blue-200 text-blue-700'
-          : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
-      }`}
-    >
-      💬 Примечания
-    </button>
-    <button
-      onClick={() => { setEditOperation(null); setShowForm(true) }}
-      className="bg-blue-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors"
-    >
-      + Добавить
-    </button>
-  </div>
-</div>
+          {/* Действия над отмеченным появляются вместе с отметками */}
+          {selected.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 whitespace-nowrap">Отмечено {selected.size}:</span>
+              <Button size="sm" icon={Pencil} onClick={() => setShowBulkEdit(true)}>Изменить</Button>
+              <Button size="sm" icon={Copy} onClick={handleCopySelected}>Копировать</Button>
+            </div>
+          )}
+        </div>
 
         {/* Фильтры */}
         <div className="px-6 py-3 border-b border-gray-100 space-y-2">
@@ -873,7 +873,7 @@ export default function OperationsPage() {
       <select
         value={filter.project_id}
         onChange={e => setFilter(f => ({ ...f, project_id: e.target.value }))}
-        className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-48"
+        className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 min-w-48"
       >
         <option value="">Все проекты</option>
         {projects.map(p => (
@@ -887,7 +887,7 @@ export default function OperationsPage() {
     <select 
       value={infoType} 
       onChange={e => setInfoType(e.target.value)}
-      className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500"
     >
       <option value="">Тип не выбран</option>
       {/* Список из INFO_TYPES, а не вписанный сюда: четыре типа из восьми
@@ -901,7 +901,7 @@ export default function OperationsPage() {
       <select 
         value={selectedInfoId} 
         onChange={e => setSelectedInfoId(e.target.value)}
-        className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-48"
+        className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 min-w-48"
       >
         <option value="">Все: {INFO_TYPES.find(t => t.id === infoType)?.name || infoType}</option>
         {infoOptions.map(opt => (
@@ -923,7 +923,7 @@ export default function OperationsPage() {
               <span className="text-xs text-gray-500 font-medium">Дебет:</span>
               <select value={filter.in_bi_id}
                 onChange={e => setFilter(f => ({ ...f, in_bi_id: e.target.value }))}
-                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-48">
+                className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 min-w-48">
                 <option value="">Все счета</option>
                 {balanceItems.map(item => (
                   <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
@@ -934,7 +934,7 @@ export default function OperationsPage() {
               <span className="text-xs text-gray-500 font-medium">Кредит:</span>
               <select value={filter.out_bi_id}
                 onChange={e => setFilter(f => ({ ...f, out_bi_id: e.target.value }))}
-                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-48">
+                className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 min-w-48">
                 <option value="">Все счета</option>
                 {balanceItems.map(item => (
                   <option key={item.id} value={item.id}>{item.code} — {item.name}</option>
@@ -945,7 +945,7 @@ export default function OperationsPage() {
               <span className="text-xs text-gray-500 font-medium">Проведение:</span>
               <select value={filter.is_posted}
                 onChange={e => setFilter(f => ({ ...f, is_posted: e.target.value }))}
-                className="px-3 py-1 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                className="h-8 px-2.5 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500">
                 <option value="">Все</option>
                 <option value="1">Проведённые</option>
                 <option value="0">Непроведённые</option>
@@ -953,8 +953,8 @@ export default function OperationsPage() {
             </div>
             {(filter.in_bi_id || filter.out_bi_id) && (
               <button onClick={() => setFilter(f => ({ ...f, in_bi_id: '', out_bi_id: '' }))}
-                className="text-xs text-gray-400 hover:text-red-500 transition-colors">
-                × сбросить
+                className="text-xs text-gray-500 hover:text-red-600 transition-colors">
+                Сбросить счета
               </button>
             )}
           </div>
@@ -966,6 +966,8 @@ export default function OperationsPage() {
           <div className="px-4 pt-3 pb-4 bg-gray-50/60 rounded-b-xl">
             <SkeletonRows rows={7} height="h-16" />
           </div>
+        ) : loadError ? (
+          <ErrorState title="Не удалось загрузить операции" onRetry={() => loadOperations(1)} />
         ) : operations.length === 0 ? (
           <div className="text-center py-12">
             {q ? (
@@ -1011,7 +1013,7 @@ export default function OperationsPage() {
               </div>
 
               {/* Карточки операций */}
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {operations.map(op => (
                   <OperationRow
                     key={op.id}
@@ -1037,12 +1039,9 @@ export default function OperationsPage() {
                   Показано {operations.length} из {totalCount}
                 </span>
                 {hasMore && (
-                  <button onClick={loadMore} disabled={loadingMore}
-                    className="px-3 py-1.5 border border-gray-200 bg-white rounded-lg text-xs font-medium text-blue-700 hover:border-blue-300 hover:bg-blue-50 disabled:opacity-40">
-                    {loadingMore
-                      ? 'Загружаю…'
-                      : `Показать ещё ${Math.min(PER_PAGE, totalCount - operations.length)}`}
-                  </button>
+                  <Button size="sm" loading={loadingMore} onClick={loadMore}>
+                    Показать ещё {Math.min(PER_PAGE, totalCount - operations.length)}
+                  </Button>
                 )}
               </div>
             </div>

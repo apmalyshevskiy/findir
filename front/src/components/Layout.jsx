@@ -1,5 +1,11 @@
-import { useNavigate, useLocation } from 'react-router-dom'
-import { Fragment, useState, useRef, useEffect } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { Fragment, useState, useEffect } from 'react'
+import {
+  Archive, ArrowLeftRight, Banknote, BookOpen, CalendarDays, ChevronDown, CircleHelp, CreditCard, Download,
+  FileInput, FileText, Files, FolderKanban, Gauge, History, Landmark, LayoutDashboard, ListTree, Lock, Menu,
+  PanelLeftClose, PanelLeftOpen, PiggyBank, Plug, Scale, ShieldCheck, Sparkles, Split, Table2, Target, Users,
+  Wand2, X,
+} from 'lucide-react'
 import TenantSwitcher from './TenantSwitcher'
 import HelpDrawer from './HelpDrawer'
 import RecentMenu from './RecentMenu'
@@ -8,15 +14,19 @@ import ObjectOpener from './ObjectOpener'
 import DemoSeeder from './DemoSeeder'
 import Logo from './Logo'
 import { TopBusy } from './Busy'
+import { toast } from './ui'
 import api from '../api/client'
 import { listAccounts, clearAccounts } from '../utils/accounts'
 import { canView } from '../utils/permissions'
+import usePersistedState from '../hooks/usePersistedState'
+import { cn } from '../lib/utils'
 
 /**
- * Общая сетка шапки и страницы. Ширина и поля заданы в одном месте: пока они
- * жили порознь, меню шло от края окна, а карточки — от края колонки контента.
+ * Поля и предельная ширина страницы. Потолок широкий: главные экраны —
+ * таблицы по месяцам и дням, и на большом мониторе им нужна вся ширина, а не
+ * колонка посередине.
  */
-const SHELL = 'max-w-[1400px] mx-auto px-4 md:px-6'
+const SHELL = 'max-w-[1760px] mx-auto px-4 md:px-6'
 
 export default function Layout({ children }) {
   const navigate = useNavigate()
@@ -39,29 +49,38 @@ export default function Layout({ children }) {
       .catch(() => { /* 401 обработает перехватчик, остальное не мешает работать */ })
   }, [location.pathname])
 
-  const [openMenu, setOpenMenu] = useState(null)   // label открытого выпадающего раздела
   const [helpOpen, setHelpOpen] = useState(false)
-  const navRef = useRef(null)
 
-  // Отказ по правам — плашкой поверх страницы. Ловим событие от axios: так
-  // сообщение появится с любой страницы, не требуя от каждой своей обработки
-  const [forbidden, setForbidden] = useState('')
+  /**
+   * Боковое меню.
+   *
+   * Меню жило в шапке выпадающими разделами и на экранах уже 1536 пикселей
+   * переносилось на вторую строку: шесть разделов плюс компания, «недавние»,
+   * справка и профиль в одну не помещались. Чтобы попасть в «Оборотку», нужно
+   * было открыть «Отчётность» и только потом увидеть, что там есть.
+   *
+   * Слева все разделы видны сразу, а таблицам остаётся вся высота экрана.
+   * Панель сворачивается в полосу значков — на ноутбуке ширина нужнее отчёту,
+   * чем подписям, которые человек давно знает. И то и другое запоминается.
+   */
+  const [collapsed, setCollapsed] = usePersistedState('ui:navCollapsed', window.innerWidth < 1280)
+  // (на экране уже 1280 панель с самого начала свёрнута: там ширина нужнее)
+  // «Настройки» по умолчанию свёрнуты: в них одиннадцать пунктов, и заходят
+  // туда раз в месяц, а не каждый день
+  const [closedGroups, setClosedGroups] = usePersistedState('ui:navClosed', { 'Настройки': true })
+  // На узком экране панель выезжает поверх страницы по кнопке
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [mobileAt, setMobileAt] = useState(location.pathname)
+  // Перешли в раздел — выезжавшая панель своё дело сделала. В рендере, а не
+  // эффектом: иначе она на кадр остаётся поверх уже новой страницы
+  if (mobileAt !== location.pathname) { setMobileAt(location.pathname); setMobileOpen(false) }
+
+  // Отказ по правам — уведомлением поверх страницы. Ловим событие от axios:
+  // так сообщение появится с любой страницы, не требуя от каждой своей обработки
   useEffect(() => {
-    const onForbidden = (e) => {
-      setForbidden(e.detail)
-      setTimeout(() => setForbidden(''), 6000)
-    }
+    const onForbidden = (e) => toast.warning(e.detail, { duration: 6000 })
     window.addEventListener('findir:forbidden', onForbidden)
     return () => window.removeEventListener('findir:forbidden', onForbidden)
-  }, [])
-
-  // Закрытие выпадающего раздела по клику вне навигации
-  useEffect(() => {
-    const onDocClick = (e) => {
-      if (navRef.current && !navRef.current.contains(e.target)) setOpenMenu(null)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
   }, [])
 
   /**
@@ -87,36 +106,36 @@ export default function Layout({ children }) {
   // проверка — на сервере, здесь лишь бы не звать человека в закрытую дверь
   const nav = [
     // Помощник первым и сам по себе: с него часто начинают ввод
-    { path: '/ai', label: 'AI-помощник', section: 'ai' },
+    { icon: Sparkles, path: '/ai', label: 'AI-помощник', section: 'ai' },
     // Меню собрано по тому, что человек делает: сначала вводят, потом смотрят,
     // потом планируют. Раньше эти же семь пунктов лежали в ряд, и разница между
     // «завести операцию» и «посмотреть оборотку» ничем не показывалась
     {
       label: 'Учёт',
       children: [
-        { path: '/operations', label: 'Операции',    section: 'operations' },
-        { path: '/documents',  label: 'Документы',   section: 'documents' },
+        { icon: ArrowLeftRight, path: '/operations', label: 'Операции',    section: 'operations' },
+        { icon: FileText, path: '/documents',  label: 'Документы',   section: 'documents' },
         // Контрагенты, статьи, сотрудники, кассы — это содержимое операций и
         // документов, а не настройка системы: заводят их по ходу работы
-        { path: '/info',       label: 'Справочники', section: 'dictionaries' },
+        { icon: BookOpen, path: '/info',       label: 'Справочники', section: 'dictionaries' },
       ],
     },
     {
       label: 'Отчётность',
       children: [
-        { path: '/dashboard',          label: 'Дашборд',         section: 'dashboard' },
-        { path: '/balance-sheet',      label: 'Оборотка',        section: 'reports' },
-        { path: '/reports/balance',    label: 'Баланс',          section: 'reports' },
-        { path: '/reports/cash-flow',  label: 'Движение денег',  section: 'reports' },
+        { icon: LayoutDashboard, path: '/dashboard',          label: 'Дашборд',         section: 'dashboard' },
+        { icon: Table2, path: '/balance-sheet',      label: 'Оборотка',        section: 'reports' },
+        { icon: Scale, path: '/reports/balance',    label: 'Баланс',          section: 'reports' },
+        { icon: Banknote, path: '/reports/cash-flow',  label: 'Движение денег',  section: 'reports' },
       ],
     },
     {
       label: 'Планирование',
       children: [
-        { path: '/budget',           label: 'Бюджет',               section: 'budget' },
-        { path: '/payment-calendar', label: 'Платёжный календарь',  section: 'budget' },
-        { path: '/fund-planning',    label: 'Фонды',                section: 'budget' },
-        { path: '/fund-schemes',     label: 'Модели распределения', section: 'budget' },
+        { icon: Target, path: '/budget',           label: 'Бюджет',               section: 'budget' },
+        { icon: CalendarDays, path: '/payment-calendar', label: 'Платёжный календарь',  section: 'budget' },
+        { icon: PiggyBank, path: '/fund-planning',    label: 'Фонды',                section: 'budget' },
+        { icon: Split, path: '/fund-schemes',     label: 'Модели распределения', section: 'budget' },
       ],
     },
     // Всё, что приходит в базу извне, — в одном разделе: и разовая загрузка
@@ -125,10 +144,10 @@ export default function Layout({ children }) {
     {
       label: 'Обмен данными',
       children: [
-        { path: '/bank-statement', label: 'Банковская выписка',        section: 'exchange' },
-        { path: '/onec-postings',  label: 'Проводки из 1С',            section: 'exchange' },
-        { path: '/data-import',    label: 'Загрузка из учётных систем', section: 'exchange' },
-        { path: '/integrations',   label: 'Настройка интеграций',       section: 'exchange' },
+        { icon: Landmark, path: '/bank-statement', label: 'Банковская выписка',        section: 'exchange' },
+        { icon: FileInput, path: '/onec-postings',  label: 'Проводки из 1С',            section: 'exchange' },
+        { icon: Download, path: '/data-import',    label: 'Загрузка из учётных систем', section: 'exchange' },
+        { icon: Plug, path: '/integrations',   label: 'Настройка интеграций',       section: 'exchange' },
       ],
     },
     // Настройки разбиты подзаголовками внутри самого списка: пунктов набралось
@@ -138,23 +157,23 @@ export default function Layout({ children }) {
     {
       label: 'Настройки',
       children: [
-        { path: '/projects',             label: 'Проекты',           section: 'dictionaries', group: 'Справочники' },
-        { path: '/balance-items',        label: 'План счетов',       section: 'dictionaries', group: 'Справочники' },
-        { path: '/document-types',       label: 'Виды документов',   section: 'dictionaries', group: 'Справочники' },
+        { icon: FolderKanban, path: '/projects',             label: 'Проекты',           section: 'dictionaries', group: 'Справочники' },
+        { icon: ListTree, path: '/balance-items',        label: 'План счетов',       section: 'dictionaries', group: 'Справочники' },
+        { icon: Files, path: '/document-types',       label: 'Виды документов',   section: 'dictionaries', group: 'Справочники' },
 
-        { path: '/users',                label: 'Пользователи',      section: 'users',    group: 'Доступ' },
-        { path: '/roles',                label: 'Должности',         section: 'users',    group: 'Доступ' },
+        { icon: Users, path: '/users',                label: 'Пользователи',      section: 'users',    group: 'Доступ' },
+        { icon: ShieldCheck, path: '/roles',                label: 'Должности',         section: 'users',    group: 'Доступ' },
         // Дата запрета — тоже про доступ, только не «кому», а «до какого числа»
-        { path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings', group: 'Доступ' },
+        { icon: Lock, path: '/edit-lock-date',       label: 'Дата запрета',      section: 'settings', group: 'Доступ' },
         // Журнал изменений — в «Доступ»: им пользуются, когда разбираются, кто
         // что сделал, а это тот же круг вопросов, что должности и дата запрета
-        { path: '/change-log',           label: 'Журнал изменений',  section: 'settings', group: 'Доступ' },
+        { icon: History, path: '/change-log',           label: 'Журнал изменений',  section: 'settings', group: 'Доступ' },
 
-        { path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries', group: 'Прочее' },
-        { path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings',     group: 'Прочее' },
+        { icon: Wand2, path: '/classification-rules', label: 'Настройка правил',  section: 'dictionaries', group: 'Прочее' },
+        { icon: CreditCard, path: '/acquiring-fee-rules',  label: 'Эквайринг',         section: 'settings',     group: 'Прочее' },
         // «Интеграции» переехали в «Обмен данными» — там же, где сама загрузка
-        { path: '/ai-usage',             label: 'Расход на ИИ',      section: 'settings',     group: 'Прочее' },
-        { path: '/backup',               label: 'Архивная копия',    section: 'backup',       group: 'Прочее' },
+        { icon: Gauge, path: '/ai-usage',             label: 'Расход на ИИ',      section: 'settings',     group: 'Прочее' },
+        { icon: Archive, path: '/backup',               label: 'Архивная копия',    section: 'backup',       group: 'Прочее' },
       ],
     },
   ].map(item => item.children
@@ -162,9 +181,96 @@ export default function Layout({ children }) {
     : item
   ).filter(item => item.children ? item.children.length > 0 : canView(item.section))
 
-  // активен ли раздел с подпунктами (для подсветки)
-  const isGroupActive = (item) =>
-    item.children?.some(c => location.pathname === c.path)
+  const isGroupActive = (item) => item.children?.some(c => location.pathname === c.path)
+
+  /** Пункт меню — ссылка: открывается в новой вкладке средней кнопкой и по Ctrl */
+  const item = (c, narrow) => (
+    <NavLink key={c.path} to={c.path} title={narrow ? c.label : undefined}
+      className={({ isActive }) => cn(
+        'group relative flex items-center gap-3 h-9 rounded-lg text-[13px] font-medium transition-colors',
+        narrow ? 'justify-center px-0' : 'px-3',
+        isActive
+          ? 'bg-white/10 text-white'
+          : 'text-brand-200/80 hover:bg-white/5 hover:text-white',
+      )}>
+      {({ isActive }) => (
+        <>
+          {/* Золотая метка — единственное цветное пятно панели: глаз находит
+              текущий раздел, не читая подписей */}
+          {isActive && <span className="absolute left-0 top-2 bottom-2 w-[3px] -ml-2 rounded-full bg-gold-500" />}
+          <c.icon className={cn('w-[18px] h-[18px] shrink-0', isActive ? 'text-gold-400' : 'text-brand-300/70 group-hover:text-brand-100')}
+            strokeWidth={1.75} aria-hidden="true" />
+          {!narrow && <span className="truncate">{c.label}</span>}
+        </>
+      )}
+    </NavLink>
+  )
+
+  const sidebar = (narrow) => (
+    <div className="flex flex-col h-full">
+      {/* Знак не ссылка: раздел «Дашборд» открыт не всякой должности, и
+          логотип, ведущий в отказ по правам, — плохая кнопка */}
+      <div className={cn('flex items-center gap-2.5 h-14 shrink-0', narrow ? 'justify-center' : 'px-5')}>
+        <Logo size={26} light />
+        {/* Разрядка — вместо отдельного шрифта под логотип: слово из шести
+            прописных без неё выглядит сжатым рядом со знаком */}
+        {!narrow && <span className="text-lg font-semibold tracking-[0.12em] text-white">FINDIR</span>}
+      </div>
+
+      <nav className={cn('flex-1 overflow-y-auto overscroll-contain pb-4 findir-nav-scroll', narrow ? 'px-2' : 'px-4')}>
+        {nav.map(n => {
+          if (!n.children) return <div key={n.path} className="mb-1">{item(n, narrow)}</div>
+
+          // Раздел с открытой страницей не сворачивается: иначе текущее место
+          // пропадает из меню
+          const closed = !narrow && closedGroups[n.label] && !isGroupActive(n)
+          return (
+            <div key={n.label} className="mt-4">
+              {narrow
+                ? <div className="mx-2 mb-2 border-t border-white/10" />
+                : (
+                  <button type="button" aria-expanded={!closed}
+                    onClick={() => setClosedGroups(g => ({ ...g, [n.label]: !closed }))}
+                    className="flex items-center justify-between w-full px-3 mb-1 h-6 text-2xs font-semibold uppercase tracking-[0.08em] text-brand-300/60 hover:text-brand-100">
+                    {n.label}
+                    <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', closed && '-rotate-90')} aria-hidden="true" />
+                  </button>
+                )}
+              {!closed && (
+                <div className="space-y-0.5">
+                  {n.children.map((c, i) => (
+                    <Fragment key={c.path}>
+                      {/* Подзаголовок — у первого уцелевшего пункта группы.
+                          Считаем по уже отфильтрованному списку, поэтому
+                          группа, из которой правами вычистили всё, не
+                          оставляет висящего заголовка */}
+                      {!narrow && c.group && c.group !== n.children[i - 1]?.group && (
+                        <div className={cn('px-3 pb-0.5 text-2xs text-brand-300/45', i === 0 ? 'pt-0.5' : 'pt-2')}>
+                          {c.group}
+                        </div>
+                      )}
+                      {item(c, narrow)}
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </nav>
+
+      <div className={cn('shrink-0 border-t border-white/10 py-2 hidden lg:block', narrow ? 'px-2' : 'px-4')}>
+        <button type="button" onClick={() => setCollapsed(v => !v)}
+          title={narrow ? 'Развернуть меню' : 'Свернуть меню в значки'}
+          className={cn('flex items-center gap-3 w-full h-9 rounded-lg text-[13px] text-brand-300/70 hover:bg-white/5 hover:text-white transition-colors',
+            narrow ? 'justify-center' : 'px-3')}>
+          {narrow
+            ? <PanelLeftOpen className="w-[18px] h-[18px]" strokeWidth={1.75} aria-hidden="true" />
+            : <><PanelLeftClose className="w-[18px] h-[18px]" strokeWidth={1.75} aria-hidden="true" /> Свернуть</>}
+        </button>
+      </div>
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -172,141 +278,71 @@ export default function Layout({ children }) {
           странице он ни ушёл */}
       <TopBusy />
 
-      {/* Полоса шапки во всю ширину, а её содержимое — по той же сетке, что и
-          страница ниже: иначе меню и карточки живут по разным левым краям */}
-      <header className="bg-white border-b border-gray-200">
-        {/*
-          Три части шапки: компания, меню и личная группа.
+      {/* Панель на широком экране: закреплена, страница прокручивается рядом */}
+      <aside className={cn(
+        'hidden lg:block fixed inset-y-0 left-0 z-40 bg-brand-950 transition-[width] duration-200',
+        collapsed ? 'w-16' : 'w-60',
+      )}>
+        {sidebar(collapsed)}
+      </aside>
 
-          Все три в одну строку помещаются только на широком экране: шесть
-          разделов меню плюс «Недавние», справка и профиль — это больше 1300
-          пикселей, и на обычном ноутбуке что-то неизбежно переносится. Раньше
-          переносилась личная группа, и выглядело это поломкой: хвост шапки
-          болтался под меню.
+      {/* Панель на узком экране: выезжает поверх страницы */}
+      {mobileOpen && (
+        <div className="lg:hidden fixed inset-0 z-[250]">
+          <div className="absolute inset-0 bg-brand-950/50 animate-fade-in" onClick={() => setMobileOpen(false)} />
+          <aside className="relative w-64 h-full bg-brand-950 shadow-pop">
+            {sidebar(false)}
+            <button type="button" aria-label="Закрыть меню" onClick={() => setMobileOpen(false)}
+              className="absolute top-3.5 right-3 p-1.5 rounded-lg text-brand-200 hover:bg-white/10">
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </aside>
+        </div>
+      )}
 
-          Теперь перенос задан нарочно. До 2xl меню уходит на свою строку
-          целиком (`order-last w-full`), а первая строка держит компанию слева и
-          личную группу справа. Получается двухэтажная шапка, а не обрывок.
-        */}
-        <div className={`${SHELL} py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2`}>
-          <div className="flex items-center gap-2 md:gap-3 min-w-0">
-            {/* Знак не ссылка: раздел «Дашборд» открыт не всякой должности,
-                и логотип, ведущий в отказ по правам, — плохая кнопка */}
-            <div className="flex items-center gap-2 shrink-0">
-              <Logo size={24} />
-              {/* Разрядка — вместо отдельного шрифта под логотип: слово из шести
-                  прописных без неё выглядит сжатым рядом со знаком */}
-              <h1 className="text-xl font-semibold tracking-[0.09em] text-blue-900">FINDIR</h1>
-            </div>
+      <div className={cn('transition-[padding] duration-200', collapsed ? 'lg:pl-16' : 'lg:pl-60')}>
+        {/* Верхняя полоса: в какой компании работаем и личная группа. Меню в
+            ней больше нет, поэтому она в одну строку на любом экране */}
+        <header className="bg-white border-b border-gray-200">
+          <div className={`${SHELL} h-14 flex items-center gap-3`}>
+            <button type="button" aria-label="Меню" onClick={() => setMobileOpen(true)}
+              className="lg:hidden -ml-1 p-2 rounded-lg text-gray-600 hover:bg-gray-100">
+              <Menu className="w-5 h-5" aria-hidden="true" />
+            </button>
 
             {/* Название компании и переключение баз — см. TenantSwitcher */}
             <TenantSwitcher />
             {/* Тариф (trial/plan) переедет в настройки → подписка */}
+
+            <div className="flex items-center gap-2 lg:gap-3 shrink-0 ml-auto">
+              {/* Недавно открытые — личный список, живёт в браузере */}
+              <RecentMenu />
+
+              {/* Справка про текущую страницу — одним нажатием и не уходя с неё */}
+              <button type="button" onClick={() => setHelpOpen(true)} title="Справка по этой странице"
+                aria-label="Справка по этой странице"
+                className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-brand-700 hover:bg-brand-50 transition-colors shrink-0">
+                <CircleHelp className="w-[18px] h-[18px]" aria-hidden="true" />
+              </button>
+
+              {/* Имя, должность и выход — в кружке с инициалами */}
+              <UserMenu user={user} onLogout={logout} />
+            </div>
           </div>
+        </header>
 
-          <nav ref={navRef}
-            className="order-last w-full flex flex-wrap gap-1
-                       2xl:order-none 2xl:w-auto 2xl:flex-1 2xl:ml-2">
-              {nav.map(n => (
-                n.children ? (
-                  <div key={n.label} className="relative">
-                    <button
-                      onClick={() => setOpenMenu(openMenu === n.label ? null : n.label)}
-                      className={
-                        (isGroupActive(n) || openMenu === n.label)
-                          ? 'px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-900 text-white flex items-center gap-1'
-                          : 'px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 flex items-center gap-1'
-                      }
-                    >
-                      {n.label}
-                      <span className="text-[10px]">▾</span>
-                    </button>
-                    {/* Ширина списка — по самому длинному пункту: названия
-                        разделов бывают в три слова, и перенос строки в узком
-                        списке читался бы как два разных пункта */}
-                    {openMenu === n.label && (
-                      <div className="absolute left-0 mt-1 w-max min-w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
-                        {n.children.map((c, i) => (
-                          <Fragment key={c.path}>
-                            {/* Подзаголовок — у первого уцелевшего пункта группы.
-                                Считаем по уже отфильтрованному списку, поэтому
-                                группа, из которой правами вычистили всё,
-                                не оставляет висящего заголовка */}
-                            {c.group && c.group !== n.children[i - 1]?.group && (
-                              <div className={`px-4 pb-1 text-[10px] font-medium uppercase tracking-wide text-gray-400 ${
-                                i === 0 ? 'pt-1' : 'pt-2.5 mt-1 border-t border-gray-100'
-                              }`}>
-                                {c.group}
-                              </div>
-                            )}
-                            <button
-                              onClick={() => { setOpenMenu(null); navigate(c.path) }}
-                              className={
-                                location.pathname === c.path
-                                  ? 'block w-full text-left px-4 py-2 text-sm font-medium bg-blue-50 text-blue-900'
-                                  : 'block w-full text-left px-4 py-2 text-sm text-gray-600 hover:bg-gray-50'
-                              }
-                            >
-                              {c.label}
-                            </button>
-                          </Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <button
-                    key={n.path}
-                    onClick={() => navigate(n.path)}
-                    className={
-                      location.pathname === n.path
-                        ? 'px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-900 text-white'
-                        : 'px-3 py-1.5 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100'
-                    }
-                  >
-                    {n.label}
-                  </button>
-                )
-              ))}
-          </nav>
+        {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} />}
 
-          {/* Личная группа держится первой строки: до 2xl её прижимает вправо
-              ml-auto, на широком экране она встаёт после меню */}
-          <div className="flex items-center gap-3 lg:gap-4 shrink-0 ml-auto 2xl:order-last">
-            {/* Недавно открытые — личный список, живёт в браузере */}
-            <RecentMenu />
+        {/* Открывает объект поверх любой страницы — по зову из журнала
+            изменений и списка недавних */}
+        <ObjectOpener />
 
-            {/* Справка про текущую страницу — одним нажатием и не уходя с неё */}
-            <button onClick={() => setHelpOpen(true)} title="Справка по этой странице"
-              className="w-6 h-6 rounded-full border border-gray-200 text-gray-400 text-xs font-medium hover:border-blue-300 hover:text-blue-600 transition-colors shrink-0">
-              ?
-            </button>
+        {/* Заполнение чистой компании демо-данными. Кнопки нет: вызывается
+            набором слова «demo» — см. сам компонент */}
+        <DemoSeeder />
 
-            {/* Имя, должность и выход — в кружке с инициалами: текстом они
-                занимали полстроки и сталкивали шапку на вторую */}
-            <UserMenu user={user} onLogout={logout} />
-          </div>
-        </div>
-      </header>
-
-      {forbidden && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] max-w-lg px-4 py-3 bg-amber-50 border border-amber-300 text-amber-900 text-sm rounded-lg shadow-lg flex items-start gap-3">
-          <span>{forbidden}</span>
-          <button onClick={() => setForbidden('')} className="text-amber-400 hover:text-amber-700">✕</button>
-        </div>
-      )}
-
-      {helpOpen && <HelpDrawer onClose={() => setHelpOpen(false)} />}
-
-      {/* Открывает объект поверх любой страницы — по зову из журнала
-          изменений и списка недавних */}
-      <ObjectOpener />
-
-      {/* Заполнение чистой компании демо-данными. Кнопки нет: вызывается
-          набором слова «demo» — см. сам компонент */}
-      <DemoSeeder />
-
-      <main className={`${SHELL} py-4 md:py-6`}>{children}</main>
+        <main className={`${SHELL} py-5 md:py-6`}>{children}</main>
+      </div>
     </div>
   )
 }

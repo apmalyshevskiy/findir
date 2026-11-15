@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 import { rememberAccount } from '../utils/accounts'
-import Logo from '../components/Logo'
+import { Check, X } from 'lucide-react'
+import AuthShell, { AuthField, PasswordInput, authInput } from '../components/AuthShell'
+import { Button } from '../components/ui'
 
 // Допустим домен из одного символа: «a» → findir_a.
 // Дефис разрешён только внутри — не в начале и не в конце.
@@ -105,164 +107,122 @@ export default function RegisterPage() {
     }
   }
 
-  const ic = 'w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm'
-
-  const domainBorderClass = () => {
-    if (domainStatus === 'ok')      return 'border-green-400 focus:ring-green-400'
-    if (domainStatus === 'taken')   return 'border-red-400 focus:ring-red-400'
-    if (domainStatus === 'error')   return 'border-amber-400 focus:ring-amber-400'
-    return 'border-gray-200'
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex flex-col items-center mb-8">
-          <Logo size={56} className="mb-3" />
-          <h1 className="text-4xl font-semibold tracking-[0.1em] text-blue-900">FINDIR</h1>
-          <p className="text-gray-500 mt-2">Financial Director</p>
+    <AuthShell title="Регистрация компании" subtitle="14 дней бесплатно, карта не нужна"
+      footer={<>Уже есть аккаунт?{' '}
+        <Link to="/login" className="font-medium text-brand-700 hover:text-brand-900 hover:underline">Войти</Link></>}>
+      {error && (
+        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField label="Название компании">
+          <input
+            type="text"
+            value={form.company_name}
+            onChange={e => setForm({ ...form, company_name: e.target.value })}
+            placeholder="ООО Моя Компания"
+            className={authInput}
+            autoFocus
+            required
+          />
+        </AuthField>
+
+        <AuthField label="Домен организации">
+          <div className={`flex items-center h-11 border rounded-lg overflow-hidden transition-[border-color,box-shadow]
+                           focus-within:ring-2 focus-within:ring-brand-500/25 ${
+            domainStatus === 'ok' ? 'border-emerald-400'
+              : domainStatus === 'taken' ? 'border-red-400'
+              : domainStatus === 'error' ? 'border-amber-400'
+              : 'border-gray-200 focus-within:border-brand-500'}`}>
+            <input
+              type="text"
+              value={form.domain}
+              onChange={e => handleDomainChange(e.target.value)}
+              placeholder="ooo-moya-kompaniya"
+              className="flex-1 min-w-0 h-full px-3.5 text-sm focus:outline-none font-mono"
+              required
+              minLength={1}
+              pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
+              title="Латиница, цифры и дефис; дефис не в начале и не в конце"
+            />
+            <span className="h-full flex items-center px-3 bg-gray-50 border-l border-gray-200 text-xs text-gray-500 whitespace-nowrap">
+              .{BASE_DOMAIN}
+            </span>
+          </div>
+
+          {/* Статус домена. Высота держится и когда строки нет: иначе форма
+              дёргается на каждой проверке */}
+          <div className="mt-1.5 min-h-[18px] text-xs">
+            {domainStatus === 'checking' && <p className="text-gray-500">Проверяем доступность…</p>}
+            {domainStatus === 'ok' && form.domain && (
+              <p className="text-emerald-700 flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                Домен свободен — <span className="font-mono">{form.domain}.{BASE_DOMAIN}</span>
+              </p>
+            )}
+            {domainStatus === 'taken' && (
+              <p className="text-red-600 flex items-center gap-1"><X className="w-3.5 h-3.5" aria-hidden="true" /> Этот домен уже занят</p>
+            )}
+            {domainStatus === 'error' && (
+              <p className="text-amber-700">Латиница, цифры и дефис; дефис не в начале и не в конце</p>
+            )}
+            {!domainStatus && !form.domain && form.company_name && <p className="text-gray-500">Подбираем домен…</p>}
+          </div>
+        </AuthField>
+
+        <AuthField label="Ваше имя">
+          <input
+            type="text"
+            value={form.name}
+            onChange={e => setForm({ ...form, name: e.target.value })}
+            placeholder="Иван Иванов"
+            autoComplete="name"
+            className={authInput}
+            required
+          />
+        </AuthField>
+
+        <AuthField label="Email">
+          <input
+            type="email"
+            value={form.email}
+            onChange={e => setForm({ ...form, email: e.target.value })}
+            placeholder="ivan@company.com"
+            autoComplete="username"
+            className={authInput}
+            required
+          />
+        </AuthField>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <AuthField label="Пароль">
+            <PasswordInput
+              value={form.password}
+              onChange={e => setForm({ ...form, password: e.target.value })}
+              placeholder="от 8 символов"
+              autoComplete="new-password"
+              required
+            />
+          </AuthField>
+
+          <AuthField label="Ещё раз">
+            <PasswordInput
+              value={form.password_confirmation}
+              onChange={e => setForm({ ...form, password_confirmation: e.target.value })}
+              autoComplete="new-password"
+              required
+            />
+          </AuthField>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <h2 className="text-xl font-semibold text-gray-800 mb-6">Регистрация</h2>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-
-            {/* Название компании */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Название компании</label>
-              <input
-                type="text"
-                value={form.company_name}
-                onChange={e => setForm({ ...form, company_name: e.target.value })}
-                placeholder="ООО Моя Компания"
-                className={ic}
-                required
-              />
-            </div>
-
-            {/* Домен */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Домен организации
-              </label>
-              <div className="flex items-center border rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500 transition-all"
-                   style={{ borderColor: domainStatus === 'ok' ? '#4ade80' : domainStatus === 'taken' ? '#f87171' : '#e5e7eb' }}>
-                <input
-                  type="text"
-                  value={form.domain}
-                  onChange={e => handleDomainChange(e.target.value)}
-                  placeholder="ooo-moya-kompaniya"
-                  className="flex-1 px-4 py-2.5 text-sm focus:outline-none font-mono"
-                  required
-                  minLength={1}
-                  pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?"
-                  title="Латиница, цифры и дефис; дефис не в начале и не в конце"
-                />
-                <span className="px-3 py-2.5 bg-gray-50 border-l border-gray-200 text-xs text-gray-400 whitespace-nowrap">
-                  .{BASE_DOMAIN}
-                </span>
-              </div>
-
-              {/* Статус домена */}
-              <div className="mt-1 min-h-[18px]">
-                {domainStatus === 'checking' && (
-                  <p className="text-xs text-gray-400">Проверяем доступность...</p>
-                )}
-                {domainStatus === 'ok' && form.domain && (
-                  <p className="text-xs text-green-600">
-                    ✓ Домен свободен — <span className="font-mono">{form.domain}.{BASE_DOMAIN}</span>
-                  </p>
-                )}
-                {domainStatus === 'taken' && (
-                  <p className="text-xs text-red-600">✗ Этот домен уже занят</p>
-                )}
-                {domainStatus === 'error' && (
-                  <p className="text-xs text-amber-600">Латиница, цифры и дефис; дефис не в начале и не в конце</p>
-                )}
-                {!domainStatus && !form.domain && form.company_name && (
-                  <p className="text-xs text-gray-400">Генерируем домен...</p>
-                )}
-              </div>
-            </div>
-
-            {/* Имя */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Ваше имя</label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-                placeholder="Иван Иванов"
-                className={ic}
-                required
-              />
-            </div>
-
-            {/* Email */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
-                value={form.email}
-                onChange={e => setForm({ ...form, email: e.target.value })}
-                placeholder="ivan@company.com"
-                className={ic}
-                required
-              />
-            </div>
-
-            {/* Пароль */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
-              <input
-                type="password"
-                value={form.password}
-                onChange={e => setForm({ ...form, password: e.target.value })}
-                placeholder="минимум 8 символов"
-                className={ic}
-                required
-              />
-            </div>
-
-            {/* Подтверждение */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Подтвердите пароль</label>
-              <input
-                type="password"
-                value={form.password_confirmation}
-                onChange={e => setForm({ ...form, password_confirmation: e.target.value })}
-                placeholder="повторите пароль"
-                className={ic}
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || domainStatus === 'taken' || domainStatus === 'checking'}
-              className="w-full bg-blue-900 text-white py-2.5 rounded-lg font-medium hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-            </button>
-          </form>
-
-          <p className="text-center text-sm text-gray-500 mt-6">
-            Уже есть аккаунт?{' '}
-            <Link to="/login" className="text-blue-600 hover:underline font-medium">Войти</Link>
-          </p>
-        </div>
-
-        <p className="text-center text-xs text-gray-400 mt-4">
-          14 дней бесплатно • Без привязки карты
-        </p>
-      </div>
-    </div>
+        <Button type="submit" variant="primary" size="lg" loading={loading} className="w-full mt-2"
+          disabled={domainStatus === 'taken' || domainStatus === 'checking'}>
+          Зарегистрироваться
+        </Button>
+      </form>
+    </AuthShell>
   )
 }

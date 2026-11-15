@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/client'
 import { rememberAccount } from '../utils/accounts'
-import Logo from '../components/Logo'
+import AuthShell, { AuthField, PasswordInput, authInput } from '../components/AuthShell'
+import { Button } from '../components/ui'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -27,85 +28,54 @@ export default function LoginPage() {
     }
   }
 
-  const ic = 'w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm'
-
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex flex-col items-center mb-8">
-          <Logo size={56} className="mb-3" />
-          <h1 className="text-4xl font-semibold tracking-[0.1em] text-blue-900">FINDIR</h1>
-          <p className="text-gray-500 mt-2">Financial Director</p>
+    <AuthShell title="Вход в систему" subtitle="Домен организации вы задали при регистрации"
+      footer={<>Нет аккаунта?{' '}
+        <Link to="/register" className="font-medium text-brand-700 hover:text-brand-900 hover:underline">Зарегистрироваться</Link></>}>
+      {error && (
+        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
+          {error}
         </div>
+      )}
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-          <h2 className="text-xl font-semibold text-gray-800 mb-6">Вход в систему</h2>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField label="Домен организации" hint="Латиница, цифры, дефис">
+          <input
+            type="text"
+            value={form.tenant_id}
+            onChange={e => setForm({ ...form, tenant_id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
+            placeholder="ooo-moya-kompaniya"
+            className={`${authInput} font-mono`}
+            autoFocus
+            required
+          />
+        </AuthField>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
-              {error}
-            </div>
-          )}
+        <AuthField label="Email">
+          <input
+            type="email"
+            value={form.email}
+            onChange={e => setForm({ ...form, email: e.target.value })}
+            placeholder="ivan@company.com"
+            autoComplete="username"
+            className={authInput}
+            required
+          />
+        </AuthField>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Домен организации
-              </label>
-              <input
-                type="text"
-                value={form.tenant_id}
-                onChange={e => setForm({ ...form, tenant_id: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') })}
-                placeholder="ooo-moya-kompaniya"
-                className={`${ic} font-mono`}
-                required
-              />
-              <p className="text-[11px] text-gray-400 mt-1">
-                Указывается при регистрации — латиница, цифры, дефис
-              </p>
-            </div>
+        <AuthField label="Пароль">
+          <PasswordInput
+            value={form.password}
+            onChange={e => setForm({ ...form, password: e.target.value })}
+            autoComplete="current-password"
+            required
+          />
+        </AuthField>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input
-                type="email"
-                value={form.email}
-                onChange={e => setForm({ ...form, email: e.target.value })}
-                placeholder="ivan@company.com"
-                className={ic}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
-              <input
-                type="password"
-                value={form.password}
-                onChange={e => setForm({ ...form, password: e.target.value })}
-                placeholder="••••••••"
-                className={ic}
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-blue-900 text-white py-2.5 rounded-lg font-medium hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Вход...' : 'Войти'}
-            </button>
-          </form>
-
-          <p className="text-center text-sm text-gray-500 mt-6">
-            Нет аккаунта?{' '}
-            <Link to="/register" className="text-blue-600 hover:underline font-medium">
-              Зарегистрироваться
-            </Link>
-          </p>
-        </div>
-      </div>
-    </div>
+        <Button type="submit" variant="primary" size="lg" loading={loading} className="w-full mt-2">
+          Войти
+        </Button>
+      </form>
+    </AuthShell>
   )
 }

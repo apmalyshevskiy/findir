@@ -92,7 +92,10 @@ export const yearOffsetLabel = (o, today) =>
 export const INDICATORS = [
   { key: 'revenue',  label: 'Выручка' },
   { key: 'cogs',     label: 'Себестоимость' },
-  { key: 'foodcost', label: 'Фудкост' },
+  { key: 'gross',    label: 'Валовая прибыль' },
+  { key: 'expenses', label: 'Расходы' },
+  { key: 'profit',   label: 'Прибыль' },
+  { key: 'foodcost', label: 'Доля себестоимости' },
 ]
 export const INDICATOR_LABEL = Object.fromEntries(INDICATORS.map(i => [i.key, i.label]))
 
@@ -133,19 +136,44 @@ export const newChart = () => ({
   project: 'inherit', enabled: true, width: 100,
 })
 
+/**
+ * Плитки без настраиваемого периода: у них свой, заданный смыслом.
+ * Остаток денег берётся на сегодня, план — на текущий месяц, платежи — на две
+ * недели вперёд; «выручка за прошлый год» к ним неприменима.
+ */
+export const FIXED_TILES = {
+  cash:     { title: 'Деньги',            sub: 'остаток на сегодня',     to: '/balance-sheet',    linkLabel: 'Оборотка' },
+  budget:   { title: 'План и факт',       sub: 'текущий месяц',          to: '/budget',           linkLabel: 'Бюджет' },
+  payments: { title: 'Ближайшие платежи', sub: 'на две недели вперёд',   to: '/payment-calendar', linkLabel: 'Календарь' },
+}
+
+export const newCash     = () => ({ id: uid(), type: 'cash',     project: 'inherit', enabled: true, width: 33 })
+export const newBudget   = () => ({ id: uid(), type: 'budget',   enabled: true, width: 50 })
+export const newPayments = () => ({ id: uid(), type: 'payments', enabled: true, width: 50 })
+
 // Приводим сохранённую раскладку к текущей модели (старые графики со span → период).
 export const normalizeLayout = (l) => {
   if (!l || !Array.isArray(l.widgets)) return null
-  return { ...l, widgets: l.widgets.map(w => w.period ? w : { ...w, period: w.type === 'chart' ? 'month' : 'day' }) }
+  // Период дописываем только плиткам, у которых он есть: у «денег» и «плана»
+  // его нет по смыслу
+  return { ...l, widgets: l.widgets.map(w => (w.period || FIXED_TILES[w.type]) ? w : { ...w, period: w.type === 'chart' ? 'month' : 'day' }) }
 }
 
+/**
+ * Раскладка для того, кто открыл дашборд впервые.
+ *
+ * Сверху — три ответа на три первых вопроса: сколько денег, сколько
+ * заработали, сколько осталось. Ниже — идём ли по плану и что платить. График
+ * — последним: он про динамику, а к ней переходят, когда ясно текущее.
+ */
 export const defaultLayout = () => ({
   widgets: [
-    { id: uid(), type: 'metric', indicator: 'revenue', period: 'day',   date: '',  project: 'inherit', breakdown: false, enabled: true, width: 25 },
-    { id: uid(), type: 'metric', indicator: 'revenue', period: 'week',  offset: 0, project: 'inherit', breakdown: true,  enabled: true, width: 50 },
-    { id: uid(), type: 'metric', indicator: 'revenue', period: 'month', offset: 0, project: 'inherit', breakdown: true,  enabled: true, width: 50 },
-    { id: uid(), type: 'chart',  period: 'week',  offset: 0, project: 'inherit', enabled: true, width: 50 },
-    { id: uid(), type: 'chart',  period: 'month', offset: 0, project: 'inherit', enabled: true, width: 50 },
+    newCash(),
+    { id: uid(), type: 'metric', indicator: 'revenue', period: 'inherit', offset: 0, project: 'inherit', breakdown: false, enabled: true, width: 33 },
+    { id: uid(), type: 'metric', indicator: 'profit',  period: 'inherit', offset: 0, project: 'inherit', breakdown: false, enabled: true, width: 33 },
+    newBudget(),
+    newPayments(),
+    { id: uid(), type: 'chart',  period: 'inherit', offset: 0, project: 'inherit', enabled: true, width: 100 },
   ],
 })
 

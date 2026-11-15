@@ -9,6 +9,9 @@ import { createInfo, updateInfo } from '../api/info'
 import Layout from '../components/Layout'
 import BudgetDrawer from '../components/budget/BudgetDrawer'
 import RangeInputs from '../components/RangeInputs'
+import { Plus, Settings, X } from 'lucide-react'
+import { Badge, Button, ErrorState, IconButton, PageHeader, Segmented, Toggle, apiError, confirm, toast, useEscClose } from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
 import usePersistedState from '../hooks/usePersistedState'
 import { localDate } from '../utils/period'
 import { INFO_LABELS as INFO_TYPE_LABEL, EXPENSE_KINDS, EXPENSE_KIND_GROUP } from '../utils/infoLabels'
@@ -280,6 +283,7 @@ function PlanCellSimple({ value, onSave, disabled }) {
 
 // ── Модалка создания ────────────────────────────────────────────────────────
 function CreateDocModal({ projects, onClose, onCreate }) {
+  useEscClose(onClose)
   const [name, setName] = useState(''); const [type, setType] = useState('dds')
   const [projectId, setProjectId] = useState(projects[0]?.id || '')
   const [periodFrom, setPeriodFrom] = useState(() => { const d = new Date(); d.setMonth(0, 1); return localDate(d) })
@@ -316,6 +320,9 @@ export default function BudgetPage() {
   const [documents, setDocuments] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false); const [projects, setProjects] = useState([])
   const [report, setReport] = useState(null); const [loading, setLoading] = useState(false)
+  // Отчёт не загрузился. Раньше ошибка уходила в никуда: try/finally без catch
+  // оставлял на экране прошлый отчёт или «Выберите документ»
+  const [loadError, setLoadError] = useState(false)
 
   /**
    * Настройки отчёта держатся между заходами.
@@ -421,6 +428,7 @@ export default function BudgetPage() {
 
   const loadReport = async (keepState = false) => {
     if (!keepState) setLoading(true)
+    setLoadError(false)
     try {
       const params = { by_cash: byCash ? 1 : 0 }
       if (viewPeriod.from) params.period_from = viewPeriod.from
@@ -435,6 +443,11 @@ export default function BudgetPage() {
         else if (arts) arts.forEach(g => g.items?.forEach(a => rootIds.add(`${g.key || g.group}:${a.id}`)))
         setExpanded(rootIds)
       }
+    } catch (err) {
+      // Обновление после правки не удалось — отчёт на экране остаётся, говорим
+      // уведомлением; не удалась сама загрузка — показываем это вместо таблицы
+      if (keepState) toast.error(apiError(err, 'Не удалось обновить отчёт'))
+      else { setReport(null); setLoadError(true) }
     } finally { if (!keepState) setLoading(false) }
   }
 
@@ -478,7 +491,23 @@ export default function BudgetPage() {
         period_date: targetPeriodDate,
         ...(targetSection ? { section: targetSection } : {}),
       })
-      for (const row of (existing.data.data || [])) {
+      const stale = existing.data.data || []
+
+      // Вставка заменяет месяц целиком: всё, что в нём было запланировано по
+      // этой статье, стирается. Раньше это делалось молча по правому клику —
+      // промахнулся ячейкой и потерял план месяца без возможности вернуть
+      if (stale.length > 0) {
+        const sum = stale.reduce((t, r) => t + Number(r.amount || 0), 0)
+        const ok = await confirm({
+          title: `Заменить план за ${monthLabel(targetPeriodDate)}?`,
+          text: `По статье «${clipboard.articleName}» там уже есть ${stale.length} ${stale.length === 1 ? 'строка' : 'строк(и)'} на ${fmt(sum)} ₽. ` +
+                `Они будут удалены и заменены планом за ${monthLabel(clipboard.periodDate)}.`,
+          confirmLabel: 'Заменить', danger: true,
+        })
+        if (!ok) return
+      }
+
+      for (const row of stale) {
         await deleteBudgetItem(row.id)
       }
 
@@ -496,8 +525,11 @@ export default function BudgetPage() {
         })
       }
       loadReport(true)
+      toast.success(`План вставлен в ${monthLabel(targetPeriodDate)}`)
     } catch (err) {
       console.error('Ошибка вставки:', err)
+      toast.error(apiError(err, 'Не удалось вставить план'))
+      loadReport(true)
     } finally {
       setPasting(false)
     }
@@ -608,7 +640,7 @@ export default function BudgetPage() {
       })
       setEditArticle(null)
       loadReport(true)
-    } catch (err) { console.error('Ошибка сохранения статьи:', err) }
+    } catch (err) { console.error('Ошибка сохранения статьи:', err); toast.error(apiError(err, 'Не удалось сохранить статью')) }
     finally { setArticleSaving(false) }
   }
 
@@ -628,7 +660,7 @@ export default function BudgetPage() {
       // пропала бы сразу после создания, и это читалось бы как ошибка
       setShowEmpty(true)
       loadReport(true)
-    } catch (err) { console.error('Ошибка создания статьи:', err) }
+    } catch (err) { console.error('Ошибка создания статьи:', err); toast.error(apiError(err, 'Не удалось создать статью')) }
     finally { setArticleSaving(false) }
   }
 
@@ -923,33 +955,39 @@ export default function BudgetPage() {
 
   return (
     <Layout>
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        {/* Селект бюджета — с цветовой подсветкой статуса */}
+      <PageHeader title="Бюджет"
+        subtitle={selectedDoc
+          ? `${selectedDoc.type === 'bdr' ? 'Доходы и расходы' : selectedDoc.type === 'dds' ? 'Движение денег' : 'Платёжный календарь'} · план на ${new Date(selectedDoc.period_from).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })} – ${new Date(selectedDoc.period_to).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })}`
+          : 'План доходов, расходов и движения денег рядом с фактом'}
+        actions={<Button variant="primary" icon={Plus} onClick={() => setShowCreateModal(true)}>Новый бюджет</Button>} />
+
+      <div className="flex items-center gap-x-2 gap-y-2 mb-4 flex-wrap">
+        {/* Какой бюджет открыт. Статус — отдельной меткой рядом, а не цветом
+            самого списка: цветное поле выбора читалось как предупреждение */}
         <select
-          className={`px-3 py-2 border rounded-lg text-sm ${
-            selectedDoc?.status === 'approved' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' :
-            selectedDoc?.status === 'archived' ? 'border-gray-300 bg-gray-100 text-gray-500' :
-            'border-amber-300 bg-amber-50 text-amber-800'
-          }`}
+          className="h-9 pl-3 pr-8 max-w-[22rem] border border-gray-200 rounded-lg text-sm font-medium text-gray-900 bg-white shadow-sm hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500"
           value={selectedDocId || ''}
           onChange={e => setSelectedDocId(Number(e.target.value))}
         >
           {documents.length === 0 && <option value="">Нет документов</option>}
           {documents.map(d => (
             <option key={d.id} value={d.id}>
-              {d.status === 'approved' ? '✓ ' : d.status === 'archived' ? '⊘ ' : '○ '}{d.name} ({d.type.toUpperCase()})
+              {d.name} · {d.type === 'bdr' ? 'БДР' : d.type === 'dds' ? 'ДДС' : 'ПК'}{d.status === 'draft' ? ' · черновик' : d.status === 'archived' ? ' · архив' : ''}
             </option>
           ))}
         </select>
+        {selectedDoc && (
+          <Badge tone={selectedDoc.status === 'approved' ? 'green' : selectedDoc.status === 'archived' ? 'gray' : 'amber'}>
+            {selectedDoc.status === 'approved' ? 'Утверждён' : selectedDoc.status === 'archived' ? 'Архив' : 'Черновик'}
+          </Badge>
+        )}
 
         {/* Кнопка ⚙ — попап настроек бюджета */}
         {selectedDoc && (
           <div className="relative">
-            <button
-              onClick={() => setShowSettingsPopup(v => !v)}
-              className={`text-gray-400 hover:text-gray-600 text-sm px-1.5 py-1 rounded ${showSettingsPopup ? 'bg-gray-100 text-gray-600' : ''}`}
-              title="Настройки бюджета"
-            >⚙</button>
+            <IconButton icon={Settings} label="Настройки бюджета" variant="solid" size="lg"
+              className={showSettingsPopup ? 'bg-gray-100' : ''}
+              onClick={() => setShowSettingsPopup(v => !v)} />
             {showSettingsPopup && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => setShowSettingsPopup(false)} />
@@ -1041,61 +1079,53 @@ export default function BudgetPage() {
           </div>
         )}
 
-        {/* Режимы отображения */}
+        <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
+
+        {/* Что показывать: план, факт или оба рядом */}
+        <Segmented value={viewMode} onChange={setViewMode} options={[
+          { value: 'plan', label: 'План' },
+          { value: 'fact', label: 'Факт' },
+          { value: 'plan_fact', label: 'План + факт' },
+          { value: 'plan_fact_delta', label: 'С отклонением', title: 'План, факт и разница между ними' },
+        ]} className="h-8 items-center" />
+
         {selectedDoc?.type === 'dds' && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2">
-            <button className={`px-3 py-1.5 text-xs font-medium ${!byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(false)}>Общая сумма</button>
-            <button className={`px-3 py-1.5 text-xs font-medium ${byCash ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setByCash(true)}>По кассам</button>
-          </div>
+          <Segmented value={byCash} onChange={setByCash} options={[
+            { value: false, label: 'Общая сумма' },
+            { value: true, label: 'По кассам' },
+          ]} className="h-8 items-center" />
         )}
         {/* Вариант БДР с разделением расходов. Отдельной страницей делать не
             стали: план, факт, расшифровки и копирование ячеек у обоих видов
             одни и те же, разошлась бы только вёрстка */}
         {selectedDoc?.type === 'bdr' && (
-          <button
-            onClick={() => setSplitExpenses(v => !v)}
+          <Toggle pressed={splitExpenses} onChange={setSplitExpenses}
             title={splitExpenses
               ? 'Показать расходы одной группой'
-              : 'Разделить расходы на переменные, постоянные и инвестиционные — по виду статьи'}
-            className={`ml-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
-              splitExpenses
-                ? 'bg-blue-900 text-white border-blue-900'
-                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
-            }`}>
+              : 'Разделить расходы на переменные, постоянные и инвестиционные — по виду статьи'}>
             По виду расходов
-          </button>
+          </Toggle>
         )}
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-1">
-          {[{k:'plan',l:'План'},{k:'fact',l:'Факт'},{k:'plan_fact',l:'П+Ф'},{k:'plan_fact_delta',l:'П+Ф+Δ'}].map(m => (
-            <button key={m.k} className={`px-2.5 py-1.5 text-[11px] font-medium ${viewMode === m.k ? 'bg-blue-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`} onClick={() => setViewMode(m.k)}>{m.l}</button>
-          ))}
-        </div>
         {/* Пустые статьи: скрыты, но их всегда можно вернуть на экран */}
         {selectedDoc && hiddenCount > 0 && (
-          <button
-            onClick={() => setShowEmpty(v => !v)}
+          <Toggle pressed={showEmpty} onChange={setShowEmpty}
             title={showEmpty
               ? 'Убрать статьи, где по всей строке нули'
-              : 'Показать и те статьи, по которым нет ни плана, ни факта'}
-            className={`ml-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-colors ${
-              showEmpty
-                ? 'bg-blue-900 text-white border-blue-900'
-                : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
-            }`}>
-            {showEmpty ? `Скрыть пустые (${hiddenCount})` : `Все статьи (+${hiddenCount})`}
-          </button>
+              : 'Показать и те статьи, по которым нет ни плана, ни факта'}>
+            {showEmpty ? `Пустые статьи · ${hiddenCount}` : `Пустые статьи скрыты · ${hiddenCount}`}
+          </Toggle>
         )}
 
         {/* Период просмотра. Набранное с клавиатуры применяется по Enter или
             по уходу из полей: отчёт тяжёлый, и пересобирать его на каждой
             цифре года незачем */}
         {selectedDoc && (
-          <div className="flex items-center gap-1.5 ml-2">
+          <div className="flex items-center gap-1.5 ml-auto">
             <RangeInputs
               type="month"
               fromLabel="Период" toLabel="—"
-              labelClass="text-[11px] text-gray-400"
-              inputClass="px-1.5 py-1 border border-gray-200 rounded text-[11px] bg-white w-[120px]"
+              labelClass="text-xs text-gray-500"
+              inputClass="h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white w-[128px] hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
               value={{ from: viewPeriod.from.slice(0, 7), to: viewPeriod.to.slice(0, 7) }}
               onApply={r => setViewPeriod({
                 // Пустую границу понимаем как «как у бюджета». Правый край —
@@ -1106,47 +1136,44 @@ export default function BudgetPage() {
               })}
             />
             {periods[selectedDocId] && (
-              <button className="text-[10px] text-gray-400 hover:text-gray-600"
-                onClick={() => setPeriods(prev => { const n = { ...prev }; delete n[selectedDocId]; return n })}
-                title="Вернуть период бюджета">&#10005;</button>
+              <IconButton icon={X} size="sm" label="Вернуть период бюджета"
+                onClick={() => setPeriods(prev => { const n = { ...prev }; delete n[selectedDocId]; return n })} />
             )}
           </div>
         )}
-        <div className="ml-auto">
-          <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 text-sm bg-blue-900 text-white rounded-lg hover:bg-blue-800">+ Новый бюджет</button>
-        </div>
       </div>
 
-      {/* Период бюджета */}
-      {selectedDoc && (
-        <div className="text-[11px] text-gray-400 mb-3 -mt-2">
-          {new Date(selectedDoc.period_from).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })} – {new Date(selectedDoc.period_to).toLocaleString('ru-RU', { month: 'long', year: 'numeric' })}
+      {loading ? (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card p-4"><SkeletonRows rows={10} height="h-8" /></div>
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card">
+          <ErrorState title="Не удалось загрузить бюджет" onRetry={() => loadReport()} />
         </div>
-      )}
-
-      {loading ? <div className="text-center py-20 text-gray-400">Загрузка отчёта...</div>
-      : !report ? <div className="text-center py-20 text-gray-400">{documents.length === 0 ? 'Создайте первый бюджет' : 'Выберите документ'}</div>
+      ) : !report ? <div className="text-center py-20 text-gray-500">{documents.length === 0 ? 'Создайте первый бюджет' : 'Выберите документ'}</div>
       : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
           {/* Индикатор буфера обмена */}
           {(clipboard || pasting) && (
             <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between">
-              <span className="text-[11px] text-blue-600">
+              <span className="text-xs text-blue-700">
                 {pasting
                   ? 'Вставка...'
                   : <>Скопировано: <span className="font-medium">{clipboard.articleName}</span> / {monthLabel(clipboard.periodDate)} — ПКМ на ячейку плана для вставки</>
                 }
               </span>
               {!pasting && (
-                <button onClick={() => setClipboard(null)} className="text-[10px] text-blue-400 hover:text-blue-600">✕ Очистить</button>
+                <button onClick={() => setClipboard(null)} className="text-2xs text-blue-600 hover:text-blue-800">Очистить</button>
               )}
             </div>
           )}
-          <div className="overflow-x-auto">
+          {/* Своя прокрутка в обе стороны, и шапка с месяцами липнет к верху:
+              в бюджете на сорок строк подписи месяцев уезжали за край экрана,
+              и к середине таблицы уже не было видно, чей это столбец */}
+          <div className="overflow-auto max-h-[calc(100vh-15rem)]">
             {/* Без w-full: таблица шириной по содержимому, и колонка месяца
                 стоит вплотную к статьям, а не у правого края экрана */}
             <table className="border-collapse text-xs">
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-gray-50">
                   <th
                     className="sticky left-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200 relative"
@@ -1165,9 +1192,9 @@ export default function BudgetPage() {
                       title="Потяните, чтобы изменить ширину колонки"
                       className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/60 active:bg-blue-500/70" />
                   </th>
-                  {periodDates.map(pd => { const fm = isFactMonth(pd); return <th key={pd} colSpan={colsPerMonth} className={`text-center px-1 py-2 font-medium border-b border-l border-gray-200 ${fm ? 'bg-gray-50 text-gray-400' : isCurrentMonth(pd) ? 'bg-blue-50 text-blue-800' : 'text-gray-600'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && !fm && <span className="ml-1 text-[9px] text-blue-500">▸ тек.</span>}{fm && <span className="ml-1 text-[9px] text-gray-400">● факт</span>}</th> })}
+                  {periodDates.map(pd => { const fm = isFactMonth(pd); return <th key={pd} colSpan={colsPerMonth} className={`text-center px-2 py-2 font-medium whitespace-nowrap border-b border-l border-gray-200 ${fm ? 'bg-gray-50 text-gray-500' : isCurrentMonth(pd) ? 'bg-gold-50 text-gold-800' : 'bg-gray-50 text-gray-700'}`}>{monthLabel(pd)}{isCurrentMonth(pd) && !fm && <span className="ml-1.5 text-2xs font-normal text-gold-700">сейчас</span>}{fm && <span className="ml-1.5 text-2xs font-normal text-gray-400" title="Месяц вне периода бюджета: плана нет, только факт">вне бюджета</span>}</th> })}
                 </tr>
-                <tr className="bg-gray-50/50"><th className="sticky left-0 z-10 bg-gray-50 border-b border-gray-200" />{periodDates.map(renderHeaderSub)}</tr>
+                <tr className="bg-gray-50"><th className="sticky left-0 z-10 bg-gray-50 border-b border-gray-200" />{periodDates.map(renderHeaderSub)}</tr>
               </thead>
               <tbody>
                 {/* ДДС: Остаток на начало */}

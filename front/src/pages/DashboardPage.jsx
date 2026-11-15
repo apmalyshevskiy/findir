@@ -10,11 +10,18 @@ import Layout from '../components/Layout'
 import FirstSteps from '../components/FirstSteps'
 import { SERIES_PALETTE } from '../components/RevenueChart'
 import MetricWidget from '../components/widgets/MetricWidget'
+import { CashWidget, BudgetProgressWidget, UpcomingPaymentsWidget } from '../components/widgets/FinanceWidgets'
+import { ArrowUpRight, GripVertical, LayoutGrid, Plus, RotateCcw, Settings, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Button, IconButton, Modal, PageHeader, toast } from '../components/ui'
+import { SkeletonRows } from '../components/Busy'
+import usePersistedState from '../hooks/usePersistedState'
 import ChartWidget from '../components/widgets/ChartWidget'
 import PeriodPicker from '../components/widgets/PeriodPicker'
 import {
   INDICATORS, INDICATOR_LABEL,
   WIDTHS, GRID_GAP, widthStyle, defaultLayout, normalizeLayout, newMetric, newChart,
+  FIXED_TILES, newCash, newBudget, newPayments,
   effectiveProject, resolveWidgetRange, effectiveKind, periodNoun,
   localDateStr, todayStr,
 } from '../components/widgets/registry'
@@ -27,13 +34,15 @@ const formatDateShort = (iso) => {
 const rangeLabel = (from, to) =>
   from === to ? formatDateShort(to) : `${formatDateShort(from)} — ${formatDateShort(to)}`
 
-const sc = 'px-2 py-1 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500'
+const sc = 'h-7 px-2 border border-gray-200 rounded-lg text-xs bg-white hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500'
 
 export default function DashboardPage() {
   const navigate = useNavigate()
   const today = useMemo(() => todayStr(), [])
   // Глобальный период (шапка) — тот же конфиг, что у виджета.
-  const [gp, setGp] = useState({ period: 'day', date: yesterday(), offset: 0, from: yesterday(), to: yesterday() })
+  // По умолчанию — текущий месяц. Раньше стоял «вчерашний день»: одна точка,
+  // на которой график пуст, а цифра не говорит ничего без соседних
+  const [gp, setGp] = useState({ period: 'month', date: yesterday(), offset: 0, from: yesterday(), to: yesterday() })
   const [globalProject, setGlobalProject] = useState('')
 
   const [projects, setProjects] = useState([])
@@ -46,6 +55,10 @@ export default function DashboardPage() {
   const [seriesByKey, setSeriesByKey] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // Есть ли у человека своя сохранённая раскладка и видел ли он предложение
+  // добавить новые плитки: молча менять то, что он собрал сам, нельзя
+  const [hasSaved, setHasSaved] = useState(false)
+  const [offerSeen, setOfferSeen] = usePersistedState('dash:financeTilesOffer', false)
 
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
@@ -53,7 +66,7 @@ export default function DashboardPage() {
     getDashboardLayout()
       .then(res => {
         const saved = normalizeLayout(res.data.layout)
-        if (saved) setLayout(saved)
+        if (saved) { setLayout(saved); setHasSaved(true) }
       })
       .catch(() => {})
       .finally(() => setLoaded(true))
@@ -109,7 +122,12 @@ export default function DashboardPage() {
   }, [metricSig, chartSig])
 
   // ── Мутации раскладки ──
-  const persist = (next) => { setLayout(next); saveDashboardLayout(next).catch(() => {}) }
+  // Раскладка не сохранилась — говорим: иначе после перезагрузки плитки
+  // вернулись бы на старые места без объяснения
+  const persist = (next) => {
+    setLayout(next)
+    saveDashboardLayout(next).catch(() => toast.error('Раскладка не сохранилась — после перезагрузки она вернётся к прежней'))
+  }
   const patchWidget = (id, patch) =>
     persist({ ...layout, widgets: layout.widgets.map(w => w.id === id ? { ...w, ...patch } : w) })
   const removeWidget = (id) => {
@@ -117,6 +135,20 @@ export default function DashboardPage() {
     if (openId === id) setOpenId(null)
   }
   const addWidget = (w) => persist({ ...layout, widgets: [...layout.widgets, w] })
+  // Удаление плитки — в один клик, но с возвратом: настроенную плитку жалко
+  // терять из-за промаха, а спрашивать «вы уверены?» на каждую — навязчиво
+  const removeWidgetUndo = (w) => {
+    const before = layout
+    removeWidget(w.id)
+    toast(`Плитка «${tileMain(w)}» удалена`, { action: { label: 'Вернуть', onClick: () => persist(before) } })
+  }
+  // Новые плитки — тем, у кого раскладка собрана раньше, чем они появились
+  const addFinanceTiles = () => {
+    const have = new Set(layout.widgets.map(w => w.type))
+    const fresh = [newCash(), newBudget(), newPayments()].filter(w => !have.has(w.type))
+    persist({ ...layout, widgets: [...fresh, ...layout.widgets] })
+    setOfferSeen(true)
+  }
   const resetLayout = () => { persist(defaultLayout()); setShowTiles(false) }
 
   const onDrop = (targetId) => {
@@ -134,14 +166,20 @@ export default function DashboardPage() {
   const projName = (id) => projects.find(p => String(p.id) === String(id))?.name || `#${id}`
 
   // Заголовок плитки: показатель (крупно), период + проект (мельче), даты (совсем мелко)
-  const tileMain = (w) => w.type === 'metric' ? (INDICATOR_LABEL[w.indicator] || w.indicator) : 'Выручка по дням'
+  const tileMain = (w) => FIXED_TILES[w.type]?.title
+    || (w.type === 'metric' ? (INDICATOR_LABEL[w.indicator] || w.indicator) : 'Выручка по дням')
   const tileSub = (w) => {
+    if (FIXED_TILES[w.type]) {
+      const eff = w.type === 'cash' ? effectiveProject(w, globalProject) : ''
+      return [FIXED_TILES[w.type].sub, eff ? projName(eff) : ''].filter(Boolean).join(' · ')
+    }
     const eff = effectiveProject(w, globalProject)
     const proj = eff ? projName(eff) : ''
     const period = periodNoun(effectiveKind(w, gp))
     return [period, proj].filter(Boolean).join(' · ')
   }
   const tileDates = (w) => {
+    if (FIXED_TILES[w.type]) return ''
     const r = resolveWidgetRange(w, gp, today)
     return rangeLabel(r.from, r.to)
   }
@@ -171,17 +209,21 @@ export default function DashboardPage() {
             по проектам
           </label>
         </>
-      ) : (
+      ) : !FIXED_TILES[w.type] && (
         <span className="flex items-center gap-1.5 text-xs text-gray-500">Период
           <PeriodPicker value={w} onChange={patch => patchWidget(w.id, patch)} allowInherit today={today} />
         </span>
       )}
 
-      <label className="flex items-center gap-1.5 text-xs text-gray-500">Проект
-        <select className={sc} value={w.project} onChange={e => patchWidget(w.id, { project: e.target.value })}>
-          {projectOptions}
-        </select>
-      </label>
+      {/* Проект есть там, где по нему можно отобрать: план и календарь
+          ведутся на компанию целиком */}
+      {(!FIXED_TILES[w.type] || w.type === 'cash') && (
+        <label className="flex items-center gap-1.5 text-xs text-gray-500">Проект
+          <select className={sc} value={w.project} onChange={e => patchWidget(w.id, { project: e.target.value })}>
+            {projectOptions}
+          </select>
+        </label>
+      )}
 
       <label className="flex items-center gap-1.5 text-xs text-gray-500">Ширина
         <select className={sc} value={w.width || 50} onChange={e => patchWidget(w.id, { width: Number(e.target.value) })}>
@@ -190,8 +232,8 @@ export default function DashboardPage() {
       </label>
 
       <div className="ml-auto flex items-center gap-2">
-        <button onClick={() => patchWidget(w.id, { enabled: false })} className="text-xs text-gray-500 hover:text-gray-800">Скрыть</button>
-        <button onClick={() => removeWidget(w.id)} className="text-xs text-red-500 hover:text-red-700">Удалить</button>
+        <Button size="xs" variant="ghost" onClick={() => patchWidget(w.id, { enabled: false })}>Скрыть</Button>
+        <Button size="xs" variant="danger-ghost" onClick={() => removeWidgetUndo(w)}>Удалить</Button>
       </div>
     </div>
   )
@@ -200,6 +242,9 @@ export default function DashboardPage() {
     const proj = effectiveProject(w, globalProject)
     const r = resolveWidgetRange(w, gp, today)
     const key = `${r.from}|${r.to}|${proj}`
+    if (w.type === 'cash')     return <CashWidget today={today} project={proj} />
+    if (w.type === 'budget')   return <BudgetProgressWidget today={today} />
+    if (w.type === 'payments') return <UpcomingPaymentsWidget today={today} />
     if (w.type === 'metric') {
       return <MetricWidget widget={w} data={metricsByKey[key]} allProjects={proj === ''} colorMap={colorMap} />
     }
@@ -208,47 +253,45 @@ export default function DashboardPage() {
 
   const visible = layout.widgets.filter(w => w.enabled)
   const hidden = layout.widgets.filter(w => !w.enabled)
+  // Предлагаем один раз и только тому, у кого ни одной из новых плиток нет
+  const offerFinance = loaded && hasSaved && !offerSeen && !layout.widgets.some(w => FIXED_TILES[w.type])
 
   return (
     <Layout>
       {/* Первые шаги — выше виджетов и до тех пор, пока не пройдены все */}
       <FirstSteps />
 
-      <div className="space-y-5">
-        {/* Тулбар */}
-        <div className="flex items-end justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Дашборд</h1>
-            <p className="text-sm text-gray-500 mt-1">Плитки настраиваются каждая отдельно · перетаскивайте за заголовок</p>
-          </div>
-          <div className="flex items-end gap-3 flex-wrap">
+      <div>
+        <PageHeader title="Дашборд"
+          subtitle="Деньги, план и показатели на одном экране. Плитки настраиваются и перетаскиваются"
+          actions={<>
             {projects.length > 1 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-gray-500 font-medium">Проект (по умолчанию)</span>
-                <select value={globalProject} onChange={e => setGlobalProject(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-40">
-                  <option value="">Все проекты</option>
-                  {projects.map(p => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
-                </select>
-              </div>
+              <select value={globalProject} onChange={e => setGlobalProject(e.target.value)} title="Проект для всех плиток"
+                className="h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white shadow-sm hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/25 focus:border-brand-500 min-w-40">
+                <option value="">Все проекты</option>
+                {projects.map(p => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
+              </select>
             )}
-            <div className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500 font-medium">Период (по умолчанию)</span>
-              <PeriodPicker value={gp} onChange={patch => setGp({ ...gp, ...patch })} today={today} />
-            </div>
-            <button onClick={() => setShowTiles(true)} disabled={!loaded}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40">
-              Плитки
-            </button>
+            <PeriodPicker value={gp} onChange={patch => setGp({ ...gp, ...patch })} today={today} />
+            <Button icon={LayoutGrid} onClick={() => setShowTiles(true)} disabled={!loaded}>Плитки</Button>
+          </>} />
+
+        {offerFinance && (
+          <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 rounded-xl bg-gold-50 border border-gold-200">
+            <p className="flex-1 min-w-[16rem] text-sm text-gold-900">
+              <span className="font-medium">Появились новые плитки:</span> остаток денег по кассам, план и факт месяца, ближайшие платежи.
+            </p>
+            <Button size="sm" variant="gold" icon={Plus} onClick={addFinanceTiles}>Добавить на дашборд</Button>
+            <IconButton icon={X} size="sm" label="Не предлагать" onClick={() => setOfferSeen(true)} />
           </div>
-        </div>
+        )}
 
         {error && <div className="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>}
 
         {!loaded ? (
-          <div className="text-sm text-gray-400 py-8 text-center">Загрузка…</div>
+          <SkeletonRows rows={3} height="h-28" />
         ) : visible.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-10 text-center text-sm text-gray-400">
+          <div className="bg-white rounded-xl border border-gray-200/80 shadow-card px-5 py-10 text-center text-sm text-gray-500">
             Нет активных плиток. Нажмите «Плитки», чтобы добавить или показать скрытые.
           </div>
         ) : (
@@ -259,33 +302,36 @@ export default function DashboardPage() {
                 style={widthStyle(w.width)}
                 onDragOver={(e) => { if (dragId) e.preventDefault() }}
                 onDrop={() => onDrop(w.id)}
-                className={`bg-white rounded-xl border shadow-sm ${dragId === w.id ? 'opacity-40' : ''} ${dragId && dragId !== w.id ? 'border-dashed border-blue-300' : 'border-gray-100'}`}
+                className={`group/tile bg-white rounded-xl border shadow-card ${dragId === w.id ? 'opacity-40' : ''} ${dragId && dragId !== w.id ? 'border-dashed border-brand-300' : 'border-gray-200/80'}`}
               >
                 <div
                   draggable
                   onDragStart={(e) => { setDragId(w.id); e.dataTransfer.setData('text/plain', w.id); e.dataTransfer.effectAllowed = 'move' }}
                   onDragEnd={() => setDragId(null)}
-                  className="flex items-start justify-between gap-2 px-5 py-3 border-b border-gray-100 cursor-move"
+                  className="flex items-start justify-between gap-2 pl-3 pr-3 pt-3.5 pb-3 border-b border-gray-100 cursor-move"
                 >
-                  <div className="min-w-0 flex items-start gap-2">
-                    <span className="text-gray-300 select-none mt-0.5" title="Перетащить">≡</span>
+                  <div className="min-w-0 flex items-start gap-1.5">
+                    <GripVertical className="w-4 h-4 mt-0.5 text-gray-300 shrink-0" aria-hidden="true" />
                     <div className="min-w-0">
-                      <h2 className="font-semibold text-gray-800 truncate leading-tight">{tileMain(w)}</h2>
-                      {tileSub(w) && <div className="text-xs text-gray-500 truncate">{tileSub(w)}</div>}
-                      {tileDates(w) && <div className="text-[11px] text-gray-400 truncate">{tileDates(w)}</div>}
+                      <h2 className="text-sm font-semibold text-gray-800 truncate leading-5">{tileMain(w)}</h2>
+                      <div className="text-xs text-gray-500 truncate">
+                        {[tileSub(w), tileDates(w)].filter(Boolean).join(' · ')}
+                      </div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => setOpenId(openId === w.id ? null : w.id)}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className={`flex-shrink-0 p-1.5 rounded-lg ${openId === w.id ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-50'}`}
-                    title="Настройки плитки"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="3" />
-                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                    </svg>
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0" onMouseDown={(e) => e.stopPropagation()}>
+                    {/* Из плитки — в отчёт, где это число раскрыто по строкам */}
+                    {FIXED_TILES[w.type] && (
+                      <Link to={FIXED_TILES[w.type].to} draggable={false}
+                        className="inline-flex items-center gap-0.5 h-7 px-2 rounded-md text-xs font-medium text-brand-700 hover:bg-brand-50">
+                        {FIXED_TILES[w.type].linkLabel}
+                        <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
+                      </Link>
+                    )}
+                    <IconButton icon={Settings} size="sm" label="Настройки плитки"
+                      className={openId === w.id ? 'bg-brand-50 text-brand-700' : ''}
+                      onClick={() => setOpenId(openId === w.id ? null : w.id)} />
+                  </div>
                 </div>
 
                 {openId === w.id && renderSettings(w)}
@@ -296,49 +342,43 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Модал «Плитки» */}
-      {showTiles && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowTiles(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <h3 className="text-lg font-semibold text-gray-800">Плитки</h3>
-              <button onClick={() => setShowTiles(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
-            </div>
-            <div className="p-6 space-y-6">
-              <div>
-                <p className="text-xs text-gray-500 font-medium mb-2">Добавить плитку</p>
-                <div className="flex gap-2">
-                  <button onClick={() => addWidget(newMetric())} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">+ Показатель</button>
-                  <button onClick={() => addWidget(newChart())} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">+ График</button>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium mb-2">Скрытые плитки</p>
-                {hidden.length === 0 ? (
-                  <p className="text-sm text-gray-400">Нет скрытых плиток</p>
-                ) : (
-                  <div className="space-y-2">
-                    {hidden.map(w => (
-                      <div key={w.id} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-3 py-2">
-                        <span className="text-sm text-gray-700 truncate">{tileMain(w)}{tileSub(w) ? ` · ${tileSub(w)}` : ''}</span>
-                        <div className="flex items-center gap-3 flex-shrink-0">
-                          <button onClick={() => patchWidget(w.id, { enabled: true })} className="text-sm text-blue-600 hover:text-blue-700">Показать</button>
-                          <button onClick={() => removeWidget(w.id)} className="text-sm text-gray-400 hover:text-red-600">✕</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-gray-100 flex justify-end">
-                <button onClick={resetLayout} className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">
-                  ↺ Сбросить к стандартной раскладке
-                </button>
-              </div>
+      {/* Окно «Плитки» */}
+      <Modal open={showTiles} onClose={() => setShowTiles(false)} title="Плитки"
+        subtitle="Что показывать на дашборде. Порядок меняется перетаскиванием прямо на странице">
+        <div className="space-y-6">
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Добавить плитку</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newMetric())}>Показатель</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newChart())}>График выручки</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newCash())}>Деньги</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newBudget())}>План и факт</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newPayments())}>Платежи</Button>
             </div>
           </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-2">Скрытые плитки</p>
+            {hidden.length === 0 ? (
+              <p className="text-sm text-gray-500">Скрытых плиток нет</p>
+            ) : (
+              <div className="space-y-2">
+                {hidden.map(w => (
+                  <div key={w.id} className="flex items-center justify-between gap-3 border border-gray-200 rounded-lg pl-3 pr-1.5 py-1.5">
+                    <span className="text-sm text-gray-700 truncate">{tileMain(w)}{tileSub(w) ? ` · ${tileSub(w)}` : ''}</span>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <Button size="xs" variant="ghost" onClick={() => patchWidget(w.id, { enabled: true })}>Показать</Button>
+                      <IconButton icon={X} size="sm" variant="danger" label="Удалить плитку" onClick={() => removeWidgetUndo(w)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="pt-4 border-t border-gray-100">
+            <Button variant="ghost" size="sm" icon={RotateCcw} onClick={resetLayout}>Вернуть стандартную раскладку</Button>
+          </div>
         </div>
-      )}
+      </Modal>
     </Layout>
   )
 }
