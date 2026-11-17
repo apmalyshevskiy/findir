@@ -41,6 +41,13 @@ class EnsurePermission
             return response()->json(['message' => 'Unauthorized'], 401);
         }
 
+        // Отмечаем, что сессией пользуются: по этой отметке вход прибирает
+        // брошенные. Не чаще раза в час — писать в базу на каждый запрос незачем
+        if (!$row->last_used_at || strtotime($row->last_used_at) < time() - 3600) {
+            DB::table('personal_access_tokens')->where('id', $row->id)
+                ->update(['last_used_at' => now()]);
+        }
+
         $tenantId = TenantService::tenantIdFromRequest($request);
         $db       = TenantService::connect($tenantId);
 

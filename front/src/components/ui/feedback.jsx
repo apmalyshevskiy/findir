@@ -187,6 +187,17 @@ export function FeedbackHost() {
   const items = useSyncExternalStore(subscribe, () => toasts)
   const d = useSyncExternalStore(subscribe, () => dialog)
 
+  // Сообщение, оставленное перед перезагрузкой страницы (например, почему
+  // закончилась сессия): показываем один раз
+  useEffect(() => {
+    let text = null
+    try {
+      text = sessionStorage.getItem('findir:notice')
+      sessionStorage.removeItem('findir:notice')
+    } catch { /* хранилище недоступно */ }
+    if (text) toast.info(text, { duration: 10000 })
+  }, [])
+
   return (
     <>
       {d && <Dialog key={d.title + (d.text || '')} d={d} />}

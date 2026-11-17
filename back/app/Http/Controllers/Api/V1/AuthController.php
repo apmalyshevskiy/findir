@@ -49,6 +49,35 @@ class AuthController extends Controller
         return $plainToken;
     }
 
+    /** Сколько одновременных сессий держим на пользователя в компании */
+    private const MAX_SESSIONS = 10;
+
+    /** Сессия, которой не пользовались столько дней, считается брошенной */
+    private const IDLE_DAYS = 90;
+
+    /**
+     * Прибрать брошенные сессии пользователя в этой компании: неиспользуемые
+     * дольше IDLE_DAYS и всё сверх MAX_SESSIONS самых свежих. Только в этой
+     * компании — id = 1 у владельца каждой базы, без tenant_id вход к одному
+     * клиенту выбрасывал бы финдиректора у всех остальных.
+     */
+    private function pruneTokens(string $tenantId, int $userId): void
+    {
+        $mine = fn () => DB::table('personal_access_tokens')
+            ->where('tokenable_type', 'tenant_user')
+            ->where('tokenable_id', $userId)
+            ->where('tenant_id', $tenantId);
+
+        $mine()->where('created_at', '<', now()->subDays(self::IDLE_DAYS))
+            ->where(fn ($q) => $q->whereNull('last_used_at')
+                ->orWhere('last_used_at', '<', now()->subDays(self::IDLE_DAYS)))
+            ->delete();
+
+        $keep = $mine()->orderByRaw('COALESCE(last_used_at, created_at) DESC')
+            ->limit(self::MAX_SESSIONS)->pluck('id');
+        $mine()->whereNotIn('id', $keep)->delete();
+    }
+
     /**
      * Сгенерировать уникальный slug по названию компании.
      * Если slug занят — добавляет цифру: ooo-romashka → ooo-romashka-2 → ooo-romashka-3
@@ -234,17 +263,13 @@ class AuthController extends Controller
             ]);
         }
 
-        // Только сессии этого пользователя В ЭТОЙ компании. Без tenant_id здесь
-        // сносились токены с тем же id пользователя в других базах, а id = 1 у
-        // владельца каждой компании — вход к одному клиенту выбрасывал
-        // финдиректора у всех остальных.
-        DB::table('personal_access_tokens')
-            ->where('tokenable_type', 'tenant_user')
-            ->where('tokenable_id', $user->id)
-            ->where('tenant_id', $tenant->id)
-            ->delete();
-
+        // Другие сессии при входе НЕ гасим. Раньше здесь удалялись все токены
+        // пользователя в компании, и вход с телефона, из второго браузера или
+        // повторное «Добавить компанию» молча выкидывал человека везде, где он
+        // уже работал. Гасит сессии только явный выход, смена пароля и
+        // отключение пользователя администратором.
         $plainToken = $this->createToken($tenant->id, $user->id);
+        $this->pruneTokens($tenant->id, (int) $user->id);
 
         DB::connection($dbName)->table('users')->where('id', $user->id)
             ->update(['last_login_at' => now()]);

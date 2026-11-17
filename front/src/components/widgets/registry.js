@@ -5,6 +5,7 @@ export const PERIODS = [
   { key: 'week',  title: 'За 7 дней' },
   { key: 'month', title: 'За месяц' },
   { key: 'year',  title: 'За год' },
+  { key: 'last12', title: 'За 12 месяцев' },
 ]
 export const INHERIT_PERIOD = { key: 'inherit', title: 'Как в шапке' }
 export const CUSTOM_PERIOD  = { key: 'custom',  title: 'Произвольный' }
@@ -57,6 +58,8 @@ export const resolveRange = (p, today) => {
     case 'week':   return weekRange(p.offset || 0, today)
     case 'month':  return monthRange(p.offset || 0, today)
     case 'year':   return yearRange(p.offset || 0, today)
+    // Скользящие 12 месяцев, включая текущий: год помесячно без привязки к январю
+    case 'last12': return { from: monthRange(-11, today).from, to: monthRange(0, today).to }
     case 'custom': return { from: p.from || today, to: p.to || today }
     default:       return { from: today, to: today }
   }
@@ -69,7 +72,7 @@ export const resolveWidgetRange = (w, global, today) =>
 export const effectiveKind = (w, global) => (w.period === 'inherit' ? global.period : w.period)
 
 // Подпись периода в плитке: «за день/неделю/месяц/год»; для произвольного — пусто.
-const PERIOD_NOUN = { day: 'за день', week: 'за неделю', month: 'за месяц', year: 'за год' }
+const PERIOD_NOUN = { day: 'за день', week: 'за неделю', month: 'за месяц', year: 'за год', last12: 'за 12 месяцев' }
 export const periodNoun = (kind) => PERIOD_NOUN[kind] || ''
 
 // ── Подписи для выпадашек смещения ──
@@ -136,6 +139,14 @@ export const newChart = () => ({
   project: 'inherit', enabled: true, width: 100,
 })
 
+// Динамика показателей: несколько рядов, шаг дни/месяцы, сравнение
+export const newTrend = () => ({
+  id: uid(), type: 'trend',
+  period: 'inherit', offset: 0, date: '', from: '', to: '',
+  indicators: ['revenue', 'cogs', 'expenses'], step: 'auto', compare: 'prev', view: 'auto',
+  project: 'inherit', enabled: true, width: 100,
+})
+
 /**
  * Плитки без настраиваемого периода: у них свой, заданный смыслом.
  * Остаток денег берётся на сегодня, план — на текущий месяц, платежи — на две
@@ -156,7 +167,7 @@ export const normalizeLayout = (l) => {
   if (!l || !Array.isArray(l.widgets)) return null
   // Период дописываем только плиткам, у которых он есть: у «денег» и «плана»
   // его нет по смыслу
-  return { ...l, widgets: l.widgets.map(w => (w.period || FIXED_TILES[w.type]) ? w : { ...w, period: w.type === 'chart' ? 'month' : 'day' }) }
+  return { ...l, widgets: l.widgets.map(w => (w.period || FIXED_TILES[w.type]) ? w : { ...w, period: (w.type === 'chart' || w.type === 'trend') ? 'month' : 'day' }) }
 }
 
 /**
@@ -173,7 +184,7 @@ export const defaultLayout = () => ({
     { id: uid(), type: 'metric', indicator: 'profit',  period: 'inherit', offset: 0, project: 'inherit', breakdown: false, enabled: true, width: 33 },
     newBudget(),
     newPayments(),
-    { id: uid(), type: 'chart',  period: 'inherit', offset: 0, project: 'inherit', enabled: true, width: 100 },
+    newTrend(),
   ],
 })
 

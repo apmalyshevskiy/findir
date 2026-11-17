@@ -567,6 +567,164 @@ class DashboardController extends TenantController
         ]);
     }
 
+    /** Показатели, которые умеет рисовать график динамики */
+    private const TREND_INDICATORS = ['revenue', 'cogs', 'expenses', 'gross', 'profit'];
+
+    /**
+     * GET /dashboard/indicator-series
+     *   date_from, date_to, project_id
+     *   step        — day | month | auto (по умолчанию: дольше двух месяцев — по месяцам)
+     *   indicators  — список из TREND_INDICATORS (по умолчанию revenue)
+     *   compare     — none | prev | year: второй ряд для сравнения
+     *
+     * Ряды показателей по дням или месяцам — итогом по выбранным проектам.
+     * Ряд сравнения выровнен по порядковому номеру точки: 1-е число с 1-м,
+     * январь с январём — так «ноябрь против октября» и «2026 против 2025»
+     * ложатся друг на друга, хотя в месяцах разное число дней.
+     */
+    public function indicatorSeries(Request $request)
+    {
+        $this->initTenant($request);
+
+        $data = $request->validate([
+            'date_from'    => 'required|date',
+            'date_to'      => 'required|date',
+            'step'         => 'nullable|in:day,month,auto',
+            'compare'      => 'nullable|in:none,prev,year',
+            'indicators'   => 'nullable|array',
+            'indicators.*' => 'in:' . implode(',', self::TREND_INDICATORS),
+        ]);
+        $projectFilter = $request->project_id ? (int) $request->project_id : null;
+
+        $from = Carbon::parse($data['date_from'])->startOfDay();
+        $to   = Carbon::parse($data['date_to'])->startOfDay();
+        if ($to->lt($from)) { [$from, $to] = [$to, $from]; }
+
+        $step = $data['step'] ?? 'auto';
+        if ($step === 'auto') {
+            $step = $from->diffInDays($to) > 62 ? 'month' : 'day';
+        }
+        // Потолок точек: 400 дней или 120 месяцев
+        if ($step === 'day' && $from->diffInDays($to) > 400) {
+            $from = $to->copy()->subDays(400);
+        }
+        if ($step === 'month') {
+            $from = $from->copy()->startOfMonth();
+            $to   = $to->copy()->endOfMonth()->startOfDay();
+            if ($from->diffInMonths($to) > 119) {
+                $from = $to->copy()->startOfMonth()->subMonths(119);
+            }
+        }
+
+        $indicators = array_values(array_unique($data['indicators'] ?? ['revenue']));
+        $acc = $this->metricAccounts();
+
+        $current = $this->trendBuckets($acc, $from, $to, $step, $projectFilter, $indicators);
+
+        $compareOut = null;
+        $compare = $data['compare'] ?? 'none';
+        if ($compare !== 'none') {
+            [$cFrom, $cTo] = $compare === 'year'
+                ? [$from->copy()->subYearNoOverflow(), $to->copy()->subYearNoOverflow()]
+                : $this->previousRange($from, $to);
+            if ($step === 'month') {
+                // По месяцам сравниваем столько же месяцев, сколько в периоде
+                $months = count($current['points']);
+                $cFrom = $cFrom->copy()->startOfMonth();
+                if ($compare === 'prev') $cFrom = $from->copy()->subMonthsNoOverflow($months);
+                $cTo = $cFrom->copy()->addMonthsNoOverflow($months - 1)->endOfMonth()->startOfDay();
+            }
+            $compareOut = array_merge(
+                ['mode' => $compare, 'date_from' => $cFrom->toDateString(), 'date_to' => $cTo->toDateString()],
+                $this->trendBuckets($acc, $cFrom, $cTo, $step, $projectFilter, $indicators),
+            );
+        }
+
+        return response()->json(array_merge(
+            ['date_from' => $from->toDateString(), 'date_to' => $to->toDateString(), 'step' => $step],
+            $current,
+            [
+                'compare' => $compareOut,
+                // Закрытые счета: ряд не рисуем и говорим почему, а не рисуем «ноль»
+                'hidden'  => array_values(array_filter($indicators, fn ($k) => $this->trendHidden($acc, $k))),
+            ],
+        ));
+    }
+
+    /** Закрыт ли показатель ролью — по тем же правилам, что и плитки */
+    private function trendHidden(array $acc, string $key): bool
+    {
+        return match ($key) {
+            'revenue'  => $acc['rev_hidden'],
+            'cogs'     => $acc['cogs_hidden'],
+            'expenses' => $acc['exp_hidden'],
+            'gross'    => $acc['rev_hidden'] || $acc['cogs_hidden'],
+            'profit'   => $acc['rev_hidden'] || $acc['cogs_hidden'] || $acc['exp_hidden'],
+            default    => true,
+        };
+    }
+
+    /**
+     * Точки периода и значения показателей в них.
+     *
+     * @return array{points: string[], series: array<string, (float[]|null)>}
+     */
+    private function trendBuckets(array $acc, Carbon $from, Carbon $to, string $step, ?int $projectFilter, array $indicators): array
+    {
+        $points = [];
+        if ($step === 'month') {
+            for ($d = $from->copy()->startOfMonth(); $d->lte($to); $d->addMonthNoOverflow()) {
+                $points[] = $d->format('Y-m');
+            }
+        } else {
+            for ($d = $from->copy(); $d->lte($to); $d->addDay()) {
+                $points[] = $d->toDateString();
+            }
+        }
+        $index = array_flip($points);
+        $zero  = array_fill(0, count($points), 0.0);
+        $raw   = ['revenue' => $zero, 'cogs' => $zero, 'expenses' => $zero];
+
+        $biIds = array_values(array_filter([$acc['rev'], $acc['cogs'], $acc['exp']]));
+        if ($biIds) {
+            $bucket = $step === 'month' ? "DATE_FORMAT(`date`, '%Y-%m')" : 'DATE(`date`)';
+            $rows = DB::connection($this->dbName)
+                ->table('balance_changes')
+                ->whereIn('bi_id', $biIds)
+                ->where('date', '>=', $from->toDateString() . ' 00:00:00')
+                ->where('date', '<=', $to->toDateString() . ' 23:59:59')
+                ->when($projectFilter, fn ($q) => $q->where('project_id', $projectFilter))
+                ->groupBy(DB::raw($bucket), 'bi_id')
+                ->select(DB::raw("$bucket as p"), 'bi_id', DB::raw('SUM(amount) as s'))
+                ->get();
+
+            foreach ($rows as $r) {
+                $i = $index[$r->p] ?? null;
+                if ($i === null) continue;
+                $bi = (int) $r->bi_id;
+                // Выручка — кредитовый оборот (в balance_changes с минусом),
+                // себестоимость и расходы — дебетовый
+                if ($bi === $acc['rev'])  $raw['revenue'][$i]  += -(float) $r->s;
+                if ($bi === $acc['cogs']) $raw['cogs'][$i]     += (float) $r->s;
+                if ($bi === $acc['exp'])  $raw['expenses'][$i] += (float) $r->s;
+            }
+        }
+
+        $series = [];
+        foreach ($indicators as $k) {
+            if ($this->trendHidden($acc, $k)) { $series[$k] = null; continue; }
+            $series[$k] = array_map(fn ($i) => round(match ($k) {
+                'revenue'  => $raw['revenue'][$i],
+                'cogs'     => $raw['cogs'][$i],
+                'expenses' => $raw['expenses'][$i],
+                'gross'    => $raw['revenue'][$i] - $raw['cogs'][$i],
+                'profit'   => $raw['revenue'][$i] - $raw['cogs'][$i] - $raw['expenses'][$i],
+            }, 2), array_keys($points));
+        }
+
+        return ['points' => $points, 'series' => $series];
+    }
+
     // ─── Раскладка дашборда (виджеты), персонально на пользователя ───────
 
     private function layoutKey(Request $request): string

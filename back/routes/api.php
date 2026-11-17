@@ -63,6 +63,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/dashboard/summary',        [DashboardController::class, 'summary']);
     Route::get('/dashboard/metrics',        [DashboardController::class, 'metrics']);
     Route::get('/dashboard/revenue-series', [DashboardController::class, 'revenueSeries']);
+    Route::get('/dashboard/indicator-series', [DashboardController::class, 'indicatorSeries']);
     Route::get('/dashboard/cash',              [DashboardController::class, 'cash']);
     Route::get('/dashboard/budget-progress',   [DashboardController::class, 'budgetProgress']);
     Route::get('/dashboard/upcoming-payments', [DashboardController::class, 'upcomingPayments']);

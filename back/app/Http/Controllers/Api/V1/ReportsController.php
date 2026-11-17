@@ -48,18 +48,60 @@ class ReportsController extends TenantController
         $now  = $this->saldoAt($date, $project);
         $was  = $compare ? $this->saldoAt($compare, $project) : [];
 
-        // Раскладываем счета по разделам каталога. Счёт, заведённый руками и
-        // каталогу неизвестный, определяется по первой букве кода — это
-        // единственное место, где код что-то решает
+        // Расчёты с контрагентами и сотрудниками показываем развёрнуто: по
+        // одним поставщикам мы должны, другим переплатили. Свёрнутое сальдо
+        // «Поставщики −4 млн» в пассиве не читается — переплата это наш актив,
+        // а аванс покупателя — наш долг. Так устроен любой настоящий баланс
+        $settle = $accounts->filter(fn ($a) => in_array($a->info_1_type, ['partner', 'employee'], true)
+            && in_array($this->balanceGroup($a), [ChartOfAccounts::ASSETS, ChartOfAccounts::LIABILITIES], true))
+            ->pluck('id')->all();
+        $nowParts = $this->settlementParts($settle, $date, $project);
+        $wasParts = $compare ? $this->settlementParts($settle, $compare, $project) : [];
+
+        // Раскладываем счета по разделам каталога
         $rows = ['assets' => [], 'liabilities' => [], 'capital' => [], 'profit' => []];
 
         foreach ($accounts as $account) {
-            $group = ChartOfAccounts::byCode((string) $account->code)['group'] ?? null;
+            $group   = $this->balanceGroup($account);
+            $catalog = ChartOfAccounts::byCode((string) $account->code);
+            $hint    = $catalog['hint'] ?? null;
+            $opening = $this->isOpeningBalance($account);
 
-            if (!$group) {
-                $group = str_starts_with((string) $account->code, 'А')
-                    ? ChartOfAccounts::ASSETS
-                    : ChartOfAccounts::LIABILITIES;
+            $base = [
+                'bi_id' => (int) $account->id,
+                'code'  => $account->code,
+                'name'  => $opening ? 'Капитал на начало учёта' : $account->name,
+                'hint'  => $opening
+                    ? 'Остатки, введённые при старте учёта: имущество минус долги на тот день. Это собственные средства, с которыми компания пришла в учёт.'
+                    : $hint,
+            ];
+
+            if (in_array((int) $account->id, $settle, true)) {
+                // Дебет — нам должны (актив), кредит — должны мы (пассив)
+                $dNow = $nowParts[$account->id]['debit'] ?? 0.0;
+                $cNow = $nowParts[$account->id]['credit'] ?? 0.0;
+                $dWas = $wasParts[$account->id]['debit'] ?? 0.0;
+                $cWas = $wasParts[$account->id]['credit'] ?? 0.0;
+                $isAsset = $group === ChartOfAccounts::ASSETS;
+
+                $main = $isAsset ? [$dNow, $dWas] : [-$cNow, -$cWas];
+                $flip = $isAsset ? [-$cNow, -$cWas] : [$dNow, $dWas];
+
+                if (abs($main[0]) >= 0.005 || abs($main[1]) >= 0.005) {
+                    $rows[$group][] = $base + ['amount' => round($main[0], 2), 'compare_amount' => round($main[1], 2)];
+                }
+                if (abs($flip[0]) >= 0.005 || abs($flip[1]) >= 0.005) {
+                    $rows[$isAsset ? 'liabilities' : 'assets'][] = array_merge($base, [
+                        'name'           => $account->name,
+                        'note'           => $isAsset ? 'должны мы' : 'должны нам',
+                        'hint'           => $isAsset
+                            ? 'Авансы и переплаты: эти контрагенты заплатили нам больше, чем получили. Пока не отгрузим — это наш долг.'
+                            : 'Авансы и переплаты: мы заплатили этим контрагентам больше, чем получили от них. Это наш актив — они нам должны.',
+                        'amount'         => round($flip[0], 2),
+                        'compare_amount' => round($flip[1], 2),
+                    ]);
+                }
+                continue;
             }
 
             $amount  = (float) ($now[$account->id] ?? 0);
@@ -72,14 +114,20 @@ class ReportsController extends TenantController
 
             // Пассив хранится со знаком минус — показываем как положительный
             $sign = $group === ChartOfAccounts::ASSETS ? 1 : -1;
-
-            $rows[$group][] = [
-                'bi_id'          => (int) $account->id,
-                'code'           => $account->code,
-                'name'           => $account->name,
+            $row  = $base + [
                 'amount'         => round($amount * $sign, 2),
                 'compare_amount' => round($compareAmount * $sign, 2),
             ];
+
+            // Отрицательный остаток имущества или долга не бывает в жизни —
+            // почти всегда это ошибка учёта: списали раньше, чем оприходовали
+            if (in_array($group, [ChartOfAccounts::ASSETS, ChartOfAccounts::LIABILITIES], true) && $row['amount'] <= -0.005) {
+                $row['warning'] = $group === ChartOfAccounts::ASSETS
+                    ? 'Отрицательный остаток: списано больше, чем поступило. Скорее всего, не внесён приход — проверьте операции по счёту.'
+                    : 'Отрицательный долг: погашено больше, чем было получено. Проверьте операции по счёту.';
+            }
+
+            $rows[$group][] = $row;
         }
 
         $sum = fn(array $list) => round(array_sum(array_column($list, 'amount')), 2);
@@ -217,6 +265,60 @@ class ReportsController extends TenantController
     }
 
     // ── Внутреннее ───────────────────────────────────────────────────────────
+
+    /**
+     * Раздел баланса для счёта.
+     *
+     * По каталогу; счёт, заведённый руками, — по первой букве кода. Счёт ввода
+     * остатков (заводят руками, обычно «ВВ») — капитал: его сальдо — это
+     * имущество минус долги на старте учёта, то есть собственные средства.
+     */
+    private function balanceGroup($account): string
+    {
+        if ($this->isOpeningBalance($account)) return ChartOfAccounts::CAPITAL;
+
+        $group = ChartOfAccounts::byCode((string) $account->code)['group'] ?? null;
+        if ($group) return $group;
+
+        return str_starts_with((string) $account->code, 'А')
+            ? ChartOfAccounts::ASSETS
+            : ChartOfAccounts::LIABILITIES;
+    }
+
+    private function isOpeningBalance($account): bool
+    {
+        $code = mb_strtoupper(trim((string) $account->code));
+        $name = mb_strtoupper((string) $account->name);
+        return $code === 'ВВ' || str_contains($name, 'ВВОД ОСТАТК');
+    }
+
+    /**
+     * Развёрнутое сальдо расчётных счетов на дату: по каждому контрагенту
+     * отдельно, затем дебетовые остатки складываются в «нам должны», кредитовые
+     * — в «должны мы». bi_id => ['debit' => +, 'credit' => −]
+     */
+    private function settlementParts(array $biIds, string $date, ?int $project): array
+    {
+        if (!$biIds) return [];
+
+        $rows = $this->scope
+            ->exclude(DB::connection($this->dbName)->table('balance_changes'))
+            ->whereIn('bi_id', $biIds)
+            ->where('date', '<=', $date . ' 23:59:59')
+            ->when($project, fn($q) => $q->where('project_id', $project))
+            ->selectRaw('bi_id, info_1_id, SUM(amount) total')
+            ->groupBy('bi_id', 'info_1_id')
+            ->get();
+
+        $out = [];
+        foreach ($rows as $r) {
+            $v = (float) $r->total;
+            $key = $v > 0 ? 'debit' : 'credit';
+            $out[$r->bi_id][$key] = ($out[$r->bi_id][$key] ?? 0.0) + $v;
+        }
+        return $out;
+    }
+
 
     /** Сальдо всех счетов на дату: bi_id => сумма */
     private function saldoAt(string $date, ?int $project): array

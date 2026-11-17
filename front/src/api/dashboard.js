@@ -9,6 +9,10 @@ export const getDashboardMetrics = (params) => api.get('/dashboard/metrics', { p
 // Дневной ряд выручки по проектам. params: { date, days, project_id }
 export const getRevenueSeries = (params) => api.get('/dashboard/revenue-series', { params })
 
+// Ряды показателей по дням или месяцам с рядом для сравнения.
+// params: { date_from, date_to, step, compare, indicators[], project_id }
+export const getIndicatorSeries = (params) => api.get('/dashboard/indicator-series', { params })
+
 // Раскладка виджетов дашборда (персонально на пользователя).
 export const getDashboardLayout = () => api.get('/dashboard/layout')
 export const saveDashboardLayout = (layout) => api.put('/dashboard/layout', { layout })

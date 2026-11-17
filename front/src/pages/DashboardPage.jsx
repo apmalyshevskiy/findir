@@ -17,10 +17,12 @@ import { Button, IconButton, Modal, PageHeader, toast } from '../components/ui'
 import { SkeletonRows } from '../components/Busy'
 import usePersistedState from '../hooks/usePersistedState'
 import ChartWidget from '../components/widgets/ChartWidget'
+import TrendWidget from '../components/widgets/TrendWidget'
+import { TREND_INDICATORS, TREND_STEPS, TREND_COMPARE, TREND_VIEWS } from '../components/widgets/trendMeta'
 import PeriodPicker from '../components/widgets/PeriodPicker'
 import {
   INDICATORS, INDICATOR_LABEL,
-  WIDTHS, GRID_GAP, widthStyle, defaultLayout, normalizeLayout, newMetric, newChart,
+  WIDTHS, GRID_GAP, widthStyle, defaultLayout, normalizeLayout, newMetric, newChart, newTrend,
   FIXED_TILES, newCash, newBudget, newPayments,
   effectiveProject, resolveWidgetRange, effectiveKind, periodNoun,
   localDateStr, todayStr,
@@ -59,6 +61,7 @@ export default function DashboardPage() {
   // добавить новые плитки: молча менять то, что он собрал сам, нельзя
   const [hasSaved, setHasSaved] = useState(false)
   const [offerSeen, setOfferSeen] = usePersistedState('dash:financeTilesOffer', false)
+  const [trendOfferSeen, setTrendOfferSeen] = usePersistedState('dash:trendOffer', false)
 
   useEffect(() => {
     api.get('/me').catch(() => navigate('/login'))
@@ -149,6 +152,10 @@ export default function DashboardPage() {
     persist({ ...layout, widgets: [...fresh, ...layout.widgets] })
     setOfferSeen(true)
   }
+  const addTrendTile = () => {
+    persist({ ...layout, widgets: [...layout.widgets, newTrend()] })
+    setTrendOfferSeen(true)
+  }
   const resetLayout = () => { persist(defaultLayout()); setShowTiles(false) }
 
   const onDrop = (targetId) => {
@@ -167,7 +174,8 @@ export default function DashboardPage() {
 
   // Заголовок плитки: показатель (крупно), период + проект (мельче), даты (совсем мелко)
   const tileMain = (w) => FIXED_TILES[w.type]?.title
-    || (w.type === 'metric' ? (INDICATOR_LABEL[w.indicator] || w.indicator) : 'Выручка по дням')
+    || (w.type === 'metric' ? (INDICATOR_LABEL[w.indicator] || w.indicator)
+      : w.type === 'trend' ? 'Динамика показателей' : 'Выручка по дням')
   const tileSub = (w) => {
     if (FIXED_TILES[w.type]) {
       const eff = w.type === 'cash' ? effectiveProject(w, globalProject) : ''
@@ -209,6 +217,40 @@ export default function DashboardPage() {
             по проектам
           </label>
         </>
+      ) : w.type === 'trend' ? (
+        <>
+          <span className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500 basis-full">Показатели
+            {TREND_INDICATORS.map(i => {
+              const on = (w.indicators || ['revenue']).includes(i.key)
+              const list = w.indicators || ['revenue']
+              return (
+                <button key={i.key} type="button" aria-pressed={on}
+                  onClick={() => patchWidget(w.id, { indicators: on ? list.filter(k => k !== i.key) : [...list, i.key] })}
+                  className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border text-xs transition-colors ${on ? 'bg-white border-gray-300 text-gray-800 shadow-sm' : 'border-dashed border-gray-300 text-gray-500 hover:text-gray-700'}`}>
+                  <span className="w-2.5 h-2.5 rounded-sm" style={{ background: on ? i.color : '#d6d5cd' }} />{i.label}
+                </button>
+              )
+            })}
+          </span>
+          <span className="flex items-center gap-1.5 text-xs text-gray-500">Период
+            <PeriodPicker value={w} onChange={patch => patchWidget(w.id, patch)} allowInherit today={today} />
+          </span>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">Шаг
+            <select className={sc} value={w.step || 'auto'} onChange={e => patchWidget(w.id, { step: e.target.value })}>
+              {TREND_STEPS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">Сравнить
+            <select className={sc} value={w.compare || 'none'} onChange={e => patchWidget(w.id, { compare: e.target.value })}>
+              {TREND_COMPARE.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">Вид
+            <select className={sc} value={w.view || 'auto'} onChange={e => patchWidget(w.id, { view: e.target.value })}>
+              {TREND_VIEWS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </label>
+        </>
       ) : !FIXED_TILES[w.type] && (
         <span className="flex items-center gap-1.5 text-xs text-gray-500">Период
           <PeriodPicker value={w} onChange={patch => patchWidget(w.id, patch)} allowInherit today={today} />
@@ -245,6 +287,7 @@ export default function DashboardPage() {
     if (w.type === 'cash')     return <CashWidget today={today} project={proj} />
     if (w.type === 'budget')   return <BudgetProgressWidget today={today} />
     if (w.type === 'payments') return <UpcomingPaymentsWidget today={today} />
+    if (w.type === 'trend')    return <TrendWidget widget={w} range={r} project={proj} today={today} />
     if (w.type === 'metric') {
       return <MetricWidget widget={w} data={metricsByKey[key]} allProjects={proj === ''} colorMap={colorMap} />
     }
@@ -255,6 +298,7 @@ export default function DashboardPage() {
   const hidden = layout.widgets.filter(w => !w.enabled)
   // Предлагаем один раз и только тому, у кого ни одной из новых плиток нет
   const offerFinance = loaded && hasSaved && !offerSeen && !layout.widgets.some(w => FIXED_TILES[w.type])
+  const offerTrend = loaded && hasSaved && !offerFinance && !trendOfferSeen && !layout.widgets.some(w => w.type === 'trend')
 
   return (
     <Layout>
@@ -283,6 +327,16 @@ export default function DashboardPage() {
             </p>
             <Button size="sm" variant="gold" icon={Plus} onClick={addFinanceTiles}>Добавить на дашборд</Button>
             <IconButton icon={X} size="sm" label="Не предлагать" onClick={() => setOfferSeen(true)} />
+          </div>
+        )}
+
+        {offerTrend && (
+          <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 rounded-xl bg-brand-50 border border-brand-100">
+            <p className="flex-1 min-w-[16rem] text-sm text-brand-900">
+              <span className="font-medium">Новая плитка «Динамика показателей»:</span> выручка, себестоимость и расходы на одном графике, по дням или по месяцам, со сравнением с прошлым периодом или годом назад.
+            </p>
+            <Button size="sm" variant="primary" icon={Plus} onClick={addTrendTile}>Добавить на дашборд</Button>
+            <IconButton icon={X} size="sm" label="Не предлагать" onClick={() => setTrendOfferSeen(true)} />
           </div>
         )}
 
@@ -350,7 +404,8 @@ export default function DashboardPage() {
             <p className="text-xs font-medium text-gray-500 mb-2">Добавить плитку</p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" icon={Plus} onClick={() => addWidget(newMetric())}>Показатель</Button>
-              <Button size="sm" icon={Plus} onClick={() => addWidget(newChart())}>График выручки</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newTrend())}>Динамика показателей</Button>
+              <Button size="sm" icon={Plus} onClick={() => addWidget(newChart())}>Выручка по проектам</Button>
               <Button size="sm" icon={Plus} onClick={() => addWidget(newCash())}>Деньги</Button>
               <Button size="sm" icon={Plus} onClick={() => addWidget(newBudget())}>План и факт</Button>
               <Button size="sm" icon={Plus} onClick={() => addWidget(newPayments())}>Платежи</Button>

@@ -57,10 +57,24 @@ api.interceptors.response.use(
       const used = String(error.config?.headers?.Authorization || '').replace(/^Bearer\s+/, '')
       const dead = listAccounts().find(a => a.token === used)
 
-      forgetAccount(dead ? dead.tenant.id : activeTenantId())
+      // Повторные 401 той же пачки запросов сессию уже не трогают — иначе
+      // каждый следующий отказ «забывал» бы уже следующую, живую компанию
+      const tenantId = dead ? dead.tenant.id : (used === localStorage.getItem('token') ? activeTenantId() : null)
+      if (!tenantId) return Promise.reject(error)
+      const name = (dead?.tenant || listAccounts().find(a => a.tenant?.id === tenantId)?.tenant)?.name
 
-      // Осталась хоть одна компания — остаёмся в приложении, иначе на вход
-      window.location.assign(localStorage.getItem('token') ? '/dashboard' : '/login')
+      forgetAccount(tenantId)
+
+      // Осталась хоть одна компания — остаёмся в приложении, иначе на вход.
+      // Причину говорим после перезагрузки: молча пропавшая компания или
+      // внезапный экран входа выглядят как сбой
+      const left = !!localStorage.getItem('token')
+      try {
+        sessionStorage.setItem('findir:notice', left && name
+          ? `Сессия в «${name}» завершилась — компания убрана из списка. Чтобы вернуть её, войдите в неё снова.`
+          : 'Сессия завершилась — войдите снова.')
+      } catch { /* приватный режим — просто без пояснения */ }
+      window.location.assign(left ? '/dashboard' : '/login')
     }
     return Promise.reject(error)
   }

@@ -30,7 +30,7 @@ export function balanceSheetRows(report) {
     rows.push(line(section.label.toUpperCase(), section.total, section.compare_total))
 
     for (const row of section.rows || []) {
-      rows.push(line(`${row.code ? row.code + ' ' : ''}${row.name}`, row.amount, row.compare_amount, 1))
+      rows.push(line(`${row.code ? row.code + ' ' : ''}${row.name}${row.note ? ' — ' + row.note : ''}`, row.amount, row.compare_amount, 1))
 
       for (const child of row.children || []) {
         rows.push(line(`${child.code ? child.code + ' ' : ''}${child.name}`, child.amount, child.compare_amount, 2))
